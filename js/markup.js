@@ -10,12 +10,18 @@ export function svg(tag, attrs = {}, ...kids) {
 }
 
 export const LAYER_OF = {
-  pen: 'markups', arrow: 'markups', line: 'markups', rect: 'markups', ellipse: 'markups', text: 'markups', highlight: 'markups',
+  pen: 'markups', polyline: 'markups', arrow: 'markups', line: 'markups', rect: 'markups', ellipse: 'markups', text: 'markups', highlight: 'markups',
   measure: 'measurements', area: 'measurements', link: 'links',
 };
 export const RECT_TYPES = new Set(['rect', 'ellipse', 'highlight', 'link']);
 
 export const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+export function pathLength(pts, closed = false) {
+  let l = 0;
+  for (let i = 1; i < pts.length; i++) l += dist(pts[i - 1], pts[i]);
+  if (closed && pts.length > 2) l += dist(pts[pts.length - 1], pts[0]);
+  return l;
+}
 
 export function distSeg(p, a, b) {
   const dx = b.x - a.x, dy = b.y - a.y;
@@ -70,6 +76,7 @@ export function fmtArea(m2, unit) {
 export function measureText(it, cal, unit) {
   if (!cal || !cal.mpu) return 'נדרש כיול';
   if (it.type === 'area') return fmtArea(polyArea(it.pts) * cal.mpu * cal.mpu, unit);
+  if (it.type === 'polyline') return fmtLen(pathLength(it.pts, it.closed) * cal.mpu, unit);
   return fmtLen(dist(it.pts[0], it.pts[1]) * cal.mpu, unit);
 }
 
@@ -91,11 +98,19 @@ function label(text, x, y, fs, { anchor = 'middle', fill = '#111', rtl = false }
 }
 
 // cx: { cal, unit, planName(target) }
+// שדות עיצוב (כולם אופציונליים, כדי לשמור תאימות לפריטים ישנים):
+//   color – צבע קו (או 'none' ללא קו) · width – עובי · op – שקיפות קו/טקסט (0..1)
+//   fill – צבע מילוי (null = ללא) · fillOp – שקיפות מילוי (0..1)
+export const isNoStroke = (it) => !it.color || it.color === 'none';
+export const hasFill = (it) => !!it.fill && it.fill !== 'none';
+
 export function drawItem(it, cx) {
   const g = svg('g', { 'data-id': it.id });
-  const col = it.color, w = it.width, p = it.pts;
+  const col = isNoStroke(it) ? 'none' : it.color, w = it.width, p = it.pts;
   const a = p[0], b = p[1];
-  const stroke = { stroke: col, 'stroke-width': w, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+  const op = it.op == null ? 1 : it.op;
+  const stroke = { stroke: col, 'stroke-width': col === 'none' ? 0 : w, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-opacity': op };
+  const fillAttrs = hasFill(it) ? { fill: it.fill, 'fill-opacity': it.fillOp == null ? 0.3 : it.fillOp } : {};
   switch (it.type) {
     case 'line':
       g.append(svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...stroke }));
@@ -105,34 +120,44 @@ export function drawItem(it, cx) {
       const hl = Math.min(len * 0.6, w * 5), hw = hl * 0.5;
       const bx = b.x - ux * hl, by = b.y - uy * hl;
       g.append(svg('line', { x1: a.x, y1: a.y, x2: bx, y2: by, ...stroke }));
-      g.append(svg('polygon', { points: `${b.x},${b.y} ${bx - uy * hw},${by + ux * hw} ${bx + uy * hw},${by - ux * hw}`, fill: col, stroke: col, 'stroke-width': w * 0.3, 'stroke-linejoin': 'round' }));
+      g.append(svg('polygon', { points: `${b.x},${b.y} ${bx - uy * hw},${by + ux * hw} ${bx + uy * hw},${by - ux * hw}`, fill: col, 'fill-opacity': op, stroke: col, 'stroke-width': w * 0.3, 'stroke-linejoin': 'round', 'stroke-opacity': op }));
       break;
     }
     case 'rect': {
       const r = bbox([a, b]);
-      g.append(svg('rect', { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0, ...stroke }));
+      g.append(svg('rect', { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0, ...stroke, ...fillAttrs }));
       break;
     }
     case 'ellipse': {
       const r = bbox([a, b]);
-      g.append(svg('ellipse', { cx: (r.x0 + r.x1) / 2, cy: (r.y0 + r.y1) / 2, rx: (r.x1 - r.x0) / 2, ry: (r.y1 - r.y0) / 2, ...stroke }));
+      g.append(svg('ellipse', { cx: (r.x0 + r.x1) / 2, cy: (r.y0 + r.y1) / 2, rx: (r.x1 - r.x0) / 2, ry: (r.y1 - r.y0) / 2, ...stroke, ...fillAttrs }));
       break;
     }
     case 'highlight': {
       const r = bbox([a, b]);
-      g.append(svg('rect', { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0, fill: col, 'fill-opacity': 0.35, stroke: 'none' }));
+      g.append(svg('rect', { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0, fill: it.color, 'fill-opacity': it.fillOp == null ? 0.35 : it.fillOp, stroke: 'none' }));
       break;
     }
     case 'pen':
       g.append(svg('path', { d: 'M' + p.map((q) => `${q.x} ${q.y}`).join(' L'), ...stroke }));
       break;
+    case 'polyline': {
+      const d = 'M' + p.map((q) => `${q.x} ${q.y}`).join(' L') + (it.closed && p.length > 2 ? ' Z' : '');
+      g.append(svg('path', { d, ...stroke, ...(it.closed ? fillAttrs : {}) }));
+      if (it.showLen && p.length >= 2) {
+        const mid = p[Math.floor((p.length - 1) / 2)], nxt = p[Math.floor((p.length - 1) / 2) + 1] || mid;
+        const fs = it.fontSize || it.width * 4;
+        g.append(label(measureText(it, cx.cal, cx.unit), (mid.x + nxt.x) / 2, (mid.y + nxt.y) / 2 - fs * 0.5, fs, { fill: cx.cal ? '#111' : '#b71c1c' }));
+      }
+      break;
+    }
     case 'text': {
       const lines = String(it.text || '').split('\n');
       const rtl = isRTL(it.text);
       const bx = textBox(it);
       const x = rtl ? bx.x1 : bx.x0;
       const t = svg('text', {
-        x, y: a.y + it.fontSize, 'font-size': it.fontSize, fill: col, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 600,
+        x, y: a.y + it.fontSize, 'font-size': it.fontSize, fill: it.color || '#111', opacity: op, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 600,
         stroke: '#fff', 'stroke-width': it.fontSize * 0.16, 'paint-order': 'stroke', 'stroke-linejoin': 'round',
         direction: rtl ? 'rtl' : 'ltr', 'text-anchor': 'start', 'unicode-bidi': 'plaintext',
       });
@@ -171,23 +196,33 @@ export function boundsOf(it) {
   return bbox(it.pts);
 }
 
-// ידיות עריכה
+// ידיות עריכה. לטקסט: ידית אחת בפינה הימנית-תחתונה לשינוי גודל.
 export function handlesOf(it) {
-  if (it.type === 'text' || it.type === 'pen') return [];
+  if (it.type === 'pen') return [];
+  if (it.type === 'text') { const b = textBox(it); return [{ x: b.x1, y: b.y1, idx: 0, resize: true }]; }
   if (RECT_TYPES.has(it.type)) return corners(it.pts).map((c, i) => ({ ...c, idx: i }));
   return it.pts.map((c, i) => ({ ...c, idx: i }));
 }
 
 // בדיקת פגיעה. tol ביחידות עמוד.
 export function hitItem(it, p, tol) {
-  const q = it.pts, w = (it.width || 0) / 2;
+  const q = it.pts, w = isNoStroke(it) ? 0 : (it.width || 0) / 2;
+  const filled = hasFill(it);
   switch (it.type) {
     case 'line': case 'arrow': case 'measure':
       return distSeg(p, q[0], q[1]) <= tol + w;
     case 'pen':
       for (let i = 1; i < q.length; i++) if (distSeg(p, q[i - 1], q[i]) <= tol + w) return true;
       return false;
+    case 'polyline': {
+      if (it.closed && filled && q.length >= 3 && inPoly(p, q)) return true;
+      const n = it.closed ? q.length : q.length - 1;
+      for (let i = 0; i < n; i++) if (distSeg(p, q[i], q[(i + 1) % q.length]) <= tol + w) return true;
+      return false;
+    }
     case 'rect': {
+      const r = bbox(q);
+      if (filled && p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1) return true;
       const c = corners(q);
       for (let i = 0; i < 4; i++) if (distSeg(p, c[i], c[(i + 1) % 4]) <= tol + w) return true;
       return false;
@@ -195,6 +230,7 @@ export function hitItem(it, p, tol) {
     case 'ellipse': {
       const r = bbox(q), rx = (r.x1 - r.x0) / 2 || 1e-6, ry = (r.y1 - r.y0) / 2 || 1e-6;
       const k = Math.hypot((p.x - (r.x0 + r.x1) / 2) / rx, (p.y - (r.y0 + r.y1) / 2) / ry);
+      if (filled && k <= 1) return true;
       return Math.abs(k - 1) * Math.min(rx, ry) <= tol + w;
     }
     case 'highlight': case 'link': {
@@ -213,3 +249,9 @@ export function hitItem(it, p, tol) {
   }
   return false;
 }
+
+// סוג עיצוב לכל סוג פריט: text / hl (הדגשה) / shape (קווים וצורות) / meas (מדידות)
+export const kindOf = (t) => (t === 'text' ? 'text' : t === 'highlight' ? 'hl'
+  : ['pen', 'line', 'arrow', 'polyline', 'rect', 'ellipse'].includes(t) ? 'shape'
+    : (t === 'measure' || t === 'area') ? 'meas' : null);
+export const canFill = (it) => it.type === 'rect' || it.type === 'ellipse' || (it.type === 'polyline' && !!it.closed);

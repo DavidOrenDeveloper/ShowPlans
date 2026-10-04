@@ -4,7 +4,7 @@
   "description": "ניהול תוכניות בנייה וקבצי PDF עם תיקיות, סימונים, מדידות והשוואת גרסאות. עובד גם ללא אינטרנט.",
   "lang": "he",
   "dir": "rtl",
-  "id": "./",
+  "id": "plans-pdf-manager-2026",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

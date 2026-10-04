@@ -13,6 +13,9 @@ const st = {
   expanded: new Set(JSON.parse(localStorage.getItem('expanded') || '[]')),
 };
 let el = {};
+const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window;
+const credit = () => h('div', { class: 'page-credit' }, 'נוצר על ידי דוד אורן');
+let carry = null; // מצב "נושאים" תוכניות במגע: { keys, id, x, y, ghost, bar, over, second }
 let installEvt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
 export function installApp() {
@@ -71,6 +74,7 @@ export function show({ mode = 'folder', id = null, q = '' }) {
   toggleSidebar(false);
   renderAll();
   el.content.scrollTop = 0;
+  updateCarryBar();
 }
 
 function toggleSidebar(open) { el.shell.classList.toggle('sb-open', open); }
@@ -83,7 +87,7 @@ function buildTop() {
   el.viewBtn = h('button', { class: 'icon-btn', 'aria-label': 'תצוגה', onclick: () => { st.view = st.view === 'grid' ? 'list' : 'grid'; localStorage.setItem('view', st.view); renderAll(); } });
   el.status = h('span', { class: 'idx-status' });
   el.top.append(
-    h('button', { class: 'icon-btn only-narrow', 'aria-label': 'תפריט', onclick: () => toggleSidebar(true) }, icon('menu')),
+    h('button', { class: 'icon-btn only-narrow', 'aria-label': 'תפריט', 'data-act': 'menu', onclick: () => toggleSidebar(true) }, icon('menu')),
     h('div', { class: 'brand-sm' }, 'תוכניות'),
     h('div', { class: 'search-wrap' }, icon('search', 18), el.q),
     el.viewBtn,
@@ -125,7 +129,7 @@ function renderAll() {
 // עץ צד
 function renderSidebar() {
   const tree = h('div', { class: 'tree' });
-  const rootRow = h('div', { class: 'tree-row root' + (st.mode === 'folder' && !st.folderId ? ' cur' : ''), onclick: () => { location.hash = '#/f/'; } },
+  const rootRow = h('div', { class: 'tree-row root' + (st.mode === 'folder' && !st.folderId ? ' cur' : ''), 'data-nav': '#/f/', onclick: () => { location.hash = '#/f/'; } },
     h('span', { class: 'twisty' }), icon('home', 18), h('span', { class: 'nm' }, S.P.project.name),
     h('button', { class: 'icon-btn sm', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); UI.menu(e.currentTarget, [
       { label: 'תיקייה חדשה', icon: 'folderPlus', onClick: () => A.newFolderDialog(null) },
@@ -139,7 +143,7 @@ function renderSidebar() {
       const kidsN = S.childFolders(f.id).length;
       const open = st.expanded.has(f.id);
       const row = h('div', {
-        class: 'tree-row' + (st.mode === 'folder' && st.folderId === f.id ? ' cur' : ''), style: { paddingInlineStart: 8 + depth * 16 + 'px' }, draggable: true,
+        class: 'tree-row' + (st.mode === 'folder' && st.folderId === f.id ? ' cur' : ''), style: { paddingInlineStart: 8 + depth * 16 + 'px' }, draggable: !COARSE, 'data-nav': '#/f/' + f.id,
         onclick: () => { st.expanded.add(f.id); saveExpanded(); location.hash = '#/f/' + f.id; },
         oncontextmenu: (e) => { e.preventDefault(); folderMenu(f.id, { x: e.clientX, y: e.clientY }); },
       },
@@ -157,7 +161,7 @@ function renderSidebar() {
     h('button', { class: 'btn ghost block', onclick: () => { location.hash = '#/storage'; } }, icon('drive', 18), 'ניהול אחסון'),
     h('button', { class: 'btn ghost block', onclick: () => B.exportProject() }, icon('archive', 18), 'ייצוא פרויקט'),
     h('button', { class: 'btn ghost block', onclick: () => B.importFlow() }, icon('upload', 18), 'ייבוא פרויקט'),
-    el.status);
+    el.status, h('div', { class: 'sb-credit' }, 'נוצר על ידי דוד אורן'));
   el.sidebar.replaceChildren(
     h('div', { class: 'sb-head' }, h('div', { class: 'logo' }, icon('layers', 22)), h('div', {}, h('b', {}, 'תוכניות בנייה'), h('small', {}, 'הכל שמור במכשיר'))),
     tree, foot);
@@ -170,6 +174,7 @@ function startDrag(e, keys) {
   e.dataTransfer.effectAllowed = 'move';
 }
 function makeDropTarget(node, folderId) {
+  node.dataset.drop = folderId || 'root';
   node.addEventListener('dragover', (e) => {
     const t = e.dataTransfer.types;
     if (t.includes(MIME) || t.includes('Files')) { e.preventDefault(); e.stopPropagation(); node.classList.add('drop-over'); }
@@ -278,15 +283,168 @@ const io = new IntersectionObserver((entries) => {
 }, { rootMargin: '300px' });
 
 function cardBase(k, cls) {
-  const card = h('div', { class: 'card ' + cls + (st.sel.has(k) ? ' selected' : ''), draggable: true, tabIndex: 0, 'data-key': k });
+  const card = h('div', { class: 'card ' + cls + (st.sel.has(k) ? ' selected' : ''), draggable: !COARSE, tabIndex: 0, 'data-key': k });
   const chk = h('button', { class: 'chk', 'aria-label': 'בחירה', onclick: (e) => { e.stopPropagation(); toggleSel(k); } }, icon('check', 14));
   card.append(chk);
   card.addEventListener('dragstart', (e) => startDrag(e, [k]));
-  let timer, moved;
-  card.addEventListener('touchstart', () => { moved = false; timer = setTimeout(() => { if (!moved) { navigator.vibrate?.(15); toggleSel(k); card._long = true; } }, 500); }, { passive: true });
-  card.addEventListener('touchmove', () => { moved = true; clearTimeout(timer); }, { passive: true });
-  card.addEventListener('touchend', () => clearTimeout(timer));
+
+  // מגע: לחיצה ארוכה = בחירה/הרמה. אם ממשיכים לגרור – נושאים את הפריטים; אצבע שנייה מנווטת בין תיקיות; הרמת האצבע הראשונה מניחה.
+  // המאזינים צמודים לכרטיס עצמו (ולא ל-document) כי המסך נבנה מחדש בניווט והכרטיס נותק – אירועי המגע ממשיכים להגיע לצומת המקורי.
+  let tc = null;
+  const clearTc = () => { if (tc) clearTimeout(tc.timer); tc = null; };
+  const find = (list, id) => [...list].find((x) => x.identifier === id);
+  card.addEventListener('touchstart', (e) => {
+    if (carry || e.touches.length !== 1) return;
+    const t = e.changedTouches[0];
+    tc = { id: t.identifier, x0: t.clientX, y0: t.clientY, picked: false };
+    tc.timer = setTimeout(() => {
+      if (!tc) return;
+      tc.picked = true; card._long = true;
+      navigator.vibrate?.(15);
+      if (!st.sel.has(k)) { st.sel.add(k); st.selMode = true; card.classList.add('selected'); renderSelbar(); }
+    }, 450);
+  }, { passive: true });
+  card.addEventListener('touchmove', (e) => {
+    if (!tc) return;
+    const t = find(e.changedTouches, tc.id); if (!t) return;
+    const moved = Math.hypot(t.clientX - tc.x0, t.clientY - tc.y0);
+    if (!tc.picked) { if (moved > 10) clearTc(); return; }
+    if (e.cancelable) e.preventDefault();
+    if (!carry && moved > 10) startCarry(k, t);
+    if (carry) carryMove(t.clientX, t.clientY);
+  }, { passive: false });
+  card.addEventListener('touchend', (e) => {
+    if (!tc) return;
+    const t = find(e.changedTouches, tc.id); if (!t) return;
+    const picked = tc.picked;
+    clearTc();
+    if (picked && e.cancelable) e.preventDefault(); // בלי "קליק" אחרי הרמה
+    if (carry) endCarry(t.clientX, t.clientY);
+    setTimeout(() => { card._long = false; }, 400);
+  });
+  card.addEventListener('touchcancel', () => { if (carry) cancelCarry(); clearTc(); setTimeout(() => { card._long = false; }, 400); });
   return card;
+}
+
+// ---------- נשיאת פריטים במגע ----------
+function carryLabel() {
+  const n = carry.keys.length;
+  if (n === 1) {
+    const [t, id] = [carry.keys[0][0], carry.keys[0].slice(2)];
+    return (t === 'f' ? S.P.folders.get(id)?.name : S.P.plans.get(id)?.name) || 'פריט';
+  }
+  return `${n} פריטים`;
+}
+function updateCarryBar() {
+  if (!carry) return;
+  const where = st.mode === 'folder' ? (st.folderId ? S.P.folders.get(st.folderId)?.name : S.P.project.name) : null;
+  carry.bar.replaceChildren(
+    h('div', { class: 'col' },
+      h('span', {}, `מעבירים: ${carryLabel()}`),
+      h('small', {}, where ? `אם תשחררו כאן – יועבר אל "${where}". אצבע שנייה: כניסה/יציאה מתיקיות` : 'נווטו עם אצבע שנייה לתיקייה, ושחררו')),
+    h('span', { class: 'sp' }),
+    h('button', { class: 'btn sm', 'data-act': 'cancel-carry' }, 'ביטול'));
+}
+function startCarry(k, t) {
+  const keys = st.sel.has(k) ? [...st.sel] : [k];
+  carry = { keys, id: t.identifier, x: t.clientX, y: t.clientY, over: null, second: new Map(), scrollV: 0, raf: 0 };
+  carry.ghost = h('div', { class: 'carry-ghost' }, h('span', { class: 'n' }, String(keys.length)), h('span', {}, carryLabel()));
+  carry.bar = h('div', { class: 'carry-bar' });
+  document.body.append(carry.ghost, carry.bar);
+  document.body.classList.add('carry-active');
+  keys.forEach((kk) => document.querySelector(`.card[data-key="${kk}"]`)?.classList.add('lift'));
+  document.addEventListener('touchstart', carrySecondStart, { passive: false, capture: true });
+  document.addEventListener('touchmove', carrySecondMove, { passive: false, capture: true });
+  document.addEventListener('touchend', carrySecondEnd, { capture: true });
+  updateCarryBar();
+  carryMove(t.clientX, t.clientY);
+  const loop = () => {
+    if (!carry) return;
+    if (carry.scrollV) el.content.scrollTop += carry.scrollV * 14;
+    carry.raf = requestAnimationFrame(loop);
+  };
+  carry.raf = requestAnimationFrame(loop);
+}
+function carryMove(x, y) {
+  if (!carry) return;
+  carry.x = x; carry.y = y;
+  carry.ghost.style.left = x + 'px'; carry.ghost.style.top = y + 'px';
+  const over = document.elementFromPoint(x, y)?.closest('[data-drop]') || null;
+  if (over !== carry.over) { carry.over?.classList.remove('drop-over'); over?.classList.add('drop-over'); carry.over = over; }
+  const r = el.content.getBoundingClientRect();
+  carry.scrollV = y > innerHeight - 90 ? 1 : (y < r.top + 60 && y > r.top - 10 ? -1 : 0);
+}
+function cleanupCarry() {
+  if (!carry) return;
+  cancelAnimationFrame(carry.raf);
+  carry.ghost.remove(); carry.bar.remove();
+  carry.over?.classList.remove('drop-over');
+  document.body.classList.remove('carry-active');
+  document.querySelectorAll('.card.lift').forEach((c) => c.classList.remove('lift'));
+  document.removeEventListener('touchstart', carrySecondStart, { capture: true });
+  document.removeEventListener('touchmove', carrySecondMove, { capture: true });
+  document.removeEventListener('touchend', carrySecondEnd, { capture: true });
+  const c = carry; carry = null;
+  return c;
+}
+function cancelCarry() { if (cleanupCarry()) UI.toast('ההעברה בוטלה', { ms: 1500 }); }
+async function endCarry(x, y) {
+  if (!carry) return;
+  const dropEl = document.elementFromPoint(x, y)?.closest('[data-drop]');
+  let dest;
+  if (dropEl) dest = dropEl.dataset.drop === 'root' ? null : dropEl.dataset.drop;
+  else {
+    const r = el.content.getBoundingClientRect();
+    if (st.mode === 'folder' && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) dest = st.folderId;
+  }
+  const c = cleanupCarry();
+  if (dest === undefined) { UI.toast('ההעברה בוטלה (שחררו מעל אזור התוכניות או מעל תיקייה)', { ms: 2500 }); return; }
+  const o = { folders: [], plans: [] };
+  c.keys.forEach((kk) => (kk[0] === 'f' ? o.folders : o.plans).push(kk.slice(2)));
+  const same = o.folders.every((id) => (S.P.folders.get(id)?.parentId || null) === (dest || null)) && o.plans.every((id) => (S.P.plans.get(id)?.folderId || null) === (dest || null));
+  if (same) { UI.toast('הפריטים כבר נמצאים בתיקייה הזו', { ms: 2000 }); clearSel(); return; }
+  try {
+    await S.moveItems(o, dest);
+    const name = dest ? S.P.folders.get(dest)?.name : S.P.project.name;
+    UI.toast(`הועברו ${c.keys.length} פריטים אל "${name}"`, { ms: 2500 });
+    clearSel();
+  } catch (err) { UI.toast(err.message, { type: 'error' }); }
+}
+// אצבע שנייה בזמן נשיאה: לחיצה = ניווט/כפתור, גרירה = גלילה
+function carrySecondStart(e) {
+  if (!carry) return;
+  for (const t of e.changedTouches) if (t.identifier !== carry.id) carry.second.set(t.identifier, { x0: t.clientX, y0: t.clientY, y: t.clientY, t0: performance.now(), moved: false });
+  if (e.cancelable && [...e.changedTouches].some((t) => t.identifier !== carry.id)) e.preventDefault();
+}
+function carrySecondMove(e) {
+  if (!carry) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier === carry.id) continue;
+    const s2 = carry.second.get(t.identifier); if (!s2) continue;
+    if (Math.hypot(t.clientX - s2.x0, t.clientY - s2.y0) > 10) s2.moved = true;
+    if (s2.moved) { el.content.scrollTop -= t.clientY - s2.y; }
+    s2.y = t.clientY;
+    if (e.cancelable) e.preventDefault();
+  }
+}
+function carrySecondEnd(e) {
+  if (!carry) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier === carry.id) continue;
+    const s2 = carry.second.get(t.identifier); carry.second.delete(t.identifier);
+    if (s2 && !s2.moved && performance.now() - s2.t0 < 600) carryTap(t.clientX, t.clientY);
+  }
+  // רשת ביטחון: אם כל האצבעות עזבו והכרטיס המקורי כבר לא מקבל אירועים – מניחים במקום האחרון
+  if (e.touches.length === 0) setTimeout(() => { if (carry) endCarry(carry.x, carry.y); }, 40);
+}
+function carryTap(x, y) {
+  const target = document.elementFromPoint(x, y);
+  if (!target) return;
+  const act = target.closest('[data-act]');
+  if (act) { if (act.dataset.act === 'cancel-carry') cancelCarry(); else if (act.dataset.act === 'menu') toggleSidebar(true); return; }
+  const nav = target.closest('[data-nav]');
+  if (nav) { location.hash = nav.dataset.nav; return; }
+  if (target.classList.contains('sb-backdrop')) toggleSidebar(false);
 }
 const clickGuard = (card, fn, k) => (e) => {
   if (card._long) { card._long = false; e.preventDefault(); return; }
@@ -309,8 +467,9 @@ function folderCard(f) {
     h('div', { class: 'f-ic' }, icon('folder', 34)),
     h('div', { class: 'meta' }, h('div', { class: 'name' }, f.name), h('div', { class: 'sub' }, `${S.plansIn(f.id).length} תוכניות · ${S.childFolders(f.id).length} תיקיות` + (d.plans.length !== S.plansIn(f.id).length ? ` (${d.plans.length} בסה״כ)` : ''))),
     h('button', { class: 'icon-btn more', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more')));
+  card.dataset.nav = '#/f/' + f.id;
   card.addEventListener('click', clickGuard(card, () => { location.hash = '#/f/' + f.id; }, k));
-  card.addEventListener('contextmenu', (e) => { e.preventDefault(); folderMenu(f.id, { x: e.clientX, y: e.clientY }); });
+  card.addEventListener('contextmenu', (e) => { e.preventDefault(); if (card._long || carry) return; folderMenu(f.id, { x: e.clientX, y: e.clientY }); });
   card.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = '#/f/' + f.id; });
   makeDropTarget(card, f.id);
   return card;
@@ -331,7 +490,7 @@ function planCard(p, extra) {
     h('button', { class: 'icon-btn more', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more')));
   if (v) io.observe(img);
   card.addEventListener('click', clickGuard(card, () => { location.hash = '#/p/' + p.id; }, k));
-  card.addEventListener('contextmenu', (e) => { e.preventDefault(); planMenu(p.id, { x: e.clientX, y: e.clientY }); });
+  card.addEventListener('contextmenu', (e) => { e.preventDefault(); if (card._long || carry) return; planMenu(p.id, { x: e.clientX, y: e.clientY }); });
   card.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = '#/p/' + p.id; });
   return card;
 }
@@ -339,7 +498,7 @@ function planCard(p, extra) {
 function breadcrumbs() {
   const nav = h('nav', { class: 'crumbs', 'aria-label': 'נתיב' });
   const seg = (name, id, last) => {
-    const a = h('button', { class: 'crumb' + (last ? ' last' : ''), onclick: () => { location.hash = '#/f/' + (id || ''); } }, name);
+    const a = h('button', { class: 'crumb' + (last ? ' last' : ''), 'data-nav': '#/f/' + (id || ''), onclick: () => { location.hash = '#/f/' + (id || ''); } }, name);
     if (!last) makeDropTarget(a, id);
     return a;
   };
@@ -357,6 +516,7 @@ function renderFolder() {
   const wrap = h('div', { class: 'page' });
   wrap.append(breadcrumbs());
   wrap.append(h('div', { class: 'title-row' },
+    cur ? h('button', { class: 'icon-btn', 'aria-label': 'לתיקיית האב', title: 'לתיקיית האב', 'data-nav': '#/f/' + (cur.parentId || ''), onclick: () => { location.hash = '#/f/' + (cur.parentId || ''); } }, icon('up')) : null,
     h('h1', {}, cur ? cur.name : S.P.project.name),
     cur ? h('button', { class: 'icon-btn', 'aria-label': 'עוד', onclick: (e) => folderMenu(fid, e.currentTarget) }, icon('more')) : null));
   if (!folders.length && !plans.length) {
@@ -385,6 +545,7 @@ function renderFolder() {
       sentinel.observe(more);
     }
   }
+  wrap.append(credit());
   el.content.replaceChildren(wrap);
 }
 
@@ -408,6 +569,7 @@ function renderSearch() {
   const textBox = h('div', {}, h('h4', { class: 'sec' }, 'טקסט בתוך קבצי PDF'), h('p', { class: 'hint' }, q.length < 2 ? 'הקלידו לפחות 2 תווים לחיפוש בתוך הקבצים.' : 'מחפש…'));
   wrap.append(textBox);
   if (!folders.length && !plans.length && q.length < 2) wrap.append(h('p', { class: 'empty-sm' }, 'לא נמצאו תוצאות'));
+  wrap.append(credit());
   el.content.replaceChildren(wrap);
   if (q.length >= 2) {
     const token = ++searchToken;
@@ -434,6 +596,7 @@ async function renderStorage() {
   wrap.append(h('div', { class: 'title-row' },
     h('button', { class: 'icon-btn', 'aria-label': 'חזרה', onclick: () => { location.hash = '#/f/' + (st.folderId || ''); } }, icon('back')),
     h('h1', {}, 'ניהול אחסון')));
+  wrap.append(credit());
   el.content.replaceChildren(wrap);
   const est = await db.storageEstimate();
   const rows = S.usageByPlan();

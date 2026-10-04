@@ -285,3 +285,56 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
   .v-zoom { padding: 2px; }
   .v-zoom .icon-btn { width: 40px; height: 40px; }
 }
+
+/* ---------- נוצר על ידי ---------- */
+.page-credit { text-align: center; color: var(--muted); font-size: 12px; padding: 28px 0 8px; opacity: .8; }
+.sb-credit { color: #7e8b98; font-size: 11px; text-align: center; padding: 6px 12px 12px; }
+.boot-credit { color: #9aa7b4; font-size: 12px; margin-top: 6px; }
+.v-credit { position: absolute; left: 8px; bottom: 6px; z-index: 4; font-size: 10px; color: #fff; background: rgba(31,41,51,.55); padding: 1px 8px; border-radius: 99px; pointer-events: none; }
+
+/* ---------- Viewer: כותרת, עיצוב, מחק ---------- */
+.v-title { cursor: pointer; }
+.v-title .ted { display: inline-flex; vertical-align: middle; margin-inline-start: 6px; opacity: .55; }
+.v-stage[data-tool=eraser] { cursor: cell; }
+.v-props input.sz, .v-style input.sz { width: 64px; min-height: 34px; padding: 2px 6px; text-align: center; flex: none; }
+.sw.custom { position: relative; background: conic-gradient(#e53935, #fdd835, #43a047, #1e88e5, #8e24aa, #e53935); overflow: hidden; cursor: pointer; flex: none; }
+.sw.custom input { position: absolute; inset: -8px; width: 60px; height: 60px; opacity: 0; cursor: pointer; padding: 0; border: 0; min-height: 0; }
+.sw.none { background: #fff linear-gradient(135deg, transparent 45%, #c62828 45%, #c62828 55%, transparent 55%); }
+.sw.fillchip { border-radius: 8px; border: 2px solid #9aa7b4; }
+.chip-check { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 99px; font-size: 14px; flex: none; white-space: nowrap; }
+.chip-check input { width: 18px; height: 18px; }
+.v-style { position: absolute; z-index: 9; left: 0; right: 0; bottom: 0; max-height: 56%; overflow: auto; background: #fff; border-radius: 16px 16px 0 0; box-shadow: 0 -6px 24px rgba(0,0,0,.28); padding: 8px 14px 14px; direction: rtl; }
+.st-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.st-sec { padding: 8px 0; border-top: 1px solid var(--line); }
+.st-sec:first-of-type { border-top: 0; }
+.st-t { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+.st-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.st-slider { display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 8px; font-size: 14px; margin-top: 4px; }
+.st-slider input[type=range], .st-row input[type=range] { width: 100%; min-height: 28px; padding: 0; accent-color: var(--blue); flex: 1; }
+.st-v { text-align: end; direction: ltr; font-size: 13px; }
+@media (min-width: 900px) {
+  .v-style { left: 12px; right: auto; top: 12px; bottom: auto; width: 330px; max-height: calc(100% - 24px); border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+}
+
+/* ---------- הדפסה ---------- */
+#print-sheet { display: none; }
+@media print {
+  html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+  body > *:not(#print-sheet) { display: none !important; }
+  #print-sheet { display: block !important; }
+}
+
+/* ---------- גרירת תוכניות במגע ---------- */
+.card { -webkit-touch-callout: none; }
+.card.lift { opacity: .45; transform: scale(.96); }
+.carry-ghost { position: fixed; z-index: 400; pointer-events: none; width: 150px; background: #fff; border: 2px solid var(--amber-d); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); padding: 8px 10px; font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; transform: translate(-50%, -120%); }
+.carry-ghost .n { background: var(--amber); color: #1b1300; border-radius: 99px; min-width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+.carry-bar { position: fixed; z-index: 390; left: 0; right: 0; top: 0; padding: calc(8px + var(--safe-t)) 12px 10px; background: var(--amber); color: #1b1300; display: flex; align-items: center; gap: 10px; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+.carry-bar small { display: block; font-weight: 500; opacity: .85; }
+.carry-bar .btn { background: rgba(255,255,255,.7); border-color: transparent; }
+.carry-active .content { touch-action: none; }
+.drop-over { outline: 3px dashed var(--amber-d) !important; background: rgba(245,166,35,.25) !important; }
+
+/* גובה קבוע לשורת המאפיינים: מונע קפיצת התוכנית כשהכלים משתנים באמצע ציור */
+.v-props.has { height: 58px; min-height: 58px; flex: none; box-sizing: border-box; }
+.v-props > * { flex: none; }

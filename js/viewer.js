@@ -7,27 +7,29 @@ import { openPdf, pageText, destroyDoc } from './pdfio.js';
 import { Layer } from './layer.js';
 import { h, icon, uid, clamp, clone, fmtDate, natural } from './util.js';
 import {
-  svg, LAYER_OF, RECT_TYPES, dist, drawItem, hitItem, handlesOf, boundsOf, corners,
-  paperName, mpuFromRatio, fmtLen,
+  svg, LAYER_OF, RECT_TYPES, dist, drawItem, hitItem, handlesOf, boundsOf, corners, textBox,
+  paperName, mpuFromRatio, fmtLen, kindOf,
 } from './markup.js';
+import { recognize, snapAngle } from './shape-recog.js';
+import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
+import { installStyle } from './viewer-style.js';
+import { installPrint } from './viewer-print.js';
 
 const PT = 96 / 72; // "100%" = גודל אמיתי ב-96 DPI
 const MAXS = PT * 64; // עד 6400%
-const COLORS = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#1e88e5', '#111111'];
-const WIDTHS = [2, 3, 5, 8];
-const TEXT_PX = [14, 18, 26, 38];
-const DRAW_TOOLS = new Set(['pen', 'arrow', 'line', 'rect', 'ellipse', 'text', 'highlight']);
 const TOOLS = [
   { id: 'pan', icon: 'move', label: 'הזזה' },
   { id: 'select', icon: 'cursor', label: 'בחירה' },
   { sep: true },
   { id: 'pen', icon: 'pen', label: 'עט' },
-  { id: 'arrow', icon: 'arrow', label: 'חץ' },
   { id: 'line', icon: 'line', label: 'קו' },
+  { id: 'polyline', icon: 'polyline', label: 'קו נקודות' },
+  { id: 'arrow', icon: 'arrow', label: 'חץ' },
   { id: 'rect', icon: 'rect', label: 'מלבן' },
   { id: 'ellipse', icon: 'circle', label: 'עיגול' },
   { id: 'text', icon: 'type', label: 'טקסט' },
   { id: 'highlight', icon: 'highlight', label: 'הדגשה' },
+  { id: 'eraser', icon: 'eraser', label: 'מחק' },
   { sep: true },
   { id: 'measure', icon: 'ruler', label: 'מרחק' },
   { id: 'area', icon: 'polygon', label: 'שטח' },
@@ -35,10 +37,6 @@ const TOOLS = [
   { id: 'link', icon: 'link', label: 'קישור' },
 ];
 
-const prefs = Object.assign({ color: '#e53935', wi: 1, unit: 'm' },
-  (() => { try { return JSON.parse(localStorage.getItem('vprefs') || '{}'); } catch { return {}; } })());
-prefs.show = Object.assign({ markups: true, measurements: true, links: true }, prefs.show || {});
-const savePrefs = () => localStorage.setItem('vprefs', JSON.stringify(prefs));
 const lastView = new Map();
 
 let cur = null;
@@ -67,11 +65,14 @@ class Viewer {
     this.selected = null; this.draft = null;
     this.pageToken = 0; this.searchToken = 0; this.textCache = new Map();
     this.cmp = null; this.split = false; this.lastTap = { t: 0, x: 0, y: 0 };
+    this.eraseSet = null; this.styleOpen = false; this._editBefore = null;
   }
 
   // ---------- בנייה ----------
   build() {
-    this.titleEl = h('div', { class: 'v-title' });
+    this.titleEl = h('div', { class: 'v-title', title: 'לחצו לשינוי שם התוכנית' });
+    this.titleEl.addEventListener('click', () => this.renameDialog());
+    this.credit = h('div', { class: 'v-credit' }, 'נוצר על ידי דוד אורן');
     const btn = (ic, label, fn) => h('button', { class: 'icon-btn', 'aria-label': label, title: label, onclick: fn }, icon(ic));
     this.stage = h('div', { class: 'v-stage' });
     this.layerA = new Layer();
@@ -91,17 +92,17 @@ class Viewer {
       btn('layers', 'שכבות', () => this.layersDialog()),
       btn('compare', 'השוואת תוכניות', () => this.openCompare()),
       btn('clock', 'גרסאות', () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() })),
+      btn('print', 'הדפסה', () => this.printDialog()),
       btn('more', 'עוד', (e) => this.moreMenu(e.currentTarget)));
     // במסכים צרים מעבירים כפתורים משניים לתפריט ⋮ כדי שיישאר מקום לשם התוכנית
-    this.topbar.querySelectorAll('[aria-label="שכבות"],[aria-label="השוואת תוכניות"],[aria-label="גרסאות"]').forEach((b) => b.classList.add('nh'));
+    this.topbar.querySelectorAll('[aria-label="שכבות"],[aria-label="השוואת תוכניות"],[aria-label="גרסאות"],[aria-label="הדפסה"]').forEach((b) => b.classList.add('nh'));
 
     this.zoomLabel = h('button', { class: 'zl', onclick: () => this.setZoom100() }, '100%');
     this.zoomBar = h('div', { class: 'v-zoom v-float' },
       btn('zoomIn', 'הגדל', () => this.zoomBy(1.6)),
       this.zoomLabel,
       btn('zoomOut', 'הקטן', () => this.zoomBy(1 / 1.6)),
-      btn('maximize', 'התאם למסך', () => this.fit('page')),
-      btn('fitWidth', 'התאם לרוחב', () => this.fit('width')));
+      btn('maximize', 'התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)', () => this.cycleFit()));
 
     this.pageLabel = h('button', { class: 'pl', onclick: () => this.pagePrompt() }, '1 / 1');
     this.pageBar = h('div', { class: 'v-pages v-float' },
@@ -117,8 +118,8 @@ class Viewer {
     this.pickBar = h('div', { class: 'v-pick hidden' });
     this.exitImm = h('button', { class: 'v-exit-imm', 'aria-label': 'הצג סרגלים', onclick: () => this.el.classList.remove('immersive') }, icon('chevD'));
 
-    this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar,
-      h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.panel),
+    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.panel, this.credit);
+    this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar, this.mid,
       this.cmpBar, this.props, this.toolbar, this.exitImm);
     this.root.append(this.el);
 
@@ -129,7 +130,7 @@ class Viewer {
     s.addEventListener('pointercancel', (e) => this.onUp(e, true));
     s.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     s.addEventListener('contextmenu', (e) => e.preventDefault());
-    s.addEventListener('dblclick', (e) => { if (this.tool === 'area') { e.preventDefault(); this.finishArea(); } });
+    s.addEventListener('dblclick', (e) => { if (this.tool === 'area' || this.tool === 'polyline') { e.preventDefault(); this.finishArea(); } });
     this.keyFn = (e) => this.onKey(e);
     this.keyUpFn = (e) => { if (e.code === 'Space') this.spaceDown = false; };
     document.addEventListener('keydown', this.keyFn);
@@ -230,7 +231,7 @@ class Viewer {
     const v = this.version;
     const isCur = v && this.plan.currentVersionId === v.id;
     this.titleEl.replaceChildren(
-      h('b', {}, this.plan.name),
+      h('b', {}, this.plan.name, h('span', { class: 'ted' }, icon('edit', 13))),
       h('small', {}, [v && vs.length > 1 ? `V${v.number} · ${fmtDate(v.date)}` : null, v && !isCur ? 'גרסה ישנה' : null].filter(Boolean).join(' · ') || S.planPathText(this.plan)));
     this.titleEl.classList.toggle('old', !!(v && !isCur));
   }
@@ -304,8 +305,25 @@ class Viewer {
   fit(mode) {
     if (!this.page) return;
     this.fitMode = mode;
-    const s = mode === 'width' ? this.vw / this.pw : Math.min(this.vw / this.pw, this.H / this.ph) * 0.98;
+    const s = mode === 'width' ? this.vw / this.pw : mode === 'height' ? this.H / this.ph : Math.min(this.vw / this.pw, this.H / this.ph) * 0.98;
     this.setView(s, (this.vw - this.pw * s) / 2, mode === 'width' ? 0 : (this.H - this.ph * s) / 2, { keepFit: true });
+  }
+  // כפתור התאמה אחד שמחליף בין: עמוד שלם → רוחב → גובה (מדלג על מצבים שנראים זהים)
+  cycleFit() {
+    if (!this.page) return;
+    const sw = this.vw / this.pw, sh = this.H / this.ph, sp = Math.min(sw, sh) * 0.98;
+    const all = [['page', sp, 'כל העמוד במסך'], ['width', sw, 'התאמה לרוחב המסך'], ['height', sh, 'התאמה לגובה המסך']];
+    const kept = [];
+    for (const m of all) if (!kept.some((k) => Math.abs(k[1] / m[1] - 1) < 0.04)) kept.push(m);
+    const i = kept.findIndex((k) => k[0] === this.fitMode);
+    const next = kept[(i + 1) % kept.length];
+    this.fit(next[0]);
+    UI.toast(next[2], { ms: 1400 });
+  }
+  async renameDialog() {
+    await A.renamePlanDialog(this.planId);
+    this.plan = S.P.plans.get(this.planId) || this.plan;
+    this.updateTitle();
   }
   setZoom100() { this.zoomAt(this.vw / 2, this.H / 2, PT / this.scale); }
   zoomBy(f) { this.zoomAt(this.vw / 2, this.H / 2, f); }
@@ -328,7 +346,7 @@ class Viewer {
     const page = await this.doc.getPage(n);
     if (token !== this.pageToken || cur !== this) return;
     this.pageNum = n; this.page = page;
-    this.selected = null; this.draft = null; this.gesture = null;
+    this.selected = null; this.draft = null; this.gesture = null; this.eraseSet = null;
     this.measure();
     this.layerA.setPage(page).then(() => { if (token === this.pageToken) this.loading.style.display = 'none'; });
     this.pw = this.layerA.pw; this.ph = this.layerA.ph;
@@ -391,18 +409,34 @@ class Viewer {
   abortGesture() {
     const g = this.gesture;
     if (g && (g.type === 'move' || g.type === 'handle') && this.selected) { Object.assign(this.selected, clone(g.before)); this.renderItems(); }
+    if (g && g.hold) clearTimeout(g.hold);
+    if (g && g.type === 'erase') { this.eraseSet = null; this.renderItems(); }
     if (g && (g.type === 'drag' || g.type === 'pen' || g.type === 'seg')) this.draft = null;
     this.gesture = null;
     this.renderDraft();
   }
   startPinch() {
     const [a, b] = [...this.ptrs.values()];
+    const sel = this.selected;
+    if (sel && sel.type === 'text') { // צביטה על טקסט נבחר משנה את גודל הטקסט ולא את הזום
+      const mid = this.toPage({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      const bb = textBox(sel), pad = 80 / this.scale;
+      if (mid.x >= bb.x0 - pad && mid.x <= bb.x1 + pad && mid.y >= bb.y0 - pad && mid.y <= bb.y1 + pad) {
+        this.pinch = { mode: 'text', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, f0: sel.fontSize, before: clone(sel) };
+        return;
+      }
+    }
     this.pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, c0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, s0: this.scale, tx0: this.tx, ty0: this.ty };
   }
   doPinch() {
     const [a, b] = [...this.ptrs.values()];
     const p = this.pinch;
     const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    if (p.mode === 'text') {
+      this.selected.fontSize = Math.max(2, p.f0 * clamp(d / p.d0, 0.15, 10));
+      this.renderItems();
+      return;
+    }
     const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const ns = clamp(p.s0 * (d / p.d0), this.minScale(), MAXS);
     const c0x = this.viewX(p.c0.x), cx = this.viewX(c.x);
@@ -415,7 +449,7 @@ class Viewer {
     if (this.pinch && this.ptrs.size >= 2) { this.doPinch(); return; }
     const g = this.gesture;
     if (!g) {
-      if (this.draft && (this.draft.wait || this.draft.type === 'area')) { this.draft.hover = this.toPage(pt); this.renderDraft(); }
+      if (this.draft && (this.draft.wait || this.draft.type === 'area' || this.draft.type === 'polyline')) { this.draft.hover = this.orthoPt(this.toPage(pt)); this.renderDraft(); }
       return;
     }
     if (g.id !== e.pointerId) return;
@@ -434,10 +468,16 @@ class Viewer {
         break;
       case 'drag': this.draft.pts[1] = p; this.renderDraft(); break;
       case 'pen': {
+        if (g.snapped) { // אחרי זיהוי: קו ישר ממשיך לעקוב אחרי האצבע (עם הצמדה ל-0/45/90°)
+          if (g.snap.type === 'line') { this.draft.pts[1] = snapAngle(this.draft.pts[0], p); this.renderDraft(); }
+          break;
+        }
         const last = this.draft.pts[this.draft.pts.length - 1];
         if (dist(last, p) * this.scale > 1.5) { this.draft.pts.push(p); this.renderDraft(); }
+        if (Math.hypot(pt.x - g.anchor.x, pt.y - g.anchor.y) > 6) { g.anchor = { x: pt.x, y: pt.y }; this.armHold(g); }
         break;
       }
+      case 'erase': this.eraseAt(g.last, p); g.last = p; break;
       case 'seg':
         if (Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, p] }; this.renderDraft(); }
         break;
@@ -457,7 +497,11 @@ class Viewer {
       }
       case 'handle': {
         const it = this.selected;
-        if (RECT_TYPES.has(it.type)) { const c = corners(g.before.pts); it.pts = [c[(g.idx + 2) % 4], p]; } else it.pts = g.before.pts.map((q, i) => (i === g.idx ? p : q));
+        if (it.type === 'text') { // ידית פינה: שינוי גודל טקסט
+          const a0 = g.before.pts[0], bb = textBox(g.before);
+          const d0 = Math.hypot(bb.x1 - a0.x, bb.y1 - a0.y) || 1, d1 = Math.hypot(p.x - a0.x, p.y - a0.y);
+          it.fontSize = Math.max(2, g.before.fontSize * (d1 / d0));
+        } else if (RECT_TYPES.has(it.type)) { const c = corners(g.before.pts); it.pts = [c[(g.idx + 2) % 4], p]; } else it.pts = g.before.pts.map((q, i) => (i === g.idx ? p : q));
         g.moved = true;
         this.renderItems();
         break;
@@ -469,7 +513,9 @@ class Viewer {
     this.ptrs.delete(e.pointerId);
     if (this.pinch) {
       if (this.ptrs.size < 2) {
+        const pm = this.pinch;
         this.pinch = null;
+        if (pm.mode === 'text') { this.commitMod(pm.before, this.selected).then(() => this.renderProps()); return; }
         if (this.ptrs.size === 1) { const [id, q] = [...this.ptrs][0]; this.gesture = { type: 'pan', id, x: q.x, y: q.y, sx: q.x, sy: q.y, moved: true, t0: 0 }; }
       }
       return;
@@ -491,10 +537,12 @@ class Viewer {
         break;
       }
       case 'pen': {
+        clearTimeout(g.hold);
         const d = this.draft; this.draft = null;
         if (d && d.pts.length >= 2) this.commitNew(d); else this.renderDraft();
         break;
       }
+      case 'erase': this.commitErase(); break;
       case 'seg':
         if (g.moved) { const d = this.draft; this.draft = null; if (d && dist(d.pts[0], d.pts[1]) * this.scale >= 8) this.commitNew(d); else this.renderDraft(); }
         else { this.draft = { type: this.tool, pts: [g.p0, g.p0], wait: true, hover: g.p0 }; this.renderDraft(); this.renderProps(); }
@@ -509,7 +557,7 @@ class Viewer {
       case 'poly': if (!g.moved) this.addAreaPoint(p); break;
       case 'text': if (!g.moved) this.placeText(p); break;
       case 'move': case 'handle':
-        if (g.moved) this.commitMod(g.before, this.selected);
+        if (g.moved) this.commitMod(g.before, this.selected).then(() => { if (g.type === 'handle') this.renderProps(); });
         break;
     }
   }
@@ -526,6 +574,10 @@ class Viewer {
     if (this.tool === 'pan' && prefs.show.links) {
       const l = this.items.links.filter((it) => it.page === this.pageNum).reverse().find((it) => hitItem(it, p, 6 / this.scale));
       if (l) { this.followLink(l); return; }
+    }
+    if (this.tool === 'pan' && now - lt.t >= 320) { // לחיצה על סימון במצב הזזה: בוחרת אותו (עריכה/מחיקה)
+      const it = this.hit(p);
+      if (it && it.layer !== 'links') { this.lastTap = { t: now, x: pt.x, y: pt.y }; this.tool = 'select'; this.updateToolUI(); this.select(it); return; }
     }
     if (now - lt.t < 320 && Math.hypot(pt.x - lt.x, pt.y - lt.y) < 30) {
       const fitS = Math.min(this.vw / this.pw, this.H / this.ph) * 0.98;
@@ -549,6 +601,7 @@ class Viewer {
       return;
     }
     if (k === 'Delete' || k === 'Backspace') { if (this.selected) this.deleteSelected(); return; }
+    if (k === 'Enter' && this.draft && (this.draft.type === 'area' || this.draft.type === 'polyline')) { this.finishArea(); return; }
     if (k === '+' || k === '=') this.zoomBy(1.4);
     else if (k === '-') this.zoomBy(1 / 1.4);
     else if (k === '0') this.setZoom100();
@@ -591,8 +644,13 @@ class Viewer {
       case 'measure': case 'calibrate':
         if (this.draft && this.draft.wait) { this.gesture = { ...base, type: 'seg2', x: pt.x, y: pt.y }; return; }
         this.gesture = { ...base, type: 'seg', p0: p }; return;
-      case 'area': this.gesture = { ...base, type: 'poly', x: pt.x, y: pt.y }; return;
-      case 'pen': this.draft = { type: 'pen', pts: [p] }; this.gesture = { ...base, type: 'pen' }; return;
+      case 'area': case 'polyline': this.gesture = { ...base, type: 'poly', x: pt.x, y: pt.y }; return;
+      case 'eraser': this.eraseSet = new Set(); this.gesture = { ...base, type: 'erase', last: p }; this.eraseAt(p, p); return;
+      case 'pen':
+        this.draft = { type: 'pen', pts: [p] };
+        this.gesture = { ...base, type: 'pen', anchor: { x: pt.x, y: pt.y } };
+        this.armHold(this.gesture);
+        return;
       default: this.draft = { type: this.tool, pts: [p, p] }; this.gesture = { ...base, type: 'drag' };
     }
   }
@@ -615,7 +673,11 @@ class Viewer {
   renderItems() {
     this.gItems.textContent = '';
     const cx = this.ctx();
-    for (const it of this.visibleItems()) this.gItems.append(drawItem(it, cx));
+    for (const it of this.visibleItems()) {
+      const node = drawItem(it, cx);
+      if (this.eraseSet && this.eraseSet.has(it.id)) node.setAttribute('opacity', '0.22');
+      this.gItems.append(node);
+    }
     this.renderSel();
   }
   renderDraft() {
@@ -630,22 +692,31 @@ class Viewer {
     }
     const it = this.newItem(d, true);
     let pts = d.pts;
-    if (d.type === 'area' && d.hover) pts = [...d.pts, d.hover];
+    const isPoly = d.type === 'area' || d.type === 'polyline';
+    if (isPoly && d.hover) pts = [...d.pts, d.hover];
     else if (d.wait && d.hover) pts = [d.pts[0], d.hover];
     this.gDraft.append(drawItem({ ...it, pts }, this.ctx()));
-    if (d.type === 'area') d.pts.forEach((q) => this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 5 / sc, fill: '#fff', stroke: '#d81b60', 'stroke-width': 2 / sc })));
+    if (isPoly) d.pts.forEach((q) => this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 5 / sc, fill: '#fff', stroke: '#d81b60', 'stroke-width': 2 / sc })));
   }
   newItem(d, preview = false) {
     const sc = this.scale;
     const type = d.type;
     const it = {
       id: preview ? 'draft' : uid(), versionId: this.version.id, planId: this.planId, page: this.pageNum, type, layer: LAYER_OF[type],
-      pts: d.pts.map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })), color: prefs.color, width: WIDTHS[prefs.wi] / sc, created: Date.now(),
+      pts: d.pts.map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })), created: Date.now(),
     };
-    if (type === 'text') { it.text = d.text || ''; it.fontSize = TEXT_PX[prefs.wi] / sc; }
+    const kind = kindOf(type);
+    if (kind === 'text') {
+      it.color = prefs.tcolor; it.op = prefs.top; it.text = d.text || ''; it.fontSize = prefs.tsize / sc; it.width = 1 / sc;
+    } else if (kind === 'hl') {
+      it.color = prefs.hcolor; it.fillOp = prefs.hop; it.width = 1 / sc;
+    } else if (kind === 'shape') {
+      it.color = prefs.color; it.width = prefs.w / sc; it.op = prefs.op;
+      if (!d.fromPen && (type === 'rect' || type === 'ellipse')) { it.fill = prefs.fill; it.fillOp = prefs.fillOp; }
+      if (type === 'polyline') { it.fontSize = 14 / sc; if (d.closed) it.closed = true; }
+    }
     if (type === 'measure' || type === 'area') { it.color = '#d81b60'; it.width = 2.5 / sc; it.fontSize = 15 / sc; }
     if (type === 'link') { it.color = '#1d4e89'; it.width = 2 / sc; it.fontSize = 14 / sc; }
-    if (type === 'highlight' && prefs.color === '#111111') it.color = '#fdd835';
     return it;
   }
   async commitNew(d) {
@@ -663,6 +734,7 @@ class Viewer {
   }
   async commitMod(before, after) {
     const a = clone(after);
+    if (a.type === 'text' && before.fontSize !== a.fontSize) { prefs.tsize = Math.max(8, Math.round(a.fontSize * this.scale)); savePrefs(); }
     await db.put(a.layer, a);
     this.history.push({ before: clone(before), after: a });
     this.redoStack = [];
@@ -676,8 +748,12 @@ class Viewer {
     else { const c = clone(to); if (i >= 0) arr[i] = c; else arr.push(c); await db.put(src.layer, c); if (this.selected?.id === c.id) this.selected = c; }
     this.renderItems(); this.renderProps();
   }
-  async undo() { const c = this.history.pop(); if (!c) return; await this.setItemState(c.after, c.before); this.redoStack.push(c); this.updateUndo(); }
-  async redo() { const c = this.redoStack.pop(); if (!c) return; await this.setItemState(c.before, c.after); this.history.push(c); this.updateUndo(); }
+  async applyEntry(c, undo) {
+    const list = c.multi ? (undo ? [...c.multi].reverse() : c.multi) : [c];
+    for (const e of list) await (undo ? this.setItemState(e.after, e.before) : this.setItemState(e.before, e.after));
+  }
+  async undo() { const c = this.history.pop(); if (!c) return; await this.applyEntry(c, true); this.redoStack.push(c); this.updateUndo(); }
+  async redo() { const c = this.redoStack.pop(); if (!c) return; await this.applyEntry(c, false); this.history.push(c); this.updateUndo(); }
   updateUndo() {
     if (!this.undoBtn) return;
     this.undoBtn.disabled = !this.history.length;
@@ -695,6 +771,7 @@ class Viewer {
     return handlesOf(this.selected).find((hd) => Math.hypot(hd.x - p.x, hd.y - p.y) <= tol) || null;
   }
   select(it, silent) {
+    if (this._editBefore) this.commitEdit();
     this.selected = it;
     this.renderSel();
     if (!silent) this.renderProps();
@@ -728,26 +805,95 @@ class Viewer {
   async placeText(p) {
     const v = await UI.promptBox({ title: 'טקסט על התוכנית', multiline: true, placeholder: 'הקלד הערה…', okText: 'הוסף' });
     if (!v) return;
-    await this.addItem(this.newItem({ type: 'text', pts: [p], text: v }));
+    const it = this.newItem({ type: 'text', pts: [p], text: v });
+    await this.addItem(it);
+    // עוברים לבחירה: אפשר מיד לשנות גודל (צביטה, ידית בפינה או מספר), צבע ושקיפות
+    this.tool = 'select'; this.updateToolUI(); this.select(it);
+    if (!prefs.tipText) { prefs.tipText = 1; savePrefs(); UI.toast('לשינוי גודל: צביטה עם שתי אצבעות על הטקסט, גרירת העיגול בפינה, או מספר בסרגל', { ms: 5000 }); }
+  }
+  // אם נבחר פריט – משנים אותו. אחרת – מעדכנים את ברירת המחדל.
+  orthoPt(p) {
+    const d = this.draft;
+    if (!d || d.type !== 'polyline' || !prefs.ortho || !d.pts.length) return p;
+    const last = d.pts[d.pts.length - 1];
+    const ang = Math.atan2(p.y - last.y, p.x - last.x), step = Math.PI / 4, a2 = Math.round(ang / step) * step, len = Math.hypot(p.x - last.x, p.y - last.y);
+    return { x: last.x + Math.cos(a2) * len, y: last.y + Math.sin(a2) * len };
   }
   addAreaPoint(p) {
-    if (!this.draft) this.draft = { type: 'area', pts: [] };
+    const type = this.tool === 'polyline' ? 'polyline' : 'area';
+    if (!this.draft) this.draft = { type, pts: [] };
     const d = this.draft;
     const last = d.pts[d.pts.length - 1];
+    if (type === 'polyline') {
+      if (last && d.pts.length >= 2 && dist(last, p) * this.scale < 18) { this.finishArea(); return; } // לחיצה על הנקודה האחרונה = סיום
+      if (d.pts.length >= 3 && dist(d.pts[0], p) * this.scale < 18) { d.closed = true; this.finishArea(); return; } // לחיצה על הראשונה = סגירת צורה
+      p = this.orthoPt(p);
+    } else {
+      if (last && dist(last, p) * this.scale < 4) return;
+      if (d.pts.length >= 3 && dist(d.pts[0], p) * this.scale < 14) { this.finishArea(); return; }
+    }
     if (last && dist(last, p) * this.scale < 4) return;
-    if (d.pts.length >= 3 && dist(d.pts[0], p) * this.scale < 14) { this.finishArea(); return; }
     d.pts.push(p);
+    this.renderDraft(); this.renderProps();
+  }
+  undoPoint() {
+    const d = this.draft;
+    if (!d || !d.pts) return;
+    d.pts.pop();
+    if (!d.pts.length) this.draft = null;
     this.renderDraft(); this.renderProps();
   }
   async finishArea() {
     const d = this.draft;
-    if (!d || d.pts.length < 3) { UI.toast('שטח דורש לפחות 3 נקודות'); return; }
+    const need = d && d.type === 'polyline' ? 2 : 3;
+    if (!d || d.pts.length < need) { UI.toast(need === 2 ? 'קו דורש לפחות 2 נקודות' : 'שטח דורש לפחות 3 נקודות'); return; }
     this.draft = null;
     delete d.hover;
     await this.commitNew(d);
     this.renderDraft(); this.renderProps();
   }
   cancelDraft() { this.draft = null; this.renderDraft(); this.renderProps(); }
+
+  // ---------- עט: לחיצה ארוכה מיישרת לקו/צורה ----------
+  armHold(g) {
+    clearTimeout(g.hold);
+    g.hold = setTimeout(() => this.snapPen(g), 650);
+  }
+  snapPen(g) {
+    if (this.gesture !== g || g.snapped || !this.draft || this.draft.type !== 'pen') return;
+    const r = recognize(this.draft.pts, this.scale);
+    if (!r) {
+      if (!g.hintShown) { g.hintShown = true; UI.toast('לא זוהתה צורה – שחררו כרגיל כדי לשמור את הקו החופשי', { ms: 2200 }); }
+      return;
+    }
+    g.snapped = true; g.snap = r;
+    navigator.vibrate?.(12);
+    this.draft = { type: r.type, pts: r.pts.map((q) => ({ x: q.x, y: q.y })), closed: r.closed, fromPen: true };
+    this.renderDraft();
+  }
+
+  // ---------- מחק ----------
+  eraseAt(a, b) {
+    const tol = 11 / this.scale, step = Math.max(2 / this.scale, 1e-3);
+    const n = Math.max(1, Math.ceil(dist(a, b) / (step * 3)));
+    let changed = false;
+    const list = this.visibleItems();
+    for (let i = 0; i <= n; i++) {
+      const q = { x: a.x + ((b.x - a.x) * i) / n, y: a.y + ((b.y - a.y) * i) / n };
+      for (const it of list) if (!this.eraseSet.has(it.id) && hitItem(it, q, tol)) { this.eraseSet.add(it.id); changed = true; }
+    }
+    if (changed) this.renderItems();
+  }
+  async commitErase() {
+    const ids = this.eraseSet; this.eraseSet = null;
+    if (!ids || !ids.size) { this.renderItems(); return; }
+    const entries = [];
+    for (const layer of ['markups', 'measurements', 'links']) for (const it of this.items[layer]) if (ids.has(it.id)) entries.push({ before: clone(it), after: null });
+    for (const e of entries) await this.setItemState(e.before, null);
+    this.history.push({ multi: entries }); this.redoStack = [];
+    this.updateUndo(); this.renderProps();
+    UI.toast(entries.length === 1 ? 'נמחק פריט אחד (אפשר לבטל)' : `נמחקו ${entries.length} פריטים (אפשר לבטל)`, { ms: 1800 });
+  }
 
   // ---------- כיול ומדידה ----------
   async needCalibration(nextTool) {
@@ -894,58 +1040,6 @@ class Viewer {
     q.set('page', t.page || 1);
     if (t.view) { q.set('x', t.view.cx.toFixed(2)); q.set('y', t.view.cy.toFixed(2)); q.set('z', t.view.scale.toFixed(4)); }
     location.hash = `#/p/${plan.id}?${q}`;
-  }
-
-  // ---------- שורת מאפיינים ----------
-  renderProps() {
-    const p = this.props;
-    p.textContent = '';
-    const sel = this.selected;
-    const t = this.tool;
-    const row = [];
-    const colorTools = DRAW_TOOLS.has(t) || (t === 'select' && sel && (DRAW_TOOLS.has(sel.type) || sel.type === 'area' || sel.type === 'measure'));
-    if (colorTools) {
-      COLORS.forEach((c) => {
-        const on = (sel && t === 'select' ? sel.color : prefs.color) === c;
-        row.push(h('button', { class: 'sw' + (on ? ' on' : ''), style: { background: c }, 'aria-label': 'צבע', onclick: () => {
-          if (sel && t === 'select') this.modifySelected((it) => { it.color = c; }); else { prefs.color = c; savePrefs(); this.renderProps(); }
-        } }));
-      });
-      const isText = t === 'text' || (sel && t === 'select' && sel.type === 'text');
-      WIDTHS.forEach((w, i) => {
-        const on = !(sel && t === 'select') && i === prefs.wi;
-        row.push(h('button', { class: 'wd' + (on ? ' on' : ''), 'aria-label': isText ? 'גודל טקסט' : 'עובי קו', onclick: () => {
-          if (sel && t === 'select') this.modifySelected((it) => { if (it.type === 'text') it.fontSize = TEXT_PX[i] / this.scale; else it.width = w / this.scale; });
-          else { prefs.wi = i; savePrefs(); this.renderProps(); }
-        } }, isText ? h('span', { style: { fontSize: 10 + i * 3 + 'px' } }, 'א') : h('i', { style: { height: w + 'px' } })));
-      });
-    }
-    if (t === 'measure' || t === 'area' || t === 'calibrate' || (sel && t === 'select' && (sel.type === 'measure' || sel.type === 'area'))) {
-      const cal = this.calibs.get(this.pageNum);
-      const u = h('select', { 'aria-label': 'יחידות', onchange: () => { prefs.unit = u.value; savePrefs(); this.renderItems(); } },
-        h('option', { value: 'm' }, 'מטר'), h('option', { value: 'cm' }, 'ס״מ'), h('option', { value: 'mm' }, 'מ״מ'));
-      u.value = prefs.unit;
-      row.push(u, h('button', { class: 'btn sm', onclick: () => this.calibrateDialog() }, cal ? (cal.source === 'ratio' ? `סקאלה 1:${cal.ratio}` : 'כויל ידנית') : 'נדרש כיול'));
-      if (t === 'measure') row.push(h('small', { class: 'hint-inline' }, this.draft?.wait ? 'לחצו על הנקודה השנייה' : 'לחצו נקודה ראשונה, או גררו'));
-      if (t === 'calibrate') row.push(h('small', { class: 'hint-inline' }, 'כיול: סמנו שתי נקודות'));
-      if (t === 'area') row.push(h('small', { class: 'hint-inline' }, 'הקישו נקודות; סיום: לחצו על הנקודה הראשונה'));
-    }
-    if (this.draft && (t === 'area' || this.draft.wait)) {
-      if (t === 'area') row.push(h('button', { class: 'btn sm primary', onclick: () => this.finishArea() }, 'סיום'));
-      row.push(h('button', { class: 'btn sm', onclick: () => this.cancelDraft() }, 'בטל'));
-    }
-    if (t === 'calibrate') row.push(h('button', { class: 'btn sm', onclick: () => { this.tool = 'pan'; this.draft = null; this.renderDraft(); this.updateToolUI(); this.renderProps(); } }, 'ביטול כיול'));
-    if (sel && t === 'select') {
-      if (sel.type === 'text') row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: 'עריכת טקסט', multiline: true, value: sel.text, okText: 'שמור' }); if (v) this.modifySelected((it) => { it.text = v; }); } }, icon('edit', 16), 'ערוך'));
-      if (sel.type === 'link') {
-        row.push(h('button', { class: 'btn sm', onclick: () => this.followLink(sel) }, 'פתח'));
-        row.push(h('button', { class: 'btn sm', onclick: async () => { const r = await this.linkDialog(sel); if (!r) return; await this.modifySelected((it) => { it.target = r.target; }); if (r.pick) this.beginPick(this.selected); } }, icon('edit', 16), 'יעד'));
-        row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: 'שם הקישור (אופציונלי)', value: sel.text || '', okText: 'שמור' }); if (v != null) this.modifySelected((it) => { it.text = v; }); } }, 'שם'));
-      }
-      row.push(h('button', { class: 'btn sm danger', onclick: () => this.deleteSelected() }, icon('trash', 16), 'מחק'));
-    }
-    p.classList.toggle('has', row.length > 0);
-    p.append(...row);
   }
 
   // ---------- לוחות צד: עמודים וחיפוש ----------
@@ -1229,6 +1323,8 @@ class Viewer {
       { label: 'השוואת תוכניות', icon: 'compare', onClick: () => this.openCompare() },
       { label: 'שכבות (הצגה/הסתרה)', icon: 'layers', onClick: () => this.layersDialog() },
       { divider: true },
+      { label: 'הדפסה / שמירה כ-PDF עם הסימונים', icon: 'print', onClick: () => this.printDialog() },
+      { label: 'שנה שם תוכנית', icon: 'edit', onClick: () => this.renameDialog() },
       { label: 'פתח באמצעות / שתף', icon: 'share', onClick: () => A.openWithDialog(this.plan, this.version?.id) },
       { label: 'הורד PDF מקורי', icon: 'download', onClick: () => A.downloadVersion(this.version?.id, this.plan.name) },
       { label: 'סקאלה וכיול לעמוד', icon: 'ruler', onClick: () => this.calibrateDialog() },
@@ -1243,7 +1339,9 @@ class Viewer {
     const list = this.items.markups.filter((i) => i.page === this.pageNum);
     if (!list.length) { UI.toast('אין סימונים בעמוד'); return; }
     if (!(await UI.confirmBox(`למחוק ${list.length} סימונים בעמוד ${this.pageNum}? (מדידות וקישורים לא יימחקו)`, { danger: true, okText: 'מחק' }))) return;
-    for (const it of list) { await this.setItemState(it, null); this.history.push({ before: clone(it), after: null }); }
+    const entries = list.map((it) => ({ before: clone(it), after: null }));
+    for (const e of entries) await this.setItemState(e.before, null);
+    this.history.push({ multi: entries });
     this.redoStack = [];
     this.updateUndo();
   }
@@ -1267,3 +1365,6 @@ class Viewer {
     this.el?.remove();
   }
 }
+
+installStyle(Viewer);
+installPrint(Viewer);

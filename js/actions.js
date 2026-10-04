@@ -28,7 +28,7 @@ export async function importFiles(files, folderId) {
     }
   } finally { pb.close(); }
   const broken = created.filter((p) => S.curVer(p)?.broken).length;
-  if (created.length) UI.toast(`נוספו ${created.length} תוכניות` + (files.length - pdfs.length ? ` (${files.length - pdfs.length} קבצים שאינם PDF דולגו)` : ''));
+  if (created.length) UI.toast(`נוספו ${created.length} תוכניות` + (files.length - pdfs.length ? ` (${files.length - pdfs.length} קבצים שאינם PDF דולגו)` : '') + ' · עותק נשמר באפליקציה, אפשר למחוק את המקור מהטלפון', { ms: 5000 });
   if (broken) await UI.alertBox(`${broken} קבצים נשמרו, אבל ה-Viewer הפנימי לא הצליח לפתוח אותם. אפשר להוריד אותם או לפתוח באפליקציית PDF אחרת (תפריט ⋮ ← פתח באמצעות).`, { title: 'שימו לב' });
   if (failed.length) await UI.alertBox(failed.map((f) => `${f.name}: ${f.msg}`).join('\n'), { title: 'חלק מהקבצים לא נשמרו' });
   return created;
