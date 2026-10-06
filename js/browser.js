@@ -1,4 +1,9 @@
 // מסך ניהול הקבצים: עץ תיקיות, כרטיסי תיקיות/תוכניות, חיפוש, בחירה מרובה, גרירה, ניהול אחסון
+import { accountBox, grantsDialog } from './cloud-ui.js';
+import { isAdmin, isCloud } from './cloud.js';
+import { canEditHere } from './cloud-sync.js';
+import * as FI from './folder-import.js';
+import { pickFiles } from './actions.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
 import * as A from './actions.js';
@@ -45,15 +50,21 @@ export function mountBrowser(root) {
   buildTop();
   S.subscribe(() => renderAll());
   S.onIndexStatus((t) => { if (el.status) el.status.textContent = t; });
-  // גרירת קבצי PDF מהמחשב לתוך האפליקציה
-  el.content.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); el.content.classList.add('file-drop'); } });
-  el.content.addEventListener('dragleave', (e) => { if (e.target === el.content) el.content.classList.remove('file-drop'); });
-  el.content.addEventListener('drop', async (e) => {
-    el.content.classList.remove('file-drop');
-    if (e.dataTransfer.files?.length && !e.dataTransfer.types.includes(MIME)) {
-      e.preventDefault();
-      if (st.mode === 'folder') await A.importFiles([...e.dataTransfer.files], st.folderId);
-    }
+  // גרירת קבצים/תיקיות מהמחשב לתוך האפליקציה (בכל מסך הניהול). גרירה פנימית של פריטים משתמשת ב-MIME משלה ולא מושפעת.
+  const hasFiles = (e) => e.dataTransfer?.types?.includes('Files') && !e.dataTransfer.types.includes(MIME);
+  let dragDepth = 0;
+  const dropHint = h('div', { class: 'file-drop-hint hidden' }, icon('upload', 28), h('b', {}, 'שחררו כאן להעלאה'), h('small', {}, 'קבצי PDF או תיקיות שלמות – המבנה נשמר'));
+  el.shell.append(dropHint);
+  const inViewer = () => !!document.querySelector('#viewer-root .viewer');
+  window.addEventListener('dragenter', (e) => { if (hasFiles(e) && !inViewer()) { dragDepth++; dropHint.classList.remove('hidden'); } });
+  window.addEventListener('dragleave', (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; dropHint.classList.add('hidden'); } });
+  window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; dropHint.classList.add('hidden');
+    if (inViewer() || (st.mode !== 'folder')) { UI.toast('גררו לתוך מסך התיקיות כדי להעלות', { type: 'error' }); return; }
+    if (!canEditHere(st.folderId)) { UI.toast('אין לך הרשאת עריכה בתיקייה הזו', { type: 'error' }); return; }
+    await FI.handleDrop(e.dataTransfer, st.folderId);
   });
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.viewer') || document.querySelector('.modal-back')) return;
@@ -99,6 +110,8 @@ function addMenu(anchor) {
   const fid = st.mode === 'folder' ? st.folderId : null;
   UI.menu(anchor, [
     { label: 'העלאת PDF (אחד או כמה)', icon: 'upload', onClick: () => A.uploadInto(fid) },
+    { label: 'העלאת תיקייה שלמה (עם תתי-תיקיות)', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(fid) },
+    { label: 'העלאת ZIP עם מבנה תיקיות', icon: 'archive', onClick: () => FI.uploadZipFlow(fid, pickFiles) },
     { label: 'תיקייה חדשה', icon: 'folderPlus', onClick: () => A.newFolderDialog(fid) },
   ]);
 }
@@ -106,8 +119,7 @@ function addMenu(anchor) {
 function mainMenu(anchor) {
   UI.menu(anchor, [
     { label: 'ניהול אחסון', icon: 'drive', onClick: () => { location.hash = '#/storage'; } },
-    { label: 'ייצוא פרויקט (גיבוי)', icon: 'archive', onClick: () => B.exportProject() },
-    { label: 'ייבוא פרויקט (שחזור)', icon: 'upload', onClick: () => B.importFlow() },
+    { label: 'גיבוי ושחזור…', icon: 'archive', onClick: () => B.backupDialog() },
     { divider: true },
     { label: 'שנה שם פרויקט', icon: 'edit', onClick: async () => { const v = await UI.promptBox({ title: 'שם הפרויקט', value: S.P.project.name, okText: 'שמור' }); if (v) S.renameProject(v); } },
     { label: 'התקנה כאפליקציה', icon: 'download', onClick: installApp },
@@ -123,7 +135,7 @@ function renderAll() {
   if (st.mode === 'folder') renderFolder();
   else if (st.mode === 'search') renderSearch();
   else if (st.mode === 'storage') renderStorage();
-  el.fab.style.display = st.mode === 'storage' ? 'none' : '';
+  el.fab.style.display = (st.mode === 'storage' || (st.mode === 'folder' && !canEditHere(st.folderId))) ? 'none' : '';
 }
 
 // עץ צד
@@ -134,6 +146,8 @@ function renderSidebar() {
     h('button', { class: 'icon-btn sm', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); UI.menu(e.currentTarget, [
       { label: 'תיקייה חדשה', icon: 'folderPlus', onClick: () => A.newFolderDialog(null) },
       { label: 'העלאת PDF', icon: 'upload', onClick: () => A.uploadInto(null) },
+      { label: 'העלאת תיקייה שלמה', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(null) },
+      { label: 'העלאת ZIP עם מבנה תיקיות', icon: 'archive', onClick: () => FI.uploadZipFlow(null, pickFiles) },
       { label: 'שנה שם פרויקט', icon: 'edit', onClick: async () => { const v = await UI.promptBox({ title: 'שם הפרויקט', value: S.P.project.name, okText: 'שמור' }); if (v) S.renameProject(v); } },
     ]); } }, icon('more', 16)));
   makeDropTarget(rootRow, null);
@@ -158,12 +172,12 @@ function renderSidebar() {
   };
   walk(null, 1);
   const foot = h('div', { class: 'sb-foot' },
+    accountBox(),
     h('button', { class: 'btn ghost block', onclick: () => { location.hash = '#/storage'; } }, icon('drive', 18), 'ניהול אחסון'),
-    h('button', { class: 'btn ghost block', onclick: () => B.exportProject() }, icon('archive', 18), 'ייצוא פרויקט'),
-    h('button', { class: 'btn ghost block', onclick: () => B.importFlow() }, icon('upload', 18), 'ייבוא פרויקט'),
+    h('button', { class: 'btn ghost block', onclick: () => B.backupDialog() }, icon('archive', 18), 'גיבוי ושחזור'),
     el.status, h('div', { class: 'sb-credit' }, 'נוצר על ידי דוד אורן'));
   el.sidebar.replaceChildren(
-    h('div', { class: 'sb-head' }, h('div', { class: 'logo' }, icon('layers', 22)), h('div', {}, h('b', {}, 'תוכניות בנייה'), h('small', {}, 'הכל שמור במכשיר'))),
+    h('div', { class: 'sb-head' }, h('div', { class: 'logo' }, icon('layers', 22)), h('div', {}, h('b', {}, 'תוכניות בנייה'), h('small', {}, isCloud() ? 'מסונכרן לענן' : 'הכל שמור במכשיר'))),
     tree, foot);
 }
 
@@ -250,9 +264,12 @@ function folderMenu(id, anchor) {
     { label: 'פתח', icon: 'folder', onClick: () => { location.hash = '#/f/' + id; } },
     { label: 'תת-תיקייה חדשה', icon: 'folderPlus', onClick: () => { st.expanded.add(id); saveExpanded(); A.newFolderDialog(id); } },
     { label: 'העלאת PDF לכאן', icon: 'upload', onClick: () => A.uploadInto(id) },
+    { label: 'העלאת תיקייה שלמה לכאן', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(id) },
+    { label: 'העלאת ZIP לכאן', icon: 'archive', onClick: () => FI.uploadZipFlow(id, pickFiles) },
     { label: 'שנה שם', icon: 'edit', onClick: () => A.renameFolderDialog(id) },
     { label: 'העבר…', icon: 'move', onClick: () => A.moveDialog({ folders: [id], plans: [] }, S.P.folders.get(id)?.parentId) },
     { label: 'הורד כ-ZIP', icon: 'download', onClick: () => B.downloadItems({ folders: [id], plans: [] }) },
+    ...(isAdmin() ? [{ label: 'הרשאות עובדים…', icon: 'lock', onClick: () => grantsDialog({ folderId: id }) }] : []),
     { divider: true },
     { label: 'מחק', icon: 'trash', danger: true, onClick: async () => { const wasHere = S.isDescendant(st.folderId, id); await A.deleteDialog({ folders: [id], plans: [] }); if (wasHere && !S.P.folders.has(st.folderId)) location.hash = '#/f/'; } },
   ]);
@@ -267,6 +284,7 @@ function planMenu(id, anchor) {
     { label: 'גרסאות', icon: 'clock', onClick: () => A.versionsDialog(id) },
     { label: 'הורד PDF', icon: 'download', onClick: () => A.downloadVersion(p.currentVersionId, p.name) },
     { label: 'פתח באמצעות / שתף', icon: 'share', onClick: () => A.openWithDialog(p) },
+    ...(isAdmin() ? [{ label: 'הרשאות עובדים…', icon: 'lock', onClick: () => grantsDialog({ planId: id }) }] : []),
     { label: 'פרטים', icon: 'info', onClick: () => A.planInfoDialog(id) },
     { divider: true },
     { label: 'מחק', icon: 'trash', danger: true, onClick: () => A.deleteDialog({ folders: [], plans: [id] }) },
@@ -579,6 +597,7 @@ function renderSearch() {
       if (!rows.length) {
         const pending = [...S.P.versions.values()].filter((v) => !v.indexed && !v.broken).length;
         textBox.append(h('p', { class: 'hint' }, pending ? `לא נמצאו תוצאות. ${pending} קבצים עדיין באינדוקס, נסו שוב בעוד רגע.` : 'לא נמצא טקסט תואם בקבצים. (קבצי סריקה ללא טקסט לא ניתנים לחיפוש – OCR עדיין לא נתמך.)'));
+        if (!pending) textBox.append(h('button', { class: 'btn sm', onclick: async () => { if (await UI.confirmBox('האפליקציה קוראת את הטקסט מכל ה-PDF ברקע כדי שאפשר יהיה לחפש בתוכם. אם נראה שהחיפוש מפספס טקסט שקיים בקבצים, אפשר לבנות את האינדקס מחדש. זה לא משנה ולא מוחק שום קובץ. להמשיך?', { okText: 'בנה מחדש' })) { await S.reindexAll(); UI.toast('האינדוקס התחיל ברקע'); } } }, 'החיפוש מפספס? בנה מחדש אינדקס טקסט'));
         return;
       }
       textBox.append(h('div', { class: 'result-list' }, rows.map((r) => {
@@ -596,6 +615,7 @@ async function renderStorage() {
   wrap.append(h('div', { class: 'title-row' },
     h('button', { class: 'icon-btn', 'aria-label': 'חזרה', onclick: () => { location.hash = '#/f/' + (st.folderId || ''); } }, icon('back')),
     h('h1', {}, 'ניהול אחסון')));
+  wrap.append(h('p', { class: 'hint' }, 'כאן רואים כמה מקום תופסות התוכניות ואפשר למחוק קבצים כדי לפנות מקום. גיבוי ושחזור נמצאים בתפריט הצד: "גיבוי ושחזור".'));
   wrap.append(credit());
   el.content.replaceChildren(wrap);
   const est = await db.storageEstimate();
@@ -611,13 +631,10 @@ async function renderStorage() {
       h('div', {}, h('b', {}, fmtSize(est.usage)), h('small', {}, 'סה״כ בשימוש (כולל נתוני מערכת)'))),
     est.quota ? h('div', { class: 'bar' + (frac > 0.8 ? ' danger' : '') }, h('div', { class: 'bar-fill', style: { width: Math.min(100, frac * 100) + '%' } })) : null,
     est.quota ? h('small', {}, `${fmtSize(est.usage)} מתוך כ-${fmtSize(est.quota)} שהדפדפן מקצה (${(frac * 100).toFixed(1)}%). המכסה משתנה לפי המכשיר והדפדפן.`) : h('small', {}, 'הדפדפן לא מדווח על מכסת אחסון.'),
-    frac > 0.8 ? h('p', { class: 'warn' }, 'האחסון מתקרב למגבלה. מומלץ לגבות (ייצוא פרויקט) ולמחוק קבצים שלא בשימוש.') : null,
+    frac > 0.8 ? h('p', { class: 'warn' }, 'האחסון מתקרב למגבלה. מומלץ לגבות (תפריט ← גיבוי ושחזור) ולמחוק קבצים שלא בשימוש.') : null,
     h('p', { class: est.persisted ? 'ok' : 'hint' }, est.persisted ? 'האחסון מסומן כקבוע – הדפדפן לא אמור למחוק אותו אוטומטית.' : 'האחסון לא מסומן כקבוע: בלחץ מקום, או ב-Safari אחרי כמה ימים בלי שימוש (כשלא מותקן כאפליקציה), הדפדפן עלול למחוק נתונים. התקנה למסך הבית וגיבוי קבוע מקטינים את הסיכון.'),
     est.persisted ? null : h('button', { class: 'btn', onclick: async () => { const ok = await db.requestPersist(); UI.toast(ok ? 'האחסון סומן כקבוע' : 'הדפדפן לא אישר אחסון קבוע', { type: ok ? '' : 'error' }); renderStorage(); } }, 'בקש אחסון קבוע'));
   wrap.append(box);
-  wrap.append(h('div', { class: 'row' },
-    h('button', { class: 'btn', onclick: () => B.exportProject() }, icon('archive', 18), 'ייצוא פרויקט'),
-    h('button', { class: 'btn', onclick: async () => { if (await UI.confirmBox('לבנות מחדש את אינדקס החיפוש בטקסט לכל הקבצים? זה רץ ברקע.', { okText: 'בנה מחדש' })) { await S.reindexAll(); UI.toast('האינדוקס התחיל ברקע'); } } }, 'בנה מחדש אינדקס חיפוש')));
   wrap.append(h('h4', { class: 'sec' }, 'תוכניות לפי גודל'));
   if (!rows.length) wrap.append(h('p', { class: 'empty-sm' }, 'אין עדיין תוכניות'));
   wrap.append(h('div', { class: 'stor-list' }, rows.slice(0, 500).map((r) => h('div', { class: 'stor-row' },

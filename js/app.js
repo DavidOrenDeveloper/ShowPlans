@@ -7,6 +7,9 @@ import { setPasswordHandler } from './pdfio.js';
 import { mountBrowser, show } from './browser.js';
 import { openViewer, closeViewer } from './viewer.js';
 import { h } from './util.js';
+import { initCloud, cloud, dbNameFor, isCloud } from './cloud.js';
+import { loginScreen, maybeImportLocal } from './cloud-ui.js';
+import { startSync } from './cloud-sync.js';
 
 window.__navCount = 0;
 let viewerRoot;
@@ -70,6 +73,11 @@ async function registerSW() {
 async function main() {
   setPasswordHandler(UI.askPassword);
   try {
+    await initCloud();
+    if (cloud.needLogin) await loginScreen();
+    db.useDb(dbNameFor());
+  } catch (e) { console.error('cloud init', e); }
+  try {
     await S.init();
   } catch (e) {
     console.error(e);
@@ -85,6 +93,12 @@ async function main() {
   await route();
   registerSW();
   db.requestPersist();
+  if (isCloud()) { try { await startSync(); await maybeImportLocal(); } catch (e) { console.warn('sync start', e); } }
 }
+
+window.addEventListener('unhandledrejection', (e) => {
+  const m = e.reason?.message || '';
+  if (/הרשאה/.test(m)) { UI.toast(m, { type: 'error', ms: 4500 }); e.preventDefault(); }
+});
 
 main();

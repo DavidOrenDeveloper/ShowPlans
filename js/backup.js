@@ -155,3 +155,17 @@ export async function downloadItems({ folders = [], plans = [] }) {
     downloadBlob(zip, `plans-${todayISO()}.zip`);
   } catch (e) { pb.close(); await UI.alertBox(e.message || String(e), { title: 'ההורדה נכשלה' }); }
 }
+
+// מסך אחד לגיבוי ושחזור (במקום כפתורי "ייצוא/ייבוא" מפוזרים)
+export function backupDialog() {
+  const body = h('div', { class: 'form' },
+    h('h3', {}, 'גיבוי'),
+    h('p', { class: 'hint' }, 'קובץ ZIP אחד עם כל התוכניות, התיקיות, הגרסאות והסימונים. נשמר אצלך (הורדות) ומאומת אחרי היצירה. מומלץ לגבות מדי פעם ולשמור את הקובץ מחוץ לטלפון.'),
+    h('button', { class: 'btn primary', onclick: () => { m.close(); exportProject(); } }, 'צור גיבוי'),
+    h('h3', {}, 'שחזור'),
+    h('p', { class: 'hint' }, 'טוען קובץ גיבוי שיצרתם קודם. תוכלו לבחור אם להחליף את כל מה שיש כעת, או להוסיף אליו.'),
+    h('button', { class: 'btn', onclick: () => { m.close(); importFlow(); } }, 'שחזר מקובץ גיבוי'),
+    h('p', { class: 'hint' }, 'הורדת תוכניות או תיקייה בלי הסימונים (קבצי PDF בלבד, כ-ZIP): תפריט ⋮ של התיקייה ← "הורד כ-ZIP".'));
+  const m = UI.openModal({ title: 'גיבוי ושחזור', body, buttons: [{ text: 'סגור', value: true }] });
+  return m.promise;
+}

@@ -72,7 +72,6 @@ class Viewer {
   build() {
     this.titleEl = h('div', { class: 'v-title', title: 'לחצו לשינוי שם התוכנית' });
     this.titleEl.addEventListener('click', () => this.renameDialog());
-    this.credit = h('div', { class: 'v-credit' }, 'נוצר על ידי דוד אורן');
     const btn = (ic, label, fn) => h('button', { class: 'icon-btn', 'aria-label': label, title: label, onclick: fn }, icon(ic));
     this.stage = h('div', { class: 'v-stage' });
     this.layerA = new Layer();
@@ -118,7 +117,7 @@ class Viewer {
     this.pickBar = h('div', { class: 'v-pick hidden' });
     this.exitImm = h('button', { class: 'v-exit-imm', 'aria-label': 'הצג סרגלים', onclick: () => this.el.classList.remove('immersive') }, icon('chevD'));
 
-    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.panel, this.credit);
+    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.panel);
     this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar, this.mid,
       this.cmpBar, this.props, this.toolbar, this.exitImm);
     this.root.append(this.el);

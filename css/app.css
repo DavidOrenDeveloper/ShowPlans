@@ -338,3 +338,29 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
 /* גובה קבוע לשורת המאפיינים: מונע קפיצת התוכנית כשהכלים משתנים באמצע ציור */
 .v-props.has { height: 58px; min-height: 58px; flex: none; box-sizing: border-box; }
 .v-props > * { flex: none; }
+
+/* ---------- ענן: כניסה, חשבון, עובדים והרשאות ---------- */
+.login-screen { position: fixed; inset: 0; z-index: 900; background: var(--bg, #f4f5f7); display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
+.login-card { width: 100%; max-width: 360px; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 22px 18px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.12); }
+.login-card h1 { margin: 0; font-size: 22px; text-align: center; }
+.login-card .logo.big { align-self: center; width: 56px; height: 56px; }
+.login-card label { font-weight: 600; font-size: 14px; }
+.login-card .hint { text-align: center; margin: 0 0 6px; }
+.login-err { color: #c62828; min-height: 18px; font-size: 14px; }
+.acct { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.acct-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; }
+.role-badge { background: var(--amber, #ffb300); color: #1b1300; border-radius: 99px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+.acct-status { font-size: 12.5px; color: #666; }
+.acct-status.ok { color: #2e7d32; } .acct-status.error { color: #c62828; } .acct-status.offline, .acct-status.pending { color: #b26a00; }
+.acct-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.users { display: flex; flex-direction: column; gap: 8px; }
+.user-row, .grant-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.user-row .u-main, .grant-row > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.u-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.new-user { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.new-user h3 { margin: 0 0 4px; font-size: 16px; }
+.grant-row select { width: auto; min-width: 150px; }
+
+/* ---------- גרירת קבצים/תיקיות לחלון ---------- */
+.file-drop-hint { position: fixed; inset: 12px; z-index: 600; border: 3px dashed var(--amber-d, #e69500); border-radius: 18px; background: rgba(255,248,225,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none; }
+.file-drop-hint.hidden { display: none; }

@@ -2,7 +2,7 @@
 // מבנה: projects, folders, plans, versions, files (ה-PDF המקורי), thumbs,
 // markups, measurements, links, calibrations, textindex, meta
 
-const NAME = 'planapp';
+let NAME = 'planapp';
 const VER = 1;
 export const STORES = {
   projects: { key: 'id' },
@@ -20,6 +20,9 @@ export const STORES = {
 };
 
 let dbp = null;
+// בוחר איזה מסד מקומי לפתוח (מצב מקומי: 'planapp'; מצב ענן: מסד נפרד לכל משתמש במכשיר)
+export function useDb(name) { if (name !== NAME) { NAME = name; dbp = null; } }
+export const dbName = () => NAME;
 export function open() {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {

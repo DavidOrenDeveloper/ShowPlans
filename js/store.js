@@ -11,6 +11,13 @@ export const P = {
 };
 let kids = new Map(), plansBy = new Map(), versBy = new Map();
 
+// חיבורים לשכבת הענן (cloud-sync.js). במצב מקומי הכול no-op.
+export const hooks = {
+  change() {}, purged() {}, remoteFile: null, // remoteFile(versionId) => Promise<Blob|null>
+  guard() {},                                  // guard(kind, ids) זורק שגיאה אם אין הרשאה
+};
+const stamp = (r) => { r.updatedAt = Date.now(); r._d = 1; return r; };
+
 const subs = new Set();
 export function subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }
 
@@ -34,7 +41,7 @@ function reindex() {
   for (const a of plansBy.values()) a.sort((x, y) => natural(x.name, y.name));
   for (const a of versBy.values()) a.sort((x, y) => y.number - x.number);
 }
-function emit() { reindex(); subs.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); }
+function emit() { reindex(); hooks.change(); subs.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); }
 
 export async function init() {
   await db.open();
@@ -93,7 +100,8 @@ export function isDescendant(folderId, ancestorId) {
 
 // ---------- תיקיות ----------
 export async function createFolder(parentId, name) {
-  const f = { id: uid(), projectId: 'main', parentId: parentId || null, name: name.trim(), createdAt: Date.now() };
+  hooks.guard('folder-in', [parentId || null]);
+  const f = stamp({ id: uid(), projectId: 'main', parentId: parentId || null, name: name.trim(), createdAt: Date.now() });
   await db.put('folders', f);
   P.folders.set(f.id, f);
   emit();
@@ -101,29 +109,33 @@ export async function createFolder(parentId, name) {
 }
 export async function renameFolder(id, name) {
   const f = P.folders.get(id); if (!f) return;
-  f.name = name.trim(); await db.put('folders', f); emit();
+  hooks.guard('folder', [id]);
+  f.name = name.trim(); stamp(f); await db.put('folders', f); emit();
 }
 export async function renameProject(name) {
   P.project.name = name.trim(); await db.put('projects', P.project); emit();
 }
 export async function renamePlan(id, name) {
   const p = P.plans.get(id); if (!p) return;
-  p.name = name.trim(); p.updatedAt = Date.now(); await db.put('plans', p); emit();
+  hooks.guard('plan', [id]);
+  p.name = name.trim(); stamp(p); await db.put('plans', p); emit();
 }
 export async function setPlanNotes(id, notes) {
   const p = P.plans.get(id); if (!p) return;
-  p.notes = notes; await db.put('plans', p); emit();
+  hooks.guard('plan', [id]);
+  p.notes = notes; stamp(p); await db.put('plans', p); emit();
 }
 
 export async function moveItems({ folders = [], plans = [] }, targetId) {
   const target = targetId || null;
+  hooks.guard('folder-in', [target]); hooks.guard('folder', folders); hooks.guard('plan', plans);
   for (const fid of folders) {
     if (fid === target || (target && isDescendant(target, fid))) throw new Error('אי אפשר להעביר תיקייה לתוך עצמה או לתוך תת-תיקייה שלה');
   }
   const fs = folders.map((id) => P.folders.get(id)).filter(Boolean);
   const ps = plans.map((id) => P.plans.get(id)).filter(Boolean);
-  fs.forEach((f) => { f.parentId = target; });
-  ps.forEach((p) => { p.folderId = target; p.updatedAt = Date.now(); });
+  fs.forEach((f) => { f.parentId = target; stamp(f); });
+  ps.forEach((p) => { p.folderId = target; stamp(p); });
   if (fs.length) await db.putMany('folders', fs);
   if (ps.length) await db.putMany('plans', ps);
   emit();
@@ -131,6 +143,7 @@ export async function moveItems({ folders = [], plans = [] }, targetId) {
 
 // ---------- מחיקה ----------
 export async function deleteItems({ folders = [], plans = [] }) {
+  hooks.guard('folder', folders); hooks.guard('plan', plans);
   const folderIds = new Set(), planIds = new Set(plans);
   for (const fid of folders) {
     folderIds.add(fid);
@@ -144,7 +157,7 @@ export async function deleteItems({ folders = [], plans = [] }) {
   await reload();
 }
 
-async function purge({ folderIds = [], planIds = [], versionIds = [] }) {
+async function purge({ folderIds = [], planIds = [], versionIds = [] }, { silent = false } = {}) {
   const names = ['folders', 'plans', 'versions', 'files', 'thumbs', 'markups', 'measurements', 'links', 'calibrations', 'textindex'];
   await db.run(names, 'readwrite', async (t) => {
     for (const vid of versionIds) {
@@ -157,7 +170,10 @@ async function purge({ folderIds = [], planIds = [], versionIds = [] }) {
     for (const id of planIds) t.objectStore('plans').delete(id);
     for (const id of folderIds) t.objectStore('folders').delete(id);
   });
+  if (!silent) hooks.purged({ folderIds, planIds, versionIds });
 }
+// מחיקה מקומית בלבד (בעקבות שינוי בענן) – לא יוצרת מחיקה בענן
+export async function purgeLocal(ids) { await purge(ids, { silent: true }); await reload(); }
 
 // ---------- ייבוא PDF ----------
 function friendlyErr(e) {
@@ -178,6 +194,7 @@ async function analyze(buf, interactive = true) {
 }
 
 export async function importPdf(file, folderId, { name } = {}) {
+  hooks.guard('folder-in', [folderId || null]);
   const buf = await file.arrayBuffer();
   const a = await analyze(buf);
   const now = Date.now();
@@ -185,12 +202,12 @@ export async function importPdf(file, folderId, { name } = {}) {
   const plan = {
     id: planId, projectId: 'main', folderId: folderId || null,
     name: (name || file.name.replace(/\.pdf$/i, '')).trim() || 'תוכנית',
-    originalName: file.name, currentVersionId: verId, notes: '', createdAt: now, updatedAt: now,
+    originalName: file.name, currentVersionId: verId, notes: '', createdAt: now, updatedAt: now, _d: 1,
   };
   const ver = {
     id: verId, planId, number: 1, date: new Date().toISOString().slice(0, 10), note: '',
     size: a.blob.size, pageCount: a.pageCount, fileName: file.name, createdAt: now,
-    indexed: a.broken, hasText: false, broken: a.broken,
+    indexed: a.broken, hasText: false, broken: a.broken, _d: 1, _up: 1,
   };
   try {
     await db.run(['plans', 'versions', 'files', 'thumbs'], 'readwrite', async (t) => {
@@ -208,6 +225,7 @@ export async function importPdf(file, folderId, { name } = {}) {
 
 export async function addVersion(planId, file, { date, note, makeCurrent = true } = {}) {
   const plan = P.plans.get(planId); if (!plan) throw new Error('התוכנית לא נמצאה');
+  hooks.guard('plan', [planId]);
   const buf = await file.arrayBuffer();
   const a = await analyze(buf);
   const verId = uid();
@@ -215,10 +233,10 @@ export async function addVersion(planId, file, { date, note, makeCurrent = true 
   const ver = {
     id: verId, planId, number, date: date || new Date().toISOString().slice(0, 10), note: note || '',
     size: a.blob.size, pageCount: a.pageCount, fileName: file.name, createdAt: Date.now(),
-    indexed: a.broken, hasText: false, broken: a.broken,
+    indexed: a.broken, hasText: false, broken: a.broken, _d: 1, _up: 1,
   };
   if (makeCurrent) { plan.currentVersionId = verId; }
-  plan.updatedAt = Date.now();
+  stamp(plan);
   try {
     await db.run(['plans', 'versions', 'files', 'thumbs'], 'readwrite', async (t) => {
       t.objectStore('files').put({ id: verId, blob: a.blob });
@@ -235,34 +253,39 @@ export async function addVersion(planId, file, { date, note, makeCurrent = true 
 
 export async function setCurrentVersion(planId, versionId) {
   const plan = P.plans.get(planId); if (!plan) return;
-  plan.currentVersionId = versionId; plan.updatedAt = Date.now();
+  hooks.guard('plan', [planId]);
+  plan.currentVersionId = versionId; stamp(plan);
   await db.put('plans', plan); emit();
 }
 
 export async function updateVersion(versionId, patch) {
   const v = P.versions.get(versionId); if (!v) return;
-  Object.assign(v, patch); await db.put('versions', v); emit();
+  hooks.guard('plan', [v.planId]);
+  Object.assign(v, patch); stamp(v); await db.put('versions', v); emit();
 }
 
 export async function deleteVersion(versionId) {
   const v = P.versions.get(versionId); if (!v) return;
+  hooks.guard('plan', [v.planId]);
   const plan = P.plans.get(v.planId);
   const others = versionsOf(v.planId).filter((x) => x.id !== versionId);
   if (!others.length) { await deleteItems({ plans: [v.planId] }); return; }
-  if (plan && plan.currentVersionId === versionId) { plan.currentVersionId = others[0].id; await db.put('plans', plan); }
+  if (plan && plan.currentVersionId === versionId) { plan.currentVersionId = others[0].id; stamp(plan); await db.put('plans', plan); }
   await purge({ versionIds: [versionId] });
   await reload();
 }
 
 export async function duplicatePlan(planId) {
   const plan = P.plans.get(planId); if (!plan) return;
+  hooks.guard('folder-in', [plan.folderId || null]);
   const ver = curVer(plan); if (!ver) return;
   const now = Date.now();
-  const np = { ...plan, id: uid(), name: plan.name + ' (עותק)', createdAt: now, updatedAt: now };
-  const nv = { ...ver, id: uid(), planId: np.id, number: 1, createdAt: now, note: '' };
+  const np = { ...plan, id: uid(), name: plan.name + ' (עותק)', createdAt: now, updatedAt: now, _d: 1, _s: 0 };
+  const nv = { ...ver, id: uid(), planId: np.id, number: 1, createdAt: now, note: '', _d: 1, _up: 1, _s: 0, driveId: null };
+  const srcBlob = await getFileBlob(ver.id);
   np.currentVersionId = nv.id;
   const [file, thumb, mk, ms, ln, cal, tx] = await Promise.all([
-    db.get('files', ver.id), db.get('thumbs', ver.id),
+    srcBlob ? { blob: srcBlob } : null, db.get('thumbs', ver.id),
     db.byIndex('markups', 'versionId', ver.id), db.byIndex('measurements', 'versionId', ver.id),
     db.byIndex('links', 'versionId', ver.id), db.byIndex('calibrations', 'versionId', ver.id),
     db.byIndex('textindex', 'versionId', ver.id),
@@ -286,9 +309,11 @@ export async function duplicatePlan(planId) {
 }
 
 // ---------- קבצים ותמונות ממוזערות ----------
-export async function getFileBlob(versionId) {
+export async function getFileBlob(versionId, { remote = true } = {}) {
   const r = await db.get('files', versionId);
-  return r ? r.blob : null;
+  if (r) return r.blob;
+  if (remote && hooks.remoteFile) return hooks.remoteFile(versionId); // הורדה מהענן אם הקובץ לא במכשיר
+  return null;
 }
 const thumbCache = new Map();
 export async function thumbURL(versionId) {
@@ -364,8 +389,8 @@ export async function reindexAll() {
 async function indexVersion(vid) {
   const v = P.versions.get(vid);
   if (!v || v.broken) return;
-  const blob = await getFileBlob(vid);
-  if (!blob) return;
+  const blob = await getFileBlob(vid, { remote: false });
+  if (!blob) return; // קובץ שעוד לא הורד מהענן – יאונדקס אחרי ההורדה
   let doc;
   try { doc = await openPdf(blob, { interactive: false }); } catch { v.indexed = true; await db.put('versions', v); return; }
   const plan = P.plans.get(v.planId);

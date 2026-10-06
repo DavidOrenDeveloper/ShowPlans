@@ -1,0 +1,9 @@
+# הגדרות לפריסה עם Supabase CLI. האימות נעשה בתוך כל פונקציה (getUser), לכן מכבים את בדיקת ה-JWT של השער.
+project_id = "yokgltxcmnfgwygvecnc"
+
+[functions.drive-download]
+verify_jwt = false
+[functions.drive-upload-session]
+verify_jwt = false
+[functions.admin-users]
+verify_jwt = false
