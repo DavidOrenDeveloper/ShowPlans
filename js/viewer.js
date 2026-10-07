@@ -1,4 +1,5 @@
 // ה-Viewer: זום עמוק וחד, גרירה, Pinch, סימונים, מדידות, קישורים, השוואה, חיפוש, גרסאות
+import * as OCR from './ocr.js';
 import * as S from './store.js';
 import * as db from './db.js';
 import * as UI from './ui.js';
@@ -16,6 +17,7 @@ import { installStyle } from './viewer-style.js';
 import { installPrint } from './viewer-print.js';
 
 const PT = 96 / 72; // "100%" = גודל אמיתי ב-96 DPI
+const GAP = 24;
 const MAXS = PT * 64; // עד 6400%
 const TOOLS = [
   { id: 'pan', icon: 'move', label: 'הזזה' },
@@ -59,6 +61,7 @@ class Viewer {
     this.scale = 1; this.tx = 0; this.ty = 0; this.W = 1; this.H = 1; this.vw = 1;
     this.dpr = Math.min(window.devicePixelRatio || 1, 3);
     this.tool = 'pan'; this.fitMode = 'page';
+    try { this.cont = localStorage.getItem('plans.cont') === '1'; } catch { this.cont = false; }
     this.ptrs = new Map(); this.gesture = null; this.pinch = null;
     this.items = { markups: [], measurements: [], links: [] };
     this.calibs = new Map(); this.history = []; this.redoStack = [];
@@ -77,11 +80,12 @@ class Viewer {
     this.layerA = new Layer();
     this.layerB = new Layer();
     this.layerB.el.style.display = 'none';
+    this.layerN = new Layer(); this.layerP = new Layer();
     this.svg = svg('svg', { class: 'v-overlay', preserveAspectRatio: 'none' });
     this.gSearch = svg('g'); this.gItems = svg('g'); this.gDraft = svg('g'); this.gSel = svg('g');
     this.svg.append(this.gSearch, this.gItems, this.gDraft, this.gSel);
     this.loading = h('div', { class: 'v-loading' }, 'טוען תוכנית…');
-    this.stage.append(this.layerA.el, this.layerB.el, this.svg, this.loading);
+    this.stage.append(this.layerA.el, this.layerB.el, this.layerN.el, this.layerP.el, this.svg, this.loading);
 
     this.topbar = h('header', { class: 'v-top' },
       btn('back', 'חזרה', () => this.goBack()),
@@ -101,7 +105,8 @@ class Viewer {
       btn('zoomIn', 'הגדל', () => this.zoomBy(1.6)),
       this.zoomLabel,
       btn('zoomOut', 'הקטן', () => this.zoomBy(1 / 1.6)),
-      btn('maximize', 'התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)', () => this.cycleFit()));
+      btn('maximize', 'התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)', () => this.cycleFit()),
+      this.contBtn = btn('scroll', 'גלילה רציפה (עמודים ברצף) / עמוד בודד', () => this.setCont(!this.cont)));
 
     this.pageLabel = h('button', { class: 'pl', onclick: () => this.pagePrompt() }, '1 / 1');
     this.pageBar = h('div', { class: 'v-pages v-float' },
@@ -117,10 +122,25 @@ class Viewer {
     this.pickBar = h('div', { class: 'v-pick hidden' });
     this.exitImm = h('button', { class: 'v-exit-imm', 'aria-label': 'הצג סרגלים', onclick: () => this.el.classList.remove('immersive') }, icon('chevD'));
 
-    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.panel);
+    this.sbarLabel = h('span', { class: 'sl' }, '');
+    this.sbar = h('div', { class: 'v-sbar v-float hidden' },
+      btn('chevU', 'תוצאה קודמת', () => this.gotoMatch(this.search.idx - 1)),
+      this.sbarLabel,
+      btn('chevD', 'תוצאה הבאה', () => this.gotoMatch(this.search.idx + 1)),
+      btn('list', 'רשימת תוצאות', () => this.openPanel('search')),
+      btn('x', 'סיום חיפוש', () => this.clearSearch()));
+    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.panel);
     this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar, this.mid,
       this.cmpBar, this.props, this.toolbar, this.exitImm);
     this.root.append(this.el);
+    this.el.classList.toggle('cont', !!this.cont); this.contBtn.classList.toggle('on', !!this.cont);
+    this._onPop = () => {
+      if (!this._sPush) return;
+      this._sPush = false;
+      if (this.panelMode === 'search') { this.closePanel(); this.pushSearch(); } // שלב 1: סוגר את לוח החיפוש, הסימונים נשארים
+      else this.clearSearch(); // שלב 2: מנקה את החיפוש
+    };
+    window.addEventListener('popstate', this._onPop);
 
     const s = this.stage;
     s.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -241,6 +261,8 @@ class Viewer {
   }
 
   goBack() {
+    if (this.panelMode === 'search') { this.closePanel(); return; }
+    if (this.search) { this.clearSearch(); return; }
     if (pickCtx && this.opts.pick) pickCtx = null;
     if (window.__navCount > 0) history.back();
     else location.hash = '#/f/' + (this.plan.folderId || '');
@@ -270,6 +292,11 @@ class Viewer {
   clampView(s, tx, ty) {
     const M = 60, pw = this.pw * s, ph = this.ph * s;
     tx = pw <= this.vw ? (this.vw - pw) / 2 : clamp(tx, this.vw - pw - M, M);
+    if (this.cont) { // גלילה רציפה: מותר לגלול עד סוף העמוד הסמוך
+      const up = this.layerP.page ? (this.layerP.ph + GAP) * s : 0, dn = this.layerN.page ? (this.layerN.ph + GAP) * s : 0;
+      ty = clamp(ty, this.H - ph - M - dn, M + up);
+      return [tx, ty];
+    }
     ty = ph <= this.H ? (this.H - ph) / 2 : clamp(ty, this.H - ph - M, M);
     return [tx, ty];
   }
@@ -277,6 +304,10 @@ class Viewer {
     if (!this.page) return;
     scale = clamp(scale, this.minScale(), MAXS);
     [tx, ty] = this.clampView(scale, tx, ty);
+    if (this.cont) {
+      const sh = this.maybeShift(scale, tx, ty);
+      if (sh) { [tx, ty] = this.clampView(scale, sh[0], sh[1]); }
+    }
     if (!keepFit) this.fitMode = null;
     this.scale = scale; this.tx = tx; this.ty = ty;
     this.applyTransform();
@@ -289,6 +320,7 @@ class Viewer {
     this.svg.setAttribute('viewBox', `${-tx / scale} ${-ty / scale} ${vw / scale} ${H / scale}`);
     this.layerA.place(scale, tx, ty, dpr);
     if (this.cmp) this.layerB.place(scale, tx, ty, dpr);
+    if (this.cont) { this.layerN.place(scale, tx, ty, dpr); this.layerP.place(scale, tx, ty, dpr); }
     if (this.selected || this.draft) { this.renderSel(); this.renderDraft(); }
   }
   scheduleDetail(delay = 140) {
@@ -300,6 +332,69 @@ class Viewer {
     const { scale, tx, ty, W, H, dpr } = this;
     this.layerA.renderDetail(scale, tx, ty, W, H, dpr);
     if (this.cmp) this.layerB.renderDetail(scale, tx, ty, W, H, dpr);
+    if (this.cont) {
+      const nTop = ty + (this.ph + GAP) * scale, pBot = ty - GAP * scale;
+      if (this.layerN.page && nTop < H) this.layerN.renderDetail(scale, tx, ty, W, H, dpr); else this.layerN.removeDetail();
+      if (this.layerP.page && pBot > 0) this.layerP.renderDetail(scale, tx, ty, W, H, dpr); else this.layerP.removeDetail();
+    }
+  }
+  // ---------- גלילה רציפה ----------
+  placeNeighbors() {
+    const N = this.layerN, P = this.layerP;
+    N.dx = (this.pw - N.pw) / 2; N.dy = this.ph + GAP;
+    P.dx = (this.pw - P.pw) / 2; P.dy = -(P.ph + GAP);
+  }
+  async loadNeighbors() {
+    const show = this.cont && !this.cmp && !this.split;
+    for (const [L, n] of [[this.layerN, this.pageNum + 1], [this.layerP, this.pageNum - 1]]) {
+      if (!show || n < 1 || n > this.numPages) { if (L.n) L.clear(); continue; }
+      if (L.n === n) continue;
+      const tok = this.pageToken;
+      L.clear();
+      const pg = await this.doc.getPage(n);
+      if (tok !== this.pageToken || cur !== this || !this.cont) return;
+      L.n = n;
+      L.setPage(pg);
+    }
+    this.placeNeighbors();
+    this.applyTransform();
+    this.scheduleDetail(60);
+  }
+  maybeShift(scale, tx, ty) {
+    const mid = this.H / 2;
+    let dir = 0;
+    if (this.layerN.page && this.layerN.n === this.pageNum + 1 && ty + (this.ph + GAP / 2) * scale < mid) dir = 1;
+    else if (this.layerP.page && this.layerP.n === this.pageNum - 1 && ty - (GAP / 2) * scale > mid) dir = -1;
+    if (!dir) return null;
+    const oldpw = this.pw, oldph = this.ph;
+    this.storeView();
+    if (dir > 0) { const t = this.layerP; this.layerP = this.layerA; this.layerA = this.layerN; this.layerN = t; }
+    else { const t = this.layerN; this.layerN = this.layerA; this.layerA = this.layerP; this.layerP = t; }
+    (dir > 0 ? this.layerN : this.layerP).clear();
+    this.layerA.dx = this.layerA.dy = 0;
+    this.pageNum += dir; this.page = this.layerA.page; this.layerA.n = this.pageNum;
+    this.pw = this.layerA.pw; this.ph = this.layerA.ph;
+    this.pageToken++;
+    this.selected = null; this.draft = null; this.gesture = this.gesture && this.gesture.type === 'pan' ? this.gesture : null; this.eraseSet = null;
+    const ntx = tx + (oldpw - this.pw) * scale / 2;
+    const nty = dir > 0 ? ty + (oldph + GAP) * scale : ty - (this.ph + GAP) * scale;
+    this.placeNeighbors();
+    this.renderItems(); this.renderProps(); this.updatePageUI();
+    lastView.set(this.version.id + ':last', this.pageNum);
+    if (this.panelMode === 'pages') this.markThumb();
+    if (this.search) this.renderSearchHits();
+    this.loadNeighbors();
+    return [ntx, nty];
+  }
+  setCont(on, { quiet = false } = {}) {
+    if (on && (this.cmp || this.split)) { UI.toast('גלילה רציפה לא זמינה בזמן השוואת תוכניות'); return; }
+    this.cont = !!on;
+    try { localStorage.setItem('plans.cont', on ? '1' : '0'); } catch { /* ignore */ }
+    this.el.classList.toggle('cont', this.cont);
+    this.contBtn?.classList.toggle('on', this.cont);
+    if (!this.cont) { this.layerN.clear(); this.layerP.clear(); this.fit('page'); }
+    else { this.fit('width'); this.loadNeighbors(); }
+    if (!quiet) UI.toast(this.cont ? 'גלילה רציפה: גוללים מעלה/מטה בין העמודים' : 'מצב עמוד בודד', { ms: 1800 });
   }
   fit(mode) {
     if (!this.page) return;
@@ -345,6 +440,7 @@ class Viewer {
     const page = await this.doc.getPage(n);
     if (token !== this.pageToken || cur !== this) return;
     this.pageNum = n; this.page = page;
+    if (this.cont) { this.layerN.clear(); this.layerP.clear(); }
     this.selected = null; this.draft = null; this.gesture = null; this.eraseSet = null;
     this.measure();
     this.layerA.setPage(page).then(() => { if (token === this.pageToken) this.loading.style.display = 'none'; });
@@ -353,12 +449,13 @@ class Viewer {
     const saved = lastView.get(`${this.version.id}:${n}`);
     if (view) this.applyView(view);
     else if (saved && !fresh) this.applyView(saved);
-    else this.fit('page');
+    else this.fit(this.cont ? 'width' : 'page');
     lastView.set(this.version.id + ':last', n);
     this.renderItems(); this.renderProps(); this.updatePageUI();
     this.scheduleDetail(30);
     if (this.panelMode === 'pages') this.markThumb();
     if (this.search) this.renderSearchHits();
+    if (this.cont) this.loadNeighbors();
   }
   storeView() {
     if (this.page && this.version) lastView.set(`${this.version.id}:${this.pageNum}`, this.viewCenter());
@@ -1045,6 +1142,7 @@ class Viewer {
   openPanel(mode) {
     if (this.panelMode === mode && !this.panel.classList.contains('hidden')) { this.closePanel(); return; }
     this.panelMode = mode;
+    this.updateSearchBar();
     this.panel.classList.remove('hidden');
     this.panel.textContent = '';
     const close = h('button', { class: 'icon-btn', 'aria-label': 'סגור', onclick: () => this.closePanel() }, icon('x'));
@@ -1055,7 +1153,14 @@ class Viewer {
       this.buildThumbs();
     } else {
       this.searchInput = h('input', { type: 'search', placeholder: 'חיפוש טקסט בתוכנית…', enterKeyHint: 'search', value: this.search?.q || '' });
-      this.searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.runSearch(this.searchInput.value, true); });
+      this.searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(this._st); this.runSearch(this.searchInput.value, true).then(() => { if (window.innerWidth < 800 && this.search?.matches.length) this.closePanel(); }); } });
+      // חיפוש תוך כדי הקלדה (השהיה קצרה כדי לא לחפש בכל תו)
+      this.searchInput.addEventListener('input', () => {
+        clearTimeout(this._st);
+        const q = this.searchInput.value.trim();
+        if (!q) { this.clearSearch({ keepPanel: true }); return; }
+        this._st = setTimeout(() => this.runSearch(q, true), 250);
+      });
       this.searchInfo = h('div', { class: 'hint' });
       this.searchList = h('div', { class: 'result-list compact' });
       this.panel.append(h('div', { class: 'pn-head' }, h('b', {}, 'חיפוש בתוכנית'), close),
@@ -1065,12 +1170,29 @@ class Viewer {
         this.searchInfo, this.searchList);
       if (this.search) this.renderSearchList();
       setTimeout(() => this.searchInput.focus(), 50);
+      this.pushSearch();
     }
     this.el.classList.add('panel-open');
+  }
+  updateSearchBar() {
+    const s = this.search;
+    const show = !!(s && s.matches.length) && this.panelMode !== 'search';
+    this.sbar.classList.toggle('hidden', !show);
+    if (show) this.sbarLabel.textContent = `${s.idx + 1} / ${s.matches.length}${s.matches.length >= 500 ? '+' : ''} · עמוד ${s.matches[s.idx]?.page ?? ''}`;
+  }
+  pushSearch() { if (!this._sPush) { try { history.pushState({ vsearch: 1 }, ''); this._sPush = true; } catch { /* ignore */ } } }
+  // מצב חיפוש: מנקה תוצאות וסימונים (וסוגר את רשומת ההיסטוריה שנוספה בשבילו)
+  clearSearch({ keepPanel = false } = {}) {
+    clearTimeout(this._st); this.searchToken++;
+    this.search = null; this.renderSearchHits(); this.updateSearchBar();
+    if (this._sPush) { this._sPush = false; try { history.back(); } catch { /* ignore */ } }
+    if (keepPanel) { this.searchList?.replaceChildren(); if (this.searchInfo) this.searchInfo.textContent = ''; }
+    else if (this.panelMode === 'search') this.closePanel();
   }
   closePanel() {
     this.panel.classList.add('hidden');
     this.panelMode = null;
+    this.updateSearchBar();
     this.el.classList.remove('panel-open');
   }
   buildThumbs() {
@@ -1111,6 +1233,19 @@ class Viewer {
     if (this.textCache.has(i)) return this.textCache.get(i);
     const page = await this.doc.getPage(i);
     const tc = await page.getTextContent();
+    if (!tc.items.some((it) => typeof it.str === 'string' && it.str.trim())) { // עמוד סרוק: אם בוצע OCR משתמשים בו
+      try {
+        const row = await db.get('textindex', `${this.version.id}:${i}`);
+        if (row && row.ocr && row.words) {
+          page.cleanup();
+          const words = row.words;
+          const rects = (s, e) => words.filter((w) => w.e > s && w.s < e).map((w) => ({ x: w.x, y: w.y, w: w.w, h: w.h }));
+          const d = { text: row.text, rects, ocr: true };
+          this.textCache.set(i, d);
+          return d;
+        }
+      } catch { /* ignore */ }
+    }
     const vp = page.getViewport({ scale: 1 });
     let text = '';
     const ranges = [];
@@ -1119,13 +1254,27 @@ class Viewer {
       ranges.push({ start: text.length, end: text.length + it.str.length, it });
       text += it.str + (it.hasEOL ? ' ' : '');
     }
+    const mc = document.createElement('canvas').getContext('2d');
+    const RTL = /[\u0590-\u08FF]/;
+    // חלק יחסי של רוחב המחרוזת עד אינדקס n (לפי מדידת פונט אמיתית, לא לפי מספר תווים)
+    const frac = (str, n) => {
+      if (n <= 0) return 0;
+      if (n >= str.length) return 1;
+      mc.font = '100px sans-serif';
+      const tot = mc.measureText(str).width;
+      return tot > 0 ? mc.measureText(str.slice(0, n)).width / tot : n / str.length;
+    };
     const rects = (s, e) => {
       const out = [];
       for (const r of ranges) {
         if (r.end <= s || r.start >= e || !r.it.str.length) continue;
-        const a = Math.max(s - r.start, 0), b = Math.min(e - r.start, r.it.str.length);
-        const t = r.it.transform, len = r.it.str.length;
-        const x0 = t[4] + r.it.width * (a / len), w = r.it.width * ((b - a) / len);
+        const str = r.it.str;
+        const a = Math.max(s - r.start, 0), b = Math.min(e - r.start, str.length);
+        const t = r.it.transform;
+        const rtl = r.it.dir === 'rtl' || (r.it.dir !== 'ltr' && RTL.test(str));
+        let f0 = frac(str, a), f1 = frac(str, b);
+        if (rtl) { const x = 1 - f1; f1 = 1 - f0; f0 = x; }
+        const x0 = t[4] + r.it.width * f0, w = r.it.width * (f1 - f0);
         const hh = r.it.height || Math.hypot(t[2], t[3]);
         const [X1, Y1] = vp.convertToViewportPoint(x0, t[5] - hh * 0.2);
         const [X2, Y2] = vp.convertToViewportPoint(x0 + w, t[5] + hh * 0.95);
@@ -1142,7 +1291,7 @@ class Viewer {
     q = (q || '').trim();
     if (!q || !this.doc) return;
     if (this.panelMode !== 'search') this.openPanel('search');
-    if (this.searchInput) this.searchInput.value = q;
+    if (this.searchInput && this.searchInput.value.trim() !== q) this.searchInput.value = q;
     const token = ++this.searchToken;
     const s = { q, matches: [], idx: -1 };
     this.search = s;
@@ -1163,7 +1312,7 @@ class Viewer {
       if (i % 5 === 0) this.renderSearchList();
     }
     this.renderSearchList();
-    if (this.searchInfo) this.searchInfo.textContent = s.matches.length ? `${s.matches.length} תוצאות` : 'לא נמצא טקסט תואם. (אם הקובץ סרוק כתמונה – אין בו טקסט לחיפוש, ו-OCR עדיין לא נתמך.)';
+    if (this.searchInfo) this.searchInfo.textContent = s.matches.length ? `${s.matches.length} תוצאות` : 'לא נמצא טקסט תואם. אם הקובץ סרוק כתמונה – אפשר להפעיל זיהוי טקסט (OCR) מהתפריט ⋮.';
     if (jump && s.matches.length) {
       const first = s.matches.findIndex((m) => m.page >= this.pageNum);
       this.gotoMatch(first >= 0 ? first : 0);
@@ -1172,7 +1321,7 @@ class Viewer {
   renderSearchList() {
     const s = this.search;
     if (!s || !this.searchList) return;
-    this.searchList.replaceChildren(...s.matches.slice(0, 200).map((m, i) => h('button', { class: 'result' + (i === s.idx ? ' cur' : ''), onclick: () => this.gotoMatch(i) },
+    this.searchList.replaceChildren(...s.matches.slice(0, 200).map((m, i) => h('button', { class: 'result' + (i === s.idx ? ' cur' : ''), onclick: async () => { await this.gotoMatch(i); if (window.innerWidth < 800) this.closePanel(); } },
       h('span', { class: 'col' }, h('b', {}, `עמוד ${m.page}`), h('span', { class: 'snip' }, m.snippet)))));
   }
   async gotoMatch(i) {
@@ -1186,7 +1335,7 @@ class Viewer {
       const sc = Math.max(this.scale, PT * 1.5);
       this.setView(sc, this.vw / 2 - (r.x + r.w / 2) * sc, this.H / 2 - (r.y + r.h / 2) * sc);
     }
-    this.renderSearchHits(); this.renderSearchList();
+    this.renderSearchHits(); this.renderSearchList(); this.updateSearchBar();
     this.searchList?.querySelector('.result.cur')?.scrollIntoView({ block: 'nearest' });
   }
   renderSearchHits() {
@@ -1199,8 +1348,46 @@ class Viewer {
     });
   }
 
+  async ocrDialog() {
+    if (!this.version) return;
+    const vid = this.version.id;
+    const info = h('p', { class: 'msg' }, 'בודק אילו עמודים חסרי טקסט…');
+    const m = UI.openModal({ title: 'זיהוי טקסט בסריקה (OCR)', body: info, buttons: [{ text: 'סגור', value: false }] });
+    let r;
+    try { r = await OCR.pagesNeedingOcr(vid); } catch (e) { info.textContent = 'הבדיקה נכשלה: ' + (e.message || e); return; }
+    if (!r) { info.textContent = 'הקובץ עדיין לא הורד למכשיר.'; return; }
+    if (!r.need.length) { info.textContent = 'לכל העמודים כבר יש טקסט שניתן לחיפוש – אין צורך ב-OCR.'; return; }
+    const cur = this.pageNum;
+    const choose = (pages) => { m.close(); this.runOcr(vid, pages); };
+    info.textContent = `נמצאו ${r.need.length} עמודים בלי טקסט (סרוקים כתמונה) מתוך ${r.total}. הזיהוי רץ במכשיר (עברית ואנגלית), בלי לשלוח כלום החוצה, ולוקח כמה שניות עד חצי דקה לעמוד בטלפון. הקובץ עצמו לא משתנה. הדיוק תלוי באיכות הסריקה – בכתב יד ובשרטוטים מסובכים הוא נמוך.`;
+    const foot = m.el.querySelector('.modal-foot');
+    const b1 = h('button', { class: 'btn', onclick: () => choose(r.need.includes(cur) ? [cur] : [r.need[0]]) }, 'העמוד הנוכחי בלבד');
+    const b2 = h('button', { class: 'btn primary', onclick: () => choose(r.need) }, `כל ${r.need.length} העמודים`);
+    foot.prepend(b2); foot.prepend(b1);
+  }
+  async runOcr(vid, pages) {
+    let cancel = false;
+    const status = h('p', { class: 'msg' }, 'טוען רכיבי זיהוי (בפעם הראשונה זה לוקח קצת)…');
+    const m = UI.openModal({ title: 'מזהה טקסט…', body: status, cancelable: false, buttons: [{ text: 'עצור', value: false, onClick: () => { cancel = true; status.textContent = 'עוצר אחרי העמוד הנוכחי…'; return false; } }] });
+    try {
+      const res = await OCR.ocrVersion(vid, pages, {
+        isCancelled: () => cancel || cur !== this,
+        onProgress: (p) => { if (p.page) status.textContent = `מזהה עמוד ${p.page} (${p.done + 1} מתוך ${p.total})…`; },
+      });
+      m.close();
+      this.textCache.clear();
+      UI.toast(res.found ? `זוהה טקסט ב-${res.found} עמודים. אפשר לחפש עכשיו.` : 'לא זוהה טקסט (הסריקה ריקה או באיכות נמוכה מדי).', { ms: 5000 });
+      if (this.search) this.runSearch(this.search.q, false);
+    } catch (e) {
+      m.close();
+      console.error(e);
+      UI.toast('ה-OCR נכשל: ' + (e.message || e), { type: 'error', ms: 7000 });
+    }
+  }
+
   // ---------- השוואה ----------
   async openCompare(preVid) {
+    if (this.cont) this.setCont(false, { quiet: true });
     if (this.cmpUI) { if (preVid) { this.cmpUI.setVersion(preVid); this.cmpUI.apply(); } return; }
     if (!this.doc) return;
     const planSel = h('select', {}), verSel = h('select', {});
@@ -1320,6 +1507,8 @@ class Viewer {
     UI.menu(anchor, [
       { label: 'גרסאות', icon: 'clock', onClick: () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() }) },
       { label: 'השוואת תוכניות', icon: 'compare', onClick: () => this.openCompare() },
+      { label: this.cont ? 'מצב עמוד בודד' : 'גלילה רציפה (עמודים ברצף)', icon: 'scroll', onClick: () => this.setCont(!this.cont) },
+      { label: 'זיהוי טקסט בסריקה (OCR)…', icon: 'search', onClick: () => this.ocrDialog() },
       { label: 'שכבות (הצגה/הסתרה)', icon: 'layers', onClick: () => this.layersDialog() },
       { divider: true },
       { label: 'הדפסה / שמירה כ-PDF עם הסימונים', icon: 'print', onClick: () => this.printDialog() },
@@ -1356,6 +1545,8 @@ class Viewer {
     document.removeEventListener('keydown', this.keyFn);
     document.removeEventListener('keyup', this.keyUpFn);
     this.ro?.disconnect();
+    window.removeEventListener('popstate', this._onPop);
+    this.layerN?.destroy(); this.layerP?.destroy();
     this.thumbIO?.disconnect();
     this.searchToken++;
     this.layerA?.destroy(); this.layerB?.destroy();

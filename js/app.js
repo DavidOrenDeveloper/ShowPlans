@@ -1,4 +1,5 @@
 // נקודת הכניסה: אתחול, ניתוב לפי hash, רישום Service Worker
+import { verifyAfterBoot } from './update.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
 import * as A from './actions.js';
@@ -65,7 +66,7 @@ async function registerSW() {
     const had = !!navigator.serviceWorker.controller;
     await navigator.serviceWorker.register('./sw.js');
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (had) UI.toast('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.', { ms: 8000 });
+      if (had && !window.__updating) UI.toast('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.', { ms: 8000 });
     });
   } catch (e) { console.warn('SW נכשל', e); }
 }
@@ -92,6 +93,7 @@ async function main() {
   document.getElementById('boot')?.remove();
   await route();
   registerSW();
+  verifyAfterBoot();
   db.requestPersist();
   if (isCloud()) { try { await startSync(); await maybeImportLocal(); } catch (e) { console.warn('sync start', e); } }
 }

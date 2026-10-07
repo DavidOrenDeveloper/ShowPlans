@@ -1,4 +1,5 @@
 // מסך ניהול הקבצים: עץ תיקיות, כרטיסי תיקיות/תוכניות, חיפוש, בחירה מרובה, גרירה, ניהול אחסון
+import { checkForUpdate, APP_VERSION } from './update.js';
 import { accountBox, grantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
 import { canEditHere } from './cloud-sync.js';
@@ -123,6 +124,7 @@ function mainMenu(anchor) {
     { divider: true },
     { label: 'שנה שם פרויקט', icon: 'edit', onClick: async () => { const v = await UI.promptBox({ title: 'שם הפרויקט', value: S.P.project.name, okText: 'שמור' }); if (v) S.renameProject(v); } },
     { label: 'התקנה כאפליקציה', icon: 'download', onClick: installApp },
+    { label: `עדכן אפליקציה (גרסה ${APP_VERSION})`, icon: 'refresh', onClick: () => checkForUpdate() },
   ]);
 }
 
@@ -596,7 +598,7 @@ function renderSearch() {
       textBox.replaceChildren(h('h4', { class: 'sec' }, `טקסט בתוך קבצי PDF (${rows.length}${rows.length >= 150 ? '+' : ''})`));
       if (!rows.length) {
         const pending = [...S.P.versions.values()].filter((v) => !v.indexed && !v.broken).length;
-        textBox.append(h('p', { class: 'hint' }, pending ? `לא נמצאו תוצאות. ${pending} קבצים עדיין באינדוקס, נסו שוב בעוד רגע.` : 'לא נמצא טקסט תואם בקבצים. (קבצי סריקה ללא טקסט לא ניתנים לחיפוש – OCR עדיין לא נתמך.)'));
+        textBox.append(h('p', { class: 'hint' }, pending ? `לא נמצאו תוצאות. ${pending} קבצים עדיין באינדוקס, נסו שוב בעוד רגע.` : 'לא נמצא טקסט תואם בקבצים. (קבצי סריקה ללא טקסט ניתנים לחיפוש רק אחרי זיהוי טקסט – OCR – בתוך התוכנית, בתפריט ⋮.)'));
         if (!pending) textBox.append(h('button', { class: 'btn sm', onclick: async () => { if (await UI.confirmBox('האפליקציה קוראת את הטקסט מכל ה-PDF ברקע כדי שאפשר יהיה לחפש בתוכם. אם נראה שהחיפוש מפספס טקסט שקיים בקבצים, אפשר לבנות את האינדקס מחדש. זה לא משנה ולא מוחק שום קובץ. להמשיך?', { okText: 'בנה מחדש' })) { await S.reindexAll(); UI.toast('האינדוקס התחיל ברקע'); } } }, 'החיפוש מפספס? בנה מחדש אינדקס טקסט'));
         return;
       }

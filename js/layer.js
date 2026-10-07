@@ -130,6 +130,12 @@ export class Layer {
     return true;
   }
 
+  clear() {
+    this.cancel();
+    this.el.textContent = '';
+    this.page = null; this.base = null; this.detail = null; this.dState = null; this.n = 0;
+  }
+
   cancel() {
     this.gen++; this.baseGen++;
     try { this.baseTask?.cancel(); } catch { /* ignore */ }

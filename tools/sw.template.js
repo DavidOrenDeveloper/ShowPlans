@@ -40,11 +40,27 @@ async function handleShare(request) {
   return Response.redirect(new URL('./#/inbox', self.registration.scope).href, 303);
 }
 
+// העמוד שואל איזו גרסה ה-Service Worker הזה מייצג (לכפתור "עדכן אפליקציה")
+self.addEventListener('message', (event) => {
+  if (event.data === 'version' && event.ports && event.ports[0]) event.ports[0].postMessage(VERSION);
+});
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
   if (req.method === 'POST' && url.pathname.endsWith('/share-target')) { event.respondWith(handleShare(req)); return; }
   if (req.method !== 'GET' || url.origin !== location.origin) return;
+  if (url.pathname.includes('/lib/ocr/')) { // רכיבי OCR: נשמרים בעת השימוש הראשון במטמון נפרד שלא נמחק בעדכוני גרסה
+    event.respondWith((async () => {
+      const c = await caches.open('ocr-assets');
+      const hit = await c.match(req, { ignoreSearch: true });
+      if (hit) return hit;
+      const res = await fetch(req);
+      if (res && res.ok && res.type === 'basic') c.put(req, res.clone());
+      return res;
+    })());
+    return;
+  }
   event.respondWith((async () => {
     const hit = await caches.match(req, { ignoreSearch: true });
     if (hit) return hit;

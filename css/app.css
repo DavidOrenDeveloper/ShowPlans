@@ -364,3 +364,7 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
 /* ---------- גרירת קבצים/תיקיות לחלון ---------- */
 .file-drop-hint { position: fixed; inset: 12px; z-index: 600; border: 3px dashed var(--amber-d, #e69500); border-radius: 18px; background: rgba(255,248,225,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none; }
 .file-drop-hint.hidden { display: none; }
+.v-zoom .icon-btn.on{background:rgba(30,99,255,.25);color:#fff}
+.v-sbar { left: 50%; transform: translateX(-50%); top: 10px; padding: 2px 4px; display: flex; align-items: center; gap: 2px; direction: rtl; white-space: nowrap; }
+.v-sbar.hidden { display: none; }
+.v-sbar .sl { font-size: 13px; padding: 0 6px; color: #fff; }

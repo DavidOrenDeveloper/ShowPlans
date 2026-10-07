@@ -383,7 +383,9 @@ async function pump() {
 export async function reindexAll() {
   for (const v of P.versions.values()) { v.indexed = false; }
   await db.putMany('versions', [...P.versions.values()]);
+  const keep = (await db.getAll('textindex')).filter((r) => r.ocr); // תוצאות OCR נשמרות
   await db.run(['textindex'], 'readwrite', async (t) => { t.objectStore('textindex').clear(); });
+  if (keep.length) await db.putMany('textindex', keep);
   for (const v of P.versions.values()) if (!v.broken) enqueueIndex(v.id);
 }
 async function indexVersion(vid) {

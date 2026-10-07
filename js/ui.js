@@ -14,6 +14,7 @@ export function toast(msg, { type = '', ms = 3200 } = {}) {
   root().appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
+  return t;
 }
 
 // ---------- דיאלוג ----------
