@@ -368,3 +368,6 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
 .v-sbar { left: 50%; transform: translateX(-50%); top: 10px; padding: 2px 4px; display: flex; align-items: center; gap: 2px; direction: rtl; white-space: nowrap; }
 .v-sbar.hidden { display: none; }
 .v-sbar .sl { font-size: 13px; padding: 0 6px; color: #fff; }
+.pw-wrap { position: relative; display: flex; }
+.pw-wrap input { flex: 1; padding-inline-end: 44px; }
+.pw-eye { position: absolute; inset-inline-end: 4px; top: 50%; transform: translateY(-50%); width: 38px; height: 38px; border: 0; background: none; color: #555; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 8px; }
