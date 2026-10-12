@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     const idRes = await fetch('https://www.googleapis.com/drive/v3/files/generateIds?count=1&space=drive', { headers: { Authorization: `Bearer ${token}` } });
     const idJ = await idRes.json();
     const fileId: string | undefined = idJ?.ids?.[0];
-    if (!idRes.ok || !fileId) return json(req, { error: 'drive_error', step: 'generateIds' }, 502);
+    if (!idRes.ok || !fileId) return json(req, { error: 'drive_error', step: 'generateIds', status: idRes.status, message: 'drive_error[generateIds ' + idRes.status + ']: ' + (idJ?.error?.message ?? '') }, 502);
 
     const safe = String(b.name ?? 'plan.pdf').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 120) || 'plan.pdf';
     const origin = req.headers.get('origin') ?? '';
@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({ id: fileId, name: safe, mimeType: 'application/pdf', parents: [DRIVE_FOLDER()] }),
     });
     const uploadUrl = s.headers.get('location');
-    if (!s.ok || !uploadUrl) return json(req, { error: 'drive_error', step: 'session', status: s.status }, 502);
+    if (!s.ok || !uploadUrl) { const t = (await s.text().catch(() => '')).slice(0, 300); console.error('drive session failed', s.status, t); return json(req, { error: 'drive_error', step: 'session', status: s.status, message: 'drive_error[session ' + s.status + ']: ' + t }, 502); }
 
     const { error: e2 } = await service().from('drive_files').insert({ file_id: fileId, created_by: a.user.id, folder_id: folderId, plan_id: planId });
     if (e2) return json(req, { error: 'db_error' }, 500);
