@@ -1,0 +1,14 @@
+# שולח פעם ביום שאילתה קטנה ל-Supabase כדי שהפרויקט החינמי לא יושהה בגלל חוסר פעילות.
+# דורש שני Secrets במאגר: SUPABASE_URL ו-SUPABASE_PUBLISHABLE_KEY
+name: supabase-keepalive
+on:
+  schedule: [{ cron: '17 5 * * *' }]
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/rpc/ping" \
+            -H "apikey: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}" \
+            -H "Content-Type: application/json" -d '{}'
