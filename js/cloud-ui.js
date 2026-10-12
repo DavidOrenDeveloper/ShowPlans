@@ -4,7 +4,7 @@ import * as UI from './ui.js';
 import * as S from './store.js';
 import * as db from './db.js';
 import { cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, requestPasswordReset, setNewPassword, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
-import { syncStatus, onSyncStatus, syncNow } from './cloud-sync.js';
+import { syncStatus, onSyncStatus, syncNow, onProgress } from './cloud-sync.js';
 
 // ---------- מסך כניסה ----------
 // שדה סיסמה עם עין להצגה/הסתרה
@@ -75,6 +75,35 @@ export function newPasswordScreen({ inline = false } = {}) {
     setTimeout(() => p1.input.focus(), 80);
   });
 }
+
+// ---------- פס התקדמות העלאה ----------
+function fmtEta(sec) {
+  if (sec == null) return 'מחשב זמן…';
+  if (sec < 5) return 'עוד כמה שניות';
+  const hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60), ss = sec % 60;
+  if (hh) return `נשארו ${hh} שע׳ ${mm} דק׳`;
+  if (mm) return `נשארו ${mm} דק׳ ו-${ss} שנ׳`;
+  return `נשארו ${ss} שנ׳`;
+}
+const fmtMB = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(1) + ' MB');
+let barEl = null;
+function paintBar(i) {
+  if (!i.on) { barEl?.remove(); barEl = null; document.body.classList.remove('sync-bar-on'); return; }
+  if (!barEl) {
+    barEl = h('div', { class: 'syncbar', role: 'status', 'aria-live': 'polite' },
+      h('div', { class: 'sb-top' }, h('b', { class: 'sb-title' }), h('span', { class: 'sb-pct' })),
+      h('div', { class: 'sb-track' }, h('div', { class: 'sb-fill' })),
+      h('div', { class: 'sb-bot' }, h('span', { class: 'sb-file' }), h('span', { class: 'sb-eta' })));
+    document.body.append(barEl); document.body.classList.add('sync-bar-on');
+  }
+  barEl.classList.toggle('done', !!i.finished);
+  barEl.querySelector('.sb-title').textContent = i.finished ? `הסנכרון הסתיים ✓ (${i.total} קבצים)` : `מעלה לענן · ${i.done} מתוך ${i.total} קבצים`;
+  barEl.querySelector('.sb-pct').textContent = i.pct + '%';
+  barEl.querySelector('.sb-fill').style.width = i.pct + '%';
+  barEl.querySelector('.sb-file').textContent = i.finished ? '' : (i.cur || '') ;
+  barEl.querySelector('.sb-eta').textContent = i.finished ? '' : `${fmtMB(i.sent)} מתוך ${fmtMB(i.bytes)} · ${fmtEta(i.eta)}`;
+}
+onProgress(paintBar);
 
 // ---------- תיבת חשבון בתפריט הצד ----------
 let statusEl = null;

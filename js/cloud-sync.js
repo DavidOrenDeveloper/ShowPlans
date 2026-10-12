@@ -19,6 +19,41 @@ export function syncStatus() {
 }
 const emitStatus = () => subs.forEach((f) => { try { f(syncStatus()); } catch { /* ignore */ } });
 
+// ---------- התקדמות העלאה (פס ירוק עם זמן משוער) ----------
+const prog = { on: false, finished: false, total: 0, done: 0, bytes: 0, bytesDone: 0, curSent: 0, cur: '', start: 0, tick: 0, last: 0 };
+const progSubs = new Set();
+export const onProgress = (fn) => { progSubs.add(fn); return () => progSubs.delete(fn); };
+export function progressInfo() {
+  if (!prog.on) return { on: false };
+  const sent = Math.min(prog.bytes, prog.bytesDone + prog.curSent);
+  const elapsed = (Date.now() - prog.start) / 1000;
+  let eta = null;
+  if (!prog.finished && sent > 0 && elapsed >= 3) eta = Math.max(0, Math.round(((prog.bytes - sent) / (sent / elapsed))));
+  const pct = prog.finished ? 100 : (prog.bytes ? Math.min(99, Math.floor((sent / prog.bytes) * 100)) : 0);
+  return { on: true, finished: prog.finished, total: prog.total, done: prog.done, pct, eta, cur: prog.cur, sent, bytes: prog.bytes };
+}
+function emitProgress(force = false) {
+  const now = Date.now();
+  if (!force && now - prog.last < 200) return;
+  prog.last = now;
+  const info = progressInfo();
+  progSubs.forEach((f) => { try { f(info); } catch { /* ignore */ } });
+}
+function startProgress(list) {
+  clearInterval(prog.tick);
+  Object.assign(prog, { on: true, finished: false, total: list.length, done: 0, bytes: list.reduce((a, v) => a + (v.size || 0), 0), bytesDone: 0, curSent: 0, cur: '', start: Date.now() });
+  prog.tick = setInterval(() => emitProgress(true), 1000); // לעדכון הזמן שנותר גם כשאין תנועה
+  emitProgress(true);
+}
+function endProgress(ok) {
+  if (!prog.on) return;
+  clearInterval(prog.tick);
+  if (ok) {
+    prog.finished = true; prog.done = prog.total; emitProgress(true);
+    setTimeout(() => { if (prog.finished) { prog.on = false; emitProgress(true); } }, 2500);
+  } else { prog.on = false; emitProgress(true); }
+}
+
 function pendingCount() {
   let n = 0;
   for (const m of [S.P.folders, S.P.plans, S.P.versions]) for (const r of m.values()) if (r._d) n++;
@@ -87,8 +122,10 @@ async function pushAll() {
     await pushPlans();
     await pushVersions();
     st.last = Date.now();
+    endProgress(true);
   } catch (e) {
     console.warn('push', e);
+    endProgress(false);
     st.err = friendly(e);
     clearTimeout(st.timer); st.timer = setTimeout(pushAll, 30000);
   } finally {
@@ -137,11 +174,14 @@ async function pushPlans() {
 }
 async function pushVersions() {
   const list = [...S.P.versions.values()].filter((v) => v._d);
+  const uploads = list.filter((v) => !v.driveId && S.P.plans.get(v.planId)?._s);
+  if (uploads.length) startProgress(uploads);
   for (const v of list) {
     const plan = S.P.plans.get(v.planId);
     if (!plan || !plan._s) continue; // התוכנית עוד לא בענן
     if (!v.driveId) {
-      if (!(await uploadFile(v))) continue;
+      if (!(await uploadFile(v))) { if (prog.on) { prog.done++; prog.bytesDone += v.size || 0; emitProgress(true); } continue; }
+      if (prog.on) { prog.done++; prog.bytesDone += v.size || 0; prog.curSent = 0; emitProgress(true); }
     }
     const th = await db.get('thumbs', v.id);
     const data = strip(v);
@@ -159,13 +199,19 @@ async function uploadFile(v) {
   const rec = await db.get('files', v.id);
   if (!rec?.blob) return false;
   const blob = rec.blob;
-  UI.toast(`מעלה לענן: ${v.fileName || 'תוכנית'}…`, { ms: 2500 });
+  prog.cur = v.fileName || 'תוכנית'; prog.curSent = 0; emitProgress(true);
   const s = await callFn('drive-upload-session', { planId: v.planId, name: v.fileName || 'plan.pdf', size: blob.size });
-  let putOk = false;
-  try {
-    const r = await fetch(s.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: blob });
-    putOk = r.ok;
-  } catch (e) { console.warn('PUT (ייתכן CORS, מאמתים מול השרת)', e); }
+  // העלאה עם דיווח התקדמות (fetch לא מדווח על העלאה, XHR כן). שגיאת CORS בסוף לא משנה – מאמתים מול השרת.
+  const putOk = await new Promise((res) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', s.uploadUrl);
+    x.setRequestHeader('Content-Type', 'application/pdf');
+    x.upload.onprogress = (e) => { prog.curSent = e.loaded; emitProgress(); };
+    x.onload = () => res(x.status >= 200 && x.status < 300);
+    x.onerror = () => { console.warn('PUT (ייתכן CORS, מאמתים מול השרת)'); res(false); };
+    x.onabort = () => res(false);
+    x.send(blob);
+  });
   const chk = await callFn('drive-upload-session', { action: 'verify', fileId: s.fileId }).catch(() => null);
   if (!chk?.exists || chk.size !== blob.size) throw new Error(putOk ? 'ההעלאה לא אומתה' : 'ההעלאה ל-Drive נכשלה');
   v.driveId = s.fileId; v._up = 0;
