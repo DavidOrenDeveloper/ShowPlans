@@ -369,5 +369,12 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
 .v-sbar.hidden { display: none; }
 .v-sbar .sl { font-size: 13px; padding: 0 6px; color: #fff; }
 .pw-wrap { position: relative; display: flex; }
-.pw-wrap input { flex: 1; padding-inline-end: 44px; }
-.pw-eye { position: absolute; inset-inline-end: 4px; top: 50%; transform: translateY(-50%); width: 38px; height: 38px; border: 0; background: none; color: #555; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 8px; }
+.pw-wrap input { flex: 1; padding-right: 46px; padding-left: 10px; }
+.pw-eye { position: absolute; right: 4px; left: auto; top: 50%; transform: translateY(-50%); width: 38px; height: 38px; border: 0; background: none; color: #555; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 8px; }
+
+/* מסך כניסה: טקסט כהה וקריא */
+.login-card, .login-card .hint, .login-card label { color: #1f2937; }
+.login-card .btn.ghost { color: #1f2937; border: 1px solid #9aa3af; background: #fff; font-weight: 600; }
+.login-card .btn.ghost:disabled { color: #6b7280; opacity: 1; }
+.login-card input::placeholder { color: #6b7280; opacity: 1; }
+.login-card .page-credit { color: #4b5563; }
