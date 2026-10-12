@@ -378,3 +378,17 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
 .login-card .btn.ghost:disabled { color: #6b7280; opacity: 1; }
 .login-card input::placeholder { color: #6b7280; opacity: 1; }
 .login-card .page-credit { color: #4b5563; }
+
+/* פס התקדמות העלאה לענן */
+.syncbar { position: fixed; z-index: 1300; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--safe-b)); width: min(560px, 94vw); box-sizing: border-box; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); direction: rtl; }
+.syncbar .sb-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 14.5px; }
+.syncbar .sb-pct { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; }
+.syncbar .sb-track { height: 14px; margin: 8px 0 6px; background: #e3e8e3; border-radius: 99px; overflow: hidden; }
+.syncbar .sb-fill { height: 100%; width: 0; border-radius: 99px; transition: width .35s ease; background-color: #43a047; background-image: linear-gradient(45deg, rgba(255,255,255,.28) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.28) 50%, rgba(255,255,255,.28) 75%, transparent 75%); background-size: 22px 22px; animation: sbmove 1s linear infinite; }
+.syncbar.done .sb-fill { animation: none; background-image: none; background-color: var(--green); }
+.syncbar .sb-bot { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--muted); }
+.syncbar .sb-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; direction: ltr; text-align: right; }
+.syncbar .sb-eta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+@keyframes sbmove { to { background-position: 22px 0; } }
+body.sync-bar-on .toast { bottom: calc(120px + var(--safe-b)); }
+body.sync-bar-on .fab { bottom: calc(120px + var(--safe-b)); }
