@@ -9,7 +9,7 @@ import { mountBrowser, show } from './browser.js';
 import { openViewer, closeViewer } from './viewer.js';
 import { h } from './util.js';
 import { initCloud, cloud, dbNameFor, isCloud } from './cloud.js';
-import { loginScreen, maybeImportLocal } from './cloud-ui.js';
+import { loginScreen, newPasswordScreen, maybeImportLocal } from './cloud-ui.js';
 import { startSync } from './cloud-sync.js';
 
 window.__navCount = 0;
@@ -75,6 +75,7 @@ async function main() {
   setPasswordHandler(UI.askPassword);
   try {
     await initCloud();
+    if (cloud.recovery && cloud.user) await newPasswordScreen();
     if (cloud.needLogin) await loginScreen();
     db.useDb(dbNameFor());
   } catch (e) { console.error('cloud init', e); }

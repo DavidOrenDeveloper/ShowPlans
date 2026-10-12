@@ -3,31 +3,76 @@ import { h, icon } from './util.js';
 import * as UI from './ui.js';
 import * as S from './store.js';
 import * as db from './db.js';
-import { cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
+import { cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, requestPasswordReset, setNewPassword, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
 import { syncStatus, onSyncStatus, syncNow } from './cloud-sync.js';
 
 // ---------- מסך כניסה ----------
+// שדה סיסמה עם עין להצגה/הסתרה
+export function passField(ph, ac) {
+  const input = h('input', { type: 'password', autocomplete: ac, dir: 'ltr', placeholder: ph, required: true });
+  const btn = h('button', { type: 'button', class: 'pw-eye', 'aria-label': 'הצג/הסתר סיסמה', onclick: () => {
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.replaceChildren(icon(show ? 'eyeOff' : 'eye', 20));
+  } }, icon('eye', 20));
+  return { input, el: h('div', { class: 'pw-wrap' }, input, btn) };
+}
+
 export function loginScreen() {
   return new Promise((resolve) => {
     document.getElementById('boot')?.remove();
     const email = h('input', { type: 'email', autocomplete: 'username', dir: 'ltr', placeholder: 'אימייל', required: true, inputMode: 'email' });
-    const pass = h('input', { type: 'password', autocomplete: 'current-password', dir: 'ltr', placeholder: 'סיסמה', required: true });
+    const pf = passField('סיסמה', 'current-password'); const pass = pf.input;
+    try { const e0 = localStorage.getItem('plans.cloud.email'); if (e0) email.value = e0; } catch { /* ignore */ }
     const err = h('div', { class: 'login-err', role: 'alert' });
+    if (cloud.linkError) err.textContent = cloud.linkError;
     const btn = h('button', { class: 'btn primary block', type: 'submit' }, 'כניסה');
+    const forgot = h('button', { class: 'btn ghost block', type: 'button', onclick: async () => {
+      if (!email.value.trim()) { err.textContent = 'כתבו קודם את האימייל בשדה למעלה, ואז לחצו שוב על "שכחתי סיסמה".'; email.focus(); return; }
+      forgot.disabled = true;
+      try { await requestPasswordReset(email.value); err.style.color = '#2e7d32'; err.textContent = 'נשלח מייל עם קישור לבחירת סיסמה חדשה. בדקו גם בספאם. פתחו את הקישור באותו דפדפן/מכשיר.'; }
+      catch (ex) { err.style.color = ''; err.textContent = ex.message; }
+      setTimeout(() => { forgot.disabled = false; }, 4000);
+    } }, 'שכחתי סיסמה');
     const form = h('form', { class: 'login-card', onsubmit: async (e) => {
-      e.preventDefault(); err.textContent = ''; btn.disabled = true; btn.textContent = 'נכנס…';
+      e.preventDefault(); err.style.color = ''; err.textContent = ''; btn.disabled = true; btn.textContent = 'נכנס…';
       try { await signIn(email.value, pass.value); box.remove(); resolve('cloud'); }
       catch (ex) { err.textContent = /fetch|network/i.test(ex.message) ? 'אין חיבור לשרת. בדקו אינטרנט ונסו שוב.' : ex.message; btn.disabled = false; btn.textContent = 'כניסה'; }
     } },
     h('div', { class: 'logo big' }, icon('layers', 30)),
     h('h1', {}, 'תוכניות בנייה'),
     h('p', { class: 'hint' }, 'התחברו עם האימייל והסיסמה שקיבלתם מהמנהל'),
-    h('label', {}, 'אימייל'), email, h('label', {}, 'סיסמה'), pass, err, btn,
+    h('label', {}, 'אימייל'), email, h('label', {}, 'סיסמה'), pf.el, err, btn, forgot,
     h('button', { class: 'btn ghost block', type: 'button', onclick: () => { chooseLocal(); box.remove(); resolve('local'); } }, 'המשך בלי חשבון (שמירה מקומית בלבד)'),
     h('div', { class: 'page-credit' }, 'נוצר על ידי דוד אורן'));
     const box = h('div', { class: 'login-screen' }, form);
     document.body.append(box);
     setTimeout(() => email.focus(), 80);
+  });
+}
+
+// בחירת סיסמה חדשה (אחרי קישור "שכחתי סיסמה", או משינוי סיסמה מתוך החשבון)
+export function newPasswordScreen({ inline = false } = {}) {
+  return new Promise((resolve) => {
+    document.getElementById('boot')?.remove();
+    const p1 = passField('סיסמה חדשה', 'new-password'), p2 = passField('סיסמה חדשה שוב', 'new-password');
+    const err = h('div', { class: 'login-err', role: 'alert' });
+    const btn = h('button', { class: 'btn primary block', type: 'submit' }, 'שמירת סיסמה');
+    const form = h('form', { class: 'login-card', onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = '';
+      if (!p1.input.value) { err.textContent = 'כתבו סיסמה.'; return; }
+      if (p1.input.value !== p2.input.value) { err.textContent = 'שתי הסיסמאות לא זהות.'; return; }
+      btn.disabled = true;
+      try { await setNewPassword(p1.input.value); box.remove(); UI.toast('הסיסמה עודכנה'); resolve(true); }
+      catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+    } },
+    h('div', { class: 'logo big' }, icon('lock', 30)),
+    h('h1', {}, 'בחירת סיסמה חדשה'),
+    p1.el, p2.el, err, btn,
+    inline ? h('button', { class: 'btn ghost block', type: 'button', onclick: () => { box.remove(); resolve(false); } }, 'ביטול') : null);
+    const box = h('div', { class: 'login-screen' }, form);
+    document.body.append(box);
+    setTimeout(() => p1.input.focus(), 80);
   });
 }
 
@@ -50,6 +95,7 @@ export function accountBox() {
     statusEl,
     h('div', { class: 'acct-btns' },
       h('button', { class: 'btn ghost sm', onclick: async () => { await syncNow(); UI.toast('הסנכרון הסתיים'); } }, icon('refresh', 16), 'סנכרן'),
+      h('button', { class: 'btn ghost sm', onclick: () => newPasswordScreen({ inline: true }) }, icon('lock', 16), 'שינוי סיסמה'),
       isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => usersDialog() }, icon('users', 16), 'עובדים') : null,
       h('button', { class: 'btn ghost sm', onclick: async () => { if (await UI.confirmBox('להתנתק? נתוני העבודה נשארים שמורים במכשיר ויסונכרנו בכניסה הבאה.', { title: 'התנתקות', okText: 'התנתק' })) signOut(); } }, icon('logout', 16), 'התנתק')));
 }

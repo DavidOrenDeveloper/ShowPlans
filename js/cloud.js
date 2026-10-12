@@ -16,6 +16,8 @@ export const cloud = {
   user: null,           // { id, email }
   profile: null,        // { id, email, display_name, role }
   grants: [],           // ההרשאות שלי (לעובד)
+  recovery: false,      // נכנסו דרך קישור "שכחתי סיסמה"
+  linkError: '',
 };
 export const configured = () => !!(CLOUD.url && CLOUD.key);
 export const isAdmin = () => cloud.mode === 'cloud' && cloud.profile?.role === 'admin';
@@ -36,6 +38,7 @@ export function dbNameFor() { return cloud.mode === 'cloud' && cloud.user ? 'pla
 export async function initCloud() {
   if (!configured()) return cloud;
   const sb = client();
+  await handleAuthLink(sb);
   const pref = ls.get('mode');
   let session = null;
   try { ({ data: { session } } = await sb.auth.getSession()); } catch (e) { console.warn('getSession', e); }
@@ -55,6 +58,29 @@ export async function initCloud() {
     cloud.needLogin = true;
   }
   return cloud;
+}
+
+// קישור מהמייל (איפוס סיסמה) מגיע כ-#access_token=...&type=recovery. הנתב של האפליקציה משתמש ב-# ולכן מטפלים בזה ידנית.
+async function handleAuthLink(sb) {
+  const hash = location.hash || '';
+  if (!/access_token=|error_description=|type=recovery/.test(hash)) return;
+  const q = new URLSearchParams(hash.replace(/^#\/?/, ''));
+  try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ }
+  if (q.get('error_description')) { cloud.linkError = 'הקישור לא תקין או שפג תוקפו. בקשו קישור חדש.'; return; }
+  if (q.get('access_token') && q.get('refresh_token')) {
+    const { error } = await sb.auth.setSession({ access_token: q.get('access_token'), refresh_token: q.get('refresh_token') });
+    if (error) { cloud.linkError = 'הקישור לא תקין או שפג תוקפו. בקשו קישור חדש.'; return; }
+    if (q.get('type') === 'recovery') cloud.recovery = true;
+  }
+}
+export async function requestPasswordReset(email) {
+  const redirectTo = location.origin + location.pathname;
+  const { error } = await client().auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) throw new Error(/rate|seconds/i.test(error.message) ? 'נשלח כבר מייל לאחרונה. המתינו דקה ונסו שוב.' : error.message);
+}
+export async function setNewPassword(pw) {
+  const { error } = await client().auth.updateUser({ password: pw });
+  if (error) throw new Error(/same|different/i.test(error.message) ? 'הסיסמה החדשה זהה לקודמת' : error.message);
 }
 
 export async function loadProfile() {
