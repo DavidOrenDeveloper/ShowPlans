@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
       const email = String(b.email ?? '').trim().toLowerCase();
       const password = String(b.password ?? '');
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(req, { error: 'bad_email' }, 400);
-      if (password.length < 8) return json(req, { error: 'weak_password', message: 'סיסמה: לפחות 8 תווים' }, 400);
+      if (!password) return json(req, { error: 'weak_password', message: 'חסרה סיסמה' }, 400);
       const { data, error } = await sb.auth.admin.createUser({
         email, password, email_confirm: true,
         user_metadata: { display_name: String(b.name ?? '').trim() || email.split('@')[0] },
@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     }
     if (b.action === 'reset') {
       const password = String(b.password ?? '');
-      if (password.length < 8) return json(req, { error: 'weak_password', message: 'סיסמה: לפחות 8 תווים' }, 400);
+      if (!password) return json(req, { error: 'weak_password', message: 'חסרה סיסמה' }, 400);
       const { error } = await sb.auth.admin.updateUserById(String(b.userId), { password });
       if (error) return json(req, { error: 'reset_failed', message: error.message }, 400);
       return json(req, { ok: true });
