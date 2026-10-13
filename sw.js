@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.4.7';
+const VERSION = '1.4.9';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -48,6 +48,7 @@ const CORE = [
   "supabase/config.toml",
   "supabase/functions/_shared/mod.ts",
   "supabase/functions/admin-users/index.ts",
+  "supabase/functions/drive-admin/index.ts",
   "supabase/functions/drive-download/index.ts",
   "supabase/functions/drive-upload-session/index.ts",
   "supabase/schema.sql"
