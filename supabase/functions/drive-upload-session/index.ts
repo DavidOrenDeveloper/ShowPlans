@@ -15,9 +15,9 @@ Deno.serve(async (req) => {
     // אימות שההעלאה הושלמה (הדפדפן לא תמיד יכול לקרוא את תשובת Google בגלל CORS)
     if (b.action === 'verify') {
       const { data: row } = await service().from('drive_files').select('file_id').eq('file_id', String(b.fileId)).eq('created_by', a.user.id).maybeSingle();
-      if (!row) return json(req, { error: 'unknown_file' }, 404);
+      if (!row) return json(req, { error: 'unknown_file', step: 'verify', message: 'verify: הקובץ לא רשום בשרת (drive_files) עבור המשתמש הזה' }, 404);
       const g = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(row.file_id)}?fields=size`, { headers: { Authorization: `Bearer ${await googleToken()}` } });
-      if (!g.ok) return json(req, { exists: false });
+      if (!g.ok) { const t = (await g.text().catch(() => '')).slice(0, 300); console.error('drive verify failed', g.status, t); return json(req, { exists: false, driveStatus: g.status, driveMessage: t }); }
       const j = await g.json();
       return json(req, { exists: true, size: Number(j.size) });
     }
@@ -25,12 +25,12 @@ Deno.serve(async (req) => {
     const folderId: string | null = b.folderId ?? null;
     const planId: string | null = b.planId ?? null;
     const size = Number(b.size);
-    if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) return json(req, { error: 'bad_size' }, 400);
+    if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) return json(req, { error: 'bad_size', message: `bad_size: גודל קובץ לא תקין (${b.size})` }, 400);
 
     // בדיקת הרשאה בשם המשתמש (פונקציית SQL עם RLS-aware logic)
     const { data: ok, error } = await a.client.rpc('can_upload', { p_folder: folderId, p_plan: planId });
-    if (error) return json(req, { error: 'db_error' }, 500);
-    if (!ok) return json(req, { error: 'forbidden' }, 403);
+    if (error) return json(req, { error: 'db_error', step: 'can_upload', message: 'db_error[can_upload]: ' + error.message }, 500);
+    if (!ok) return json(req, { error: 'forbidden', step: 'can_upload', message: 'אין הרשאת העלאה לתוכנית/לתיקייה הזו (can_upload=false)' }, 403);
 
     const token = await googleToken();
     // מזהה קובץ שמור מראש – כך אפשר לרשום אותו לפני ההעלאה ולמנוע הצבעה על קבצים של אחרים
@@ -56,10 +56,10 @@ Deno.serve(async (req) => {
     if (!s.ok || !uploadUrl) { const t = (await s.text().catch(() => '')).slice(0, 300); console.error('drive session failed', s.status, t); return json(req, { error: 'drive_error', step: 'session', status: s.status, message: 'drive_error[session ' + s.status + ']: ' + t }, 502); }
 
     const { error: e2 } = await service().from('drive_files').insert({ file_id: fileId, created_by: a.user.id, folder_id: folderId, plan_id: planId });
-    if (e2) return json(req, { error: 'db_error' }, 500);
+    if (e2) return json(req, { error: 'db_error', step: 'drive_files', message: 'db_error[drive_files insert]: ' + e2.message }, 500);
     return json(req, { fileId, uploadUrl });
   } catch (e) {
     console.error(e);
-    return json(req, { error: 'server_error', message: String((e as Error).message ?? e) }, 500);
+    return json(req, { error: 'server_error', step: 'exception', message: String((e as Error).message ?? e) }, 500);
   }
 });
