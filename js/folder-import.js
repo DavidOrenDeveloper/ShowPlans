@@ -117,11 +117,11 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
   let stop = false;
   const txt = h('div', { class: 'msg' }, ''), bar = h('div', { class: 'bar-fill' });
   const m = UI.openModal({ title: 'מעלה תיקייה…', cancelable: false, body: h('div', {}, txt, h('div', { class: 'bar' }, bar)), buttons: [{ text: 'עצור', keepOpen: true, onClick: () => { stop = true; txt.textContent = 'עוצר אחרי הקובץ הנוכחי…'; return false; } }] });
-  const total = dirs.length + pdfs.length;
+  const total = pdfs.length; // סופרים רק קבצים. תיקיות לא נספרות
   let done = 0;
   const res = { folders: 0, plans: 0, existing: 0, failed: [], nonPdf, stopped: false };
   const idOf = new Map([['', targetFolderId || null]]);
-  const tick = (label) => { txt.textContent = `${done} מתוך ${total} · ${label}`; bar.style.width = Math.round((done / Math.max(1, total)) * 100) + '%'; };
+  const tick = (label) => { txt.textContent = total ? `${done} מתוך ${total} קבצים · ${label}` : label; bar.style.width = Math.round((done / Math.max(1, total)) * 100) + '%'; };
   try {
     for (const parts of dirs) {
       if (stop) break;
@@ -130,7 +130,7 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
       let f = S.childFolders(parent).find((x) => x.name === name);
       if (!f) { f = await S.createFolder(parent, name); res.folders++; }
       idOf.set(key, f.id);
-      tick('תיקייה: ' + name); done++;
+      tick('יוצר תיקייה: ' + name);
     }
     for (const it of pdfs) {
       if (stop) break;
