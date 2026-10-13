@@ -405,3 +405,20 @@ body.sync-bar-on .fab { bottom: calc(120px + var(--safe-b)); }
 .diag-row small { margin-inline-start: auto; color: var(--muted); }
 .diag-row .d-msg { margin-top: 4px; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
 .diag-row .d-ctx { margin: 6px 0 0; padding: 6px 8px; background: rgba(0,0,0,.05); border-radius: 6px; font-size: 11.5px; white-space: pre-wrap; word-break: break-all; text-align: left; }
+
+/* ניהול קבצי Drive */
+.dfiles-info { font-size: 13.5px; margin-bottom: 8px; }
+.dfiles-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.dfiles { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.dfile { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer; background: var(--card); }
+.dfile .df-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.dfile .df-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.dfile .df-main small { color: var(--muted); }
+.df-badge { font-size: 12px; padding: 2px 9px; border-radius: 99px; white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.df-badge.orphan { background: #fff3e0; color: #b26a00; } .df-badge.used { background: #e8f5e9; color: #2e7d32; }
+.dfile input[type=checkbox] { width: 20px; height: 20px; flex: none; }
+
+/* מסך מלא: רק כפתור יציאה */
+.v-exit-fs { display: none; position: absolute; top: calc(10px + var(--safe-t)); left: 10px; z-index: 40; align-items: center; gap: 6px; border: 0; border-radius: 99px; background: rgba(31,41,51,.78); color: #fff; padding: 9px 16px; font: inherit; font-size: 14px; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.viewer.fs .v-exit-fs { display: flex; }
+.viewer.fs .v-top, .viewer.fs .v-tools, .viewer.fs .v-props, .viewer.fs .v-cmp, .viewer.fs .v-pick, .viewer.fs .v-float, .viewer.fs .v-panel, .viewer.fs .v-exit-imm { display: none !important; }
