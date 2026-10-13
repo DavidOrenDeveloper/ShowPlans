@@ -1,6 +1,7 @@
 // ממשק הענן: מסך כניסה, תיבת חשבון בתפריט הצד, ניהול עובדים והרשאות (מנהל בלבד).
 import { h, icon } from './util.js';
 import * as UI from './ui.js';
+import * as diag from './diag.js';
 import * as S from './store.js';
 import * as db from './db.js';
 import { cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, requestPasswordReset, setNewPassword, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
@@ -110,6 +111,40 @@ let statusEl = null;
 onSyncStatus((s) => { if (statusEl?.isConnected) paintStatus(s); });
 function paintStatus(s = syncStatus()) {
   statusEl.className = 'acct-status ' + s.kind; statusEl.textContent = s.text;
+  if (s.kind === 'error') statusEl.append(' ', h('button', { class: 'link-btn', onclick: () => diagDialog() }, 'פרטי התקלה'));
+}
+
+// ---------- יומן תקלות ----------
+export function diagDialog() {
+  const list = h('div', { class: 'diag-list' });
+  const top = h('div', { class: 'diag-top' });
+  function paint() {
+    const s = syncStatus();
+    top.replaceChildren(h('b', {}, 'מצב נוכחי: '), s.text);
+    const es = diag.entries();
+    list.replaceChildren(...(es.length ? es.map((x) => h('div', { class: 'diag-row ' + x.level },
+      h('div', { class: 'd-head' }, h('span', { class: 'd-lvl' }, x.level === 'error' ? 'שגיאה' : x.level === 'warn' ? 'אזהרה' : 'מידע'), h('b', {}, diag.label(x.where)), h('small', {}, diag.fmtTime(x.t))),
+      h('div', { class: 'd-msg' }, x.msg),
+      x.ctx ? h('pre', { class: 'd-ctx', dir: 'ltr' }, Object.entries(x.ctx).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n')) : null))
+      : [h('p', { class: 'hint' }, 'היומן ריק. כשתהיה תקלה היא תופיע כאן עם השלב המדויק.')]));
+  }
+  paint();
+  const off = diag.onDiag(paint);
+  const m = UI.openModal({ title: 'יומן תקלות', wide: true, body: h('div', {}, top, list), buttons: [
+    { text: 'העתק דוח', kind: 'primary', keepOpen: true, onClick: async () => {
+      const txt = await diag.report({ סטטוס: syncStatus().text });
+      try { await navigator.clipboard.writeText(txt); UI.toast('הדוח הועתק. אפשר להדביק אותו בשיחה'); }
+      catch { const ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = txt; document.body.append(ta); ta.select(); try { document.execCommand('copy'); UI.toast('הדוח הועתק'); } catch { UI.alertBox(txt, { title: 'דוח תקלות' }); } ta.remove(); }
+    } },
+    { text: 'הורד כקובץ', keepOpen: true, onClick: async () => {
+      const a = h('a', { href: URL.createObjectURL(new Blob([await diag.report({ סטטוס: syncStatus().text })], { type: 'text/plain' })), download: 'showplans-diag.txt' });
+      document.body.append(a); a.click(); a.remove();
+    } },
+    { text: 'נקה יומן', keepOpen: true, onClick: () => { diag.clear(); } },
+    { text: 'סגור', value: true },
+  ] });
+  m.promise.then(off);
+  return m;
 }
 export function accountBox() {
   if (!isCloud()) {
@@ -124,6 +159,7 @@ export function accountBox() {
     statusEl,
     h('div', { class: 'acct-btns' },
       h('button', { class: 'btn ghost sm', onclick: async () => { await syncNow(); UI.toast('הסנכרון הסתיים'); } }, icon('refresh', 16), 'סנכרן'),
+      h('button', { class: 'btn ghost sm', onclick: () => diagDialog() }, icon('alert', 16), 'יומן תקלות'),
       h('button', { class: 'btn ghost sm', onclick: () => newPasswordScreen({ inline: true }) }, icon('lock', 16), 'שינוי סיסמה'),
       isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => usersDialog() }, icon('users', 16), 'עובדים') : null,
       h('button', { class: 'btn ghost sm', onclick: async () => { if (await UI.confirmBox('להתנתק? נתוני העבודה נשארים שמורים במכשיר ויסונכרנו בכניסה הבאה.', { title: 'התנתקות', okText: 'התנתק' })) signOut(); } }, icon('logout', 16), 'התנתק')));

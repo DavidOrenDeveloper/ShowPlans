@@ -2,6 +2,7 @@
 import { createClient } from '../lib/supabase.js';
 import { CLOUD } from './config.js';
 import * as db from './db.js';
+import * as diag from './diag.js';
 
 const LS = 'plans.cloud.';
 const ls = {
@@ -154,9 +155,16 @@ export async function authHeaders(extra = {}) {
   return { Authorization: `Bearer ${session.access_token}`, apikey: CLOUD.key, ...extra };
 }
 export async function callFn(name, body) {
-  const res = await fetch(fnUrl(name), { method: 'POST', headers: await authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) });
+  let res;
+  try { res = await fetch(fnUrl(name), { method: 'POST', headers: await authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) }); }
+  catch (e) { if (e && typeof e === 'object') { e.where = e.where || 'fn:' + name; e.fn = name; } diag.err('fn:' + name, e, { phase: 'network' }); throw e; }
   let j = null; try { j = await res.json(); } catch { /* ignore */ }
-  if (!res.ok) { const e = new Error(j?.message || j?.error || ('שגיאה ' + res.status)); e.status = res.status; e.code = j?.error; throw e; }
+  if (!res.ok) {
+    const e = new Error(j?.message || j?.error || ('שגיאה ' + res.status));
+    e.status = res.status; e.code = j?.error; e.fn = name; e.step = j?.step; e.serverStatus = j?.status; e.where = 'fn:' + name;
+    diag.err('fn:' + name, e, { action: body?.action || undefined });
+    throw e;
+  }
   return j;
 }
 
