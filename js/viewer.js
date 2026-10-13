@@ -3,6 +3,7 @@ import * as OCR from './ocr.js';
 import * as S from './store.js';
 import * as db from './db.js';
 import * as UI from './ui.js';
+import * as diag from './diag.js';
 import * as A from './actions.js';
 import { openPdf, pageText, destroyDoc } from './pdfio.js';
 import { Layer } from './layer.js';
@@ -130,8 +131,9 @@ class Viewer {
       btn('list', 'רשימת תוצאות', () => this.openPanel('search')),
       btn('x', 'סיום חיפוש', () => this.clearSearch()));
     this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.panel);
+    this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': 'יציאה ממסך מלא', onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, 'יציאה ממסך מלא'));
     this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar, this.mid,
-      this.cmpBar, this.props, this.toolbar, this.exitImm);
+      this.cmpBar, this.props, this.toolbar, this.exitImm, this.exitFs);
     this.root.append(this.el);
     this.el.classList.toggle('cont', !!this.cont); this.contBtn.classList.toggle('on', !!this.cont);
     this._onPop = () => {
@@ -156,6 +158,8 @@ class Viewer {
     document.addEventListener('keyup', this.keyUpFn);
     this.ro = new ResizeObserver(() => this.onResize());
     this.ro.observe(this.stage);
+    this._onFsChange = () => this.onFsChange();
+    document.addEventListener('fullscreenchange', this._onFsChange);
     this.measure();
     this.renderProps();
   }
@@ -282,6 +286,12 @@ class Viewer {
     }
   }
   onResize() {
+    // בזמן מעבר למסך מלא / יציאה ממנו הדפדפן שולח הרבה אירועי שינוי גודל. מחכים שהמעבר יסתיים ומחשבים פעם אחת.
+    const left = (this._quietUntil || 0) - performance.now();
+    if (left > 0) { clearTimeout(this._rt); this._rt = setTimeout(() => this.doResize(), left + 30); return; }
+    this.doResize();
+  }
+  doResize() {
     const w = this.W, hh = this.H;
     this.measure();
     if (w === this.W && hh === this.H) return;
@@ -1534,9 +1544,30 @@ class Viewer {
     this.updateUndo();
   }
   toggleFullscreen() {
-    if (document.fullscreenElement) { document.exitFullscreen(); return; }
-    if (this.el.requestFullscreen) this.el.requestFullscreen().catch(() => UI.toast('לא ניתן לעבור למסך מלא'));
-    else UI.toast('הדפדפן במכשיר הזה לא תומך במסך מלא. באפליקציה המותקנת המסך כבר מלא; אפשר להשתמש גם ב"מצב תצוגה נקי".', { ms: 5000 });
+    if (this.el.classList.contains('fs')) this.exitFullscreenMode(); else this.enterFullscreenMode();
+  }
+  enterFullscreenMode() {
+    // הממשק מוסתר מיד (נשאר רק כפתור יציאה), וברקע מבקשים מהדפדפן להסתיר גם את שורת הכתובת ואת סרגלי המערכת
+    this._fsT0 = performance.now(); this._quietUntil = this._fsT0 + 450;
+    this.el.classList.add('fs');
+    this.panel?.classList.add('hidden');
+    if (this.el.requestFullscreen) {
+      this.el.requestFullscreen().catch((e) => { diag.warn('fullscreen', 'הדפדפן סירב למסך מלא מלא: ' + (e?.message || e)); });
+    } else {
+      UI.toast('הדפדפן במכשיר הזה לא יכול להסתיר את שורת המערכת. להסתרה מלאה אפשר להתקין את האפליקציה למסך הבית.', { ms: 5000 });
+    }
+  }
+  exitFullscreenMode() {
+    // חוזרים מיד לממשק הרגיל, ורק אחר כך מבקשים מהדפדפן לצאת ממסך מלא, כדי שהלחיצה תרגיש מיידית
+    this._fsT0 = performance.now(); this._quietUntil = this._fsT0 + 450;
+    this.el.classList.remove('fs');
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+  onFsChange() {
+    this._quietUntil = performance.now() + 450;
+    const inFs = !!document.fullscreenElement;
+    if (!inFs) this.el?.classList.remove('fs'); // יציאה בתנועת מערכת / כפתור חזרה
+    if (this._fsT0) { diag.info('fullscreen', inFs ? 'נכנס למסך מלא' : 'יצא ממסך מלא', { ms: Math.round(performance.now() - this._fsT0) }); this._fsT0 = 0; }
   }
 
   async destroy() {
@@ -1545,6 +1576,8 @@ class Viewer {
     document.removeEventListener('keydown', this.keyFn);
     document.removeEventListener('keyup', this.keyUpFn);
     this.ro?.disconnect();
+    document.removeEventListener('fullscreenchange', this._onFsChange);
+    clearTimeout(this._rt);
     window.removeEventListener('popstate', this._onPop);
     this.layerN?.destroy(); this.layerP?.destroy();
     this.thumbIO?.disconnect();

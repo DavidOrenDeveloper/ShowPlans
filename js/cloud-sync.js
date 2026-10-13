@@ -103,7 +103,16 @@ async function remoteWrite(table, rec, row, markDone) {
     else throw tag(error, 'write:' + table, { op: 'insert', id: rec.id, name: rec.name || rec.fileName });
   }
   if (!ok) {
-    const { data, error } = await sb.from(table).update(row).eq('id', rec.id).select('id');
+    let { data, error } = await sb.from(table).update(row).eq('id', rec.id).select('id');
+    if (error && error.code === 'P0001' && table === 'versions') {
+      // המזהה המקומי של קובץ ה-Drive שונה מזה שבענן (למשל אחרי העלאה כפולה). הענן הוא המקור הקובע.
+      const { data: cur } = await sb.from('versions').select('drive_file_id').eq('id', rec.id).maybeSingle();
+      if (cur?.drive_file_id && cur.drive_file_id !== row.drive_file_id) {
+        diag.warn('write:versions', 'מזהה הקובץ המקומי שונה מזה שבענן. משתמשים בזה שבענן', { id: rec.id, name: rec.fileName, local: row.drive_file_id, cloud: cur.drive_file_id });
+        row.drive_file_id = cur.drive_file_id; rec.driveId = cur.drive_file_id;
+        ({ data, error } = await sb.from(table).update(row).eq('id', rec.id).select('id'));
+      }
+    }
     if (error) throw tag(error, 'write:' + table, { op: 'update', id: rec.id, name: rec.name || rec.fileName, driveId: row.drive_file_id });
     if (!data || !data.length) { diag.warn('write:' + table, 'העדכון לא נקלט בענן (אין הרשאה או שהרשומה לא קיימת)', { id: rec.id, name: rec.name || rec.fileName }); return 'denied'; }
   }

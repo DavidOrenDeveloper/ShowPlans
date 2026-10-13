@@ -5,7 +5,7 @@ import * as diag from './diag.js';
 import * as S from './store.js';
 import * as db from './db.js';
 import { cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, requestPasswordReset, setNewPassword, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
-import { syncStatus, onSyncStatus, syncNow, onProgress } from './cloud-sync.js';
+import { syncStatus, onSyncStatus, syncNow, onProgress, schedulePull } from './cloud-sync.js';
 
 // ---------- מסך כניסה ----------
 // שדה סיסמה עם עין להצגה/הסתרה
@@ -162,7 +162,74 @@ export function accountBox() {
       h('button', { class: 'btn ghost sm', onclick: () => diagDialog() }, icon('alert', 16), 'יומן תקלות'),
       h('button', { class: 'btn ghost sm', onclick: () => newPasswordScreen({ inline: true }) }, icon('lock', 16), 'שינוי סיסמה'),
       isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => usersDialog() }, icon('users', 16), 'עובדים') : null,
+      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => driveFilesDialog() }, icon('drive', 16), 'קבצי Drive') : null,
       h('button', { class: 'btn ghost sm', onclick: async () => { if (await UI.confirmBox('להתנתק? נתוני העבודה נשארים שמורים במכשיר ויסונכרנו בכניסה הבאה.', { title: 'התנתקות', okText: 'התנתק' })) signOut(); } }, icon('logout', 16), 'התנתק')));
+}
+
+// ---------- ניהול קבצי Drive (מנהל בלבד) ----------
+const fmtSize = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB');
+export async function driveFilesDialog() {
+  if (!isAdmin()) return;
+  const list = h('div', { class: 'dfiles' });
+  const info = h('div', { class: 'dfiles-info' }, 'טוען…');
+  let files = [];
+  const sel = new Set();
+  const delBtn = h('button', { class: 'btn danger sm', disabled: true }, icon('trash', 16), 'מחק נבחרים');
+  const orphanBtn = h('button', { class: 'btn ghost sm' }, 'סמן את כל הלא-בשימוש');
+  const clearBtn = h('button', { class: 'btn ghost sm' }, 'נקה בחירה');
+  function paint() {
+    const orphans = files.filter((f) => !f.versionId);
+    const total = files.reduce((a, f) => a + f.size, 0);
+    info.textContent = `${files.length} קבצים ב-Drive (${fmtSize(total)}). ${orphans.length} מהם לא בשימוש (${fmtSize(orphans.reduce((a, f) => a + f.size, 0))}).`;
+    delBtn.disabled = !sel.size; delBtn.lastChild.textContent = sel.size ? `מחק נבחרים (${sel.size})` : 'מחק נבחרים';
+    list.replaceChildren(...(files.length ? files : []).map((f) => {
+      const cb = h('input', { type: 'checkbox', checked: sel.has(f.id), onchange: (e) => { e.target.checked ? sel.add(f.id) : sel.delete(f.id); paint(); } });
+      return h('label', { class: 'dfile ' + (f.versionId ? 'used' : 'orphan') },
+        cb,
+        h('div', { class: 'df-main' },
+          h('b', { dir: 'auto' }, f.name || f.id),
+          h('small', {}, `${fmtSize(f.size)}${f.created ? ' · ' + new Date(f.created).toLocaleDateString('he-IL') : ''}`)),
+        f.versionId ? h('span', { class: 'df-badge used' }, 'בשימוש' + (f.planName ? ': ' + f.planName : '')) : h('span', { class: 'df-badge orphan' }, 'לא בשימוש'));
+    }));
+    if (!files.length) list.replaceChildren(h('p', { class: 'hint' }, 'אין קבצים בתיקיית האפליקציה ב-Drive.'));
+  }
+  async function load() {
+    info.textContent = 'טוען רשימת קבצים מ-Drive…';
+    try {
+      const r = await callFn('drive-admin', { action: 'list' });
+      files = (r.files || []).sort((a, b) => (!a.versionId) === (!b.versionId) ? String(b.created || '').localeCompare(String(a.created || '')) : (a.versionId ? 1 : -1));
+      for (const id of [...sel]) if (!files.some((f) => f.id === id)) sel.delete(id);
+      paint();
+    } catch (e) { info.textContent = 'שגיאה בטעינה: ' + e.message; diag.err('drive-admin', e); }
+  }
+  orphanBtn.onclick = () => { files.filter((f) => !f.versionId).forEach((f) => sel.add(f.id)); paint(); };
+  clearBtn.onclick = () => { sel.clear(); paint(); };
+  delBtn.onclick = async () => {
+    const chosen = files.filter((f) => sel.has(f.id));
+    const used = chosen.filter((f) => f.versionId);
+    const msg = `להעביר ${chosen.length} קבצים (${fmtSize(chosen.reduce((a, f) => a + f.size, 0))}) לפח של Drive?`
+      + (used.length ? `\n\nשים לב: ${used.length} מהם בשימוש. הגרסאות שלהן יימחקו מהאפליקציה בכל המכשירים, והסימונים והמדידות של אותן גרסאות לא יהיו נגישים.` : '')
+      + '\n\nבפח של Drive אפשר לשחזר קבצים במשך כ-30 יום.';
+    if (!(await UI.confirmBox(msg, { title: 'מחיקת קבצים מ-Drive', danger: true, okText: 'מחק' }))) return;
+    delBtn.disabled = true;
+    let ok = 0; const failed = [];
+    const ids = chosen.map((f) => f.id);
+    for (let i = 0; i < ids.length; i += 25) {
+      info.textContent = `מוחק… ${Math.min(i + 25, ids.length)} מתוך ${ids.length}`;
+      try {
+        const r = await callFn('drive-admin', { action: 'delete', fileIds: ids.slice(i, i + 25) });
+        for (const x of r.results || []) { if (x.ok) { ok++; sel.delete(x.id); } else failed.push(x); }
+      } catch (e) { ids.slice(i, i + 25).forEach((id) => failed.push({ id, error: e.message })); diag.err('drive-admin', e); }
+    }
+    failed.forEach((x) => diag.warn('drive-admin', 'מחיקת קובץ נכשלה: ' + x.error, { id: x.id, file: files.find((f) => f.id === x.id)?.name }));
+    UI.toast(failed.length ? `נמחקו ${ok}, נכשלו ${failed.length} (פרטים ביומן התקלות)` : `נמחקו ${ok} קבצים`, { type: failed.length ? 'error' : '', ms: 5000 });
+    await load();
+    schedulePull(true, 300); // מעדכן את המכשיר אחרי מחיקת גרסאות בשימוש
+  };
+  const m = UI.openModal({ title: 'קבצי Drive', wide: true, body: h('div', {}, info,
+    h('div', { class: 'dfiles-btns' }, orphanBtn, clearBtn, delBtn), list), buttons: [{ text: 'סגור', value: true }] });
+  load();
+  return m;
 }
 
 // ---------- ניהול עובדים (מנהל) ----------
