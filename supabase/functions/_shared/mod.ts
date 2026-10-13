@@ -58,8 +58,8 @@ export async function googleToken(): Promise<string> {
       grant_type: 'refresh_token',
     }),
   });
-  const j = await res.json();
-  if (!res.ok || !j.access_token) throw new Error('google_token_failed: ' + (j.error_description || j.error || res.status));
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j.access_token) throw new Error(`google_token_failed [${res.status} ${j.error ?? ''}]: ${j.error_description || j.error || res.status}`);
   cached = { token: j.access_token, exp: Date.now() + (j.expires_in ?? 3600) * 1000 };
   return cached.token;
 }
