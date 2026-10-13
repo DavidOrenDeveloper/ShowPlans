@@ -13,15 +13,15 @@ Deno.serve(async (req) => {
 
     // RLS: אם אין למשתמש הרשאה – לא תחזור שורה
     const { data, error } = await a.client.from('versions').select('drive_file_id').eq('id', v).eq('deleted', false).maybeSingle();
-    if (error) return json(req, { error: 'db_error' }, 500);
-    if (!data) return json(req, { error: 'not_found_or_forbidden' }, 404);
+    if (error) return json(req, { error: 'db_error', step: 'select_version', message: 'db_error[select version]: ' + error.message }, 500);
+    if (!data) return json(req, { error: 'not_found_or_forbidden', step: 'select_version', message: 'הגרסה לא נמצאה בענן או שאין הרשאה לראות אותה' }, 404);
 
     const token = await googleToken();
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     const range = req.headers.get('range');
     if (range) headers['Range'] = range;
     const g = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(data.drive_file_id)}?alt=media`, { headers });
-    if (!g.ok && g.status !== 206) return json(req, { error: 'drive_error', status: g.status }, 502);
+    if (!g.ok && g.status !== 206) { const t = (await g.text().catch(() => '')).slice(0, 300); console.error('drive download failed', g.status, t); return json(req, { error: 'drive_error', step: 'download', status: g.status, message: `drive_error[download ${g.status}]: ${t}` }, 502); }
 
     const out = new Headers(corsHeaders(req));
     out.set('Content-Type', 'application/pdf');
@@ -30,6 +30,6 @@ Deno.serve(async (req) => {
     return new Response(g.body, { status: g.status, headers: out });
   } catch (e) {
     console.error(e);
-    return json(req, { error: 'server_error', message: String((e as Error).message ?? e) }, 500);
+    return json(req, { error: 'server_error', step: 'exception', message: String((e as Error).message ?? e) }, 500);
   }
 });
