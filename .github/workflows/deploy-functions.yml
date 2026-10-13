@@ -13,4 +13,4 @@ jobs:
       - name: Deploy
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy drive-download drive-upload-session admin-users --project-ref yokgltxcmnfgwygvecnc --no-verify-jwt
+        run: supabase functions deploy drive-download drive-upload-session admin-users drive-admin --project-ref yokgltxcmnfgwygvecnc --no-verify-jwt
