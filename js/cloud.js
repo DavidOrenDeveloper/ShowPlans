@@ -195,6 +195,7 @@ export async function copyLocalIntoCurrent(onProgress = () => {}) {
         const rows = chunk.filter(Boolean).map((r) => {
           if (name === 'folders' || name === 'plans') return { ...r, _d: 1, _s: 0 };
           if (name === 'versions') return { ...r, _d: 1, _up: 1, _s: 0, driveId: null };
+          if (['markups', 'measurements', 'links', 'calibrations'].includes(name)) return { ...r, ownerId: cloud.user?.id, updatedAt: r.updatedAt || r.createdAt || Date.now(), _d: 1, _s: 0 };
           return r;
         });
         await db.putMany(name, rows);

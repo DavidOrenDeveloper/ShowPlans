@@ -4,6 +4,12 @@ import { h, icon, clone } from './util.js';
 import * as UI from './ui.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
 import { kindOf, canFill, hasFill, isNoStroke } from './markup.js';
+import * as SH from './item-share-ui.js';
+import { itemAccess } from './cloud-sync.js';
+
+const CS_ACCESS = (v, it) => itemAccess(it, it.layer || 'markups');
+const SH_NAME = (id) => SH.nameOf(id) || 'משתמש אחר';
+const SH_DIALOG = (v, o) => SH.shareDialog(v, o);
 
 const TOOL_KIND = { pen: 'shape', line: 'shape', polyline: 'shape', arrow: 'shape', rect: 'shape', ellipse: 'shape', text: 'text', highlight: 'hl' };
 const PREF_KEYS = {
@@ -42,6 +48,7 @@ export function installStyle(V) {
     // live=true: תצוגה מקדימה בזמן גרירת מחוון (בלי שמירה); השמירה נעשית ב-commitEdit
     setStyle(key, val, live = false) {
       const { sel, kind } = this.styleCtx();
+      if (sel && !this.canEditItem(sel)) return;
       if (sel) {
         const mut = (it) => {
           switch (key) {
@@ -123,6 +130,13 @@ export function installStyle(V) {
       p.textContent = '';
       const t = this.tool, row = [];
       const { sel, kind, type } = this.styleCtx();
+      if (sel && !this.canEditItem(sel)) {
+        const lvl = CS_ACCESS(this, sel);
+        row.push(h('small', { class: 'hint-inline' }, `סימון של ${SH_NAME(sel.ownerId)} · ${lvl === 'view' ? 'צפייה בלבד' : 'ללא הרשאת עריכה'}`));
+        p.classList.add('has'); p.append(...row);
+        if (this.stylePanel) { this.stylePanel.remove(); this.stylePanel = null; }
+        return;
+      }
       if (kind) {
         const cur = this.getStyle('color');
         COLORS.forEach((c) => row.push(this.swatch(c, cur === c, () => this.setStyle('color', c))));
@@ -184,6 +198,7 @@ export function installStyle(V) {
           row.push(h('button', { class: 'btn sm', onclick: async () => { const r = await this.linkDialog(sel); if (!r) return; await this.modifySelected((it) => { it.target = r.target; }); if (r.pick) this.beginPick(this.selected); } }, icon('edit', 16), 'יעד'));
           row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: 'שם הקישור (אופציונלי)', value: sel.text || '', okText: 'שמור' }); if (v != null) this.modifySelected((it) => { it.text = v; }); } }, 'שם'));
         }
+        if (this.canShareHere() && (sel.layer === 'markups' || sel.layer === 'measurements')) row.push(h('button', { class: 'btn sm', onclick: () => SH_DIALOG(this, { preset: 'sel' }) }, icon('users', 16), 'שיתוף'));
         row.push(h('button', { class: 'btn sm danger', onclick: () => this.deleteSelected() }, icon('trash', 16), 'מחק'));
       }
       p.classList.toggle('has', row.length > 0);

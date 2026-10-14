@@ -16,6 +16,9 @@ import { recognize, snapAngle } from './shape-recog.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
 import { installStyle } from './viewer-style.js';
 import { installPrint } from './viewer-print.js';
+import * as CS from './cloud-sync.js';
+import { isCloud, isAdmin } from './cloud.js';
+import * as SH from './item-share-ui.js';
 
 const PT = 96 / 72; // "100%" = גודל אמיתי ב-96 DPI
 const GAP = 24;
@@ -160,6 +163,8 @@ class Viewer {
     this.ro.observe(this.stage);
     this._onFsChange = () => this.onFsChange();
     document.addEventListener('fullscreenchange', this._onFsChange);
+    this.offItems = S.onItems((vids) => { if (this.version && vids && vids.includes(this.version.id)) this.reloadItems(); });
+    if (isCloud()) SH.getPeople().then(() => { if (this.items) this.renderProps(); });
     this.measure();
     this.renderProps();
   }
@@ -524,7 +529,7 @@ class Viewer {
   startPinch() {
     const [a, b] = [...this.ptrs.values()];
     const sel = this.selected;
-    if (sel && sel.type === 'text') { // צביטה על טקסט נבחר משנה את גודל הטקסט ולא את הזום
+    if (sel && sel.type === 'text' && this.canEditItem(sel)) { // צביטה על טקסט נבחר משנה את גודל הטקסט ולא את הזום
       const mid = this.toPage({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
       const bb = textBox(sel), pad = 80 / this.scale;
       if (mid.x >= bb.x0 - pad && mid.x <= bb.x1 + pad && mid.y >= bb.y0 - pad && mid.y <= bb.y1 + pad) {
@@ -723,6 +728,8 @@ class Viewer {
 
   // ---------- כלים ----------
   setTool(t) {
+    if (t !== 'pan' && t !== 'select' && !CS.canMarkPlan(this.planId)) { UI.toast('בתוכנית הזו יש לך הרשאת צפייה בלבד. סימון דורש הרשאת סימון מהמנהל', { type: 'error' }); return; }
+    if (t === 'link' && !CS.canEditPlanItems(this.planId)) { UI.toast('קישורים בין תוכניות דורשים הרשאת עריכה מלאה', { type: 'error' }); return; }
     if ((t === 'measure' || t === 'area') && !this.calibs.get(this.pageNum)) { this.needCalibration(t); return; }
     if (this.draft) { this.draft = null; this.renderDraft(); }
     this.tool = t;
@@ -730,7 +737,12 @@ class Viewer {
     this.updateToolUI(); this.renderProps();
   }
   updateToolUI() {
-    Object.entries(this.toolBtns).forEach(([id, b]) => b.classList.toggle('on', id === this.tool));
+    const canMark = CS.canMarkPlan(this.planId), canEdit = CS.canEditPlanItems(this.planId);
+    Object.entries(this.toolBtns).forEach(([id, b]) => {
+      b.classList.toggle('on', id === this.tool);
+      const off = id !== 'pan' && id !== 'select' && (!canMark || (id === 'link' && !canEdit));
+      b.disabled = off; b.style.opacity = off ? '0.4' : '';
+    });
     this.stage.dataset.tool = this.tool;
   }
   toolDown(pt, e) {
@@ -738,10 +750,10 @@ class Viewer {
     const base = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false };
     switch (this.tool) {
       case 'select': {
-        const hd = this.selected && this.hitHandle(p);
+        const hd = this.selected && this.canEditItem(this.selected) && this.hitHandle(p);
         if (hd) { this.gesture = { ...base, type: 'handle', idx: hd.idx, before: clone(this.selected) }; return; }
         const it = this.hit(p);
-        if (it) { this.select(it); this.gesture = { ...base, type: 'move', p0: p, before: clone(it) }; return; }
+        if (it) { this.select(it); if (this.canEditItem(it)) this.gesture = { ...base, type: 'move', p0: p, before: clone(it) }; return; }
         this.select(null);
         this.gesture = { type: 'pan', id: e.pointerId, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t0: performance.now(), moved: false, mouse: e.pointerType === 'mouse' };
         return;
@@ -766,9 +778,30 @@ class Viewer {
     const out = [];
     for (const l of ['markups', 'measurements', 'links']) {
       if (!prefs.show[l]) continue;
-      for (const it of this.items[l]) if (it.page === this.pageNum) out.push(it);
+      for (const it of this.items[l]) if (it.page === this.pageNum && this.itemShown(it)) out.push(it);
     }
     return out;
+  }
+  // ---------- של מי הסימונים (מצב ענן) ----------
+  // ברירת מחדל: מנהל רואה רק את שלו (ובוחר להוסיף עובדים); עובד רואה את מה שהגיע אליו (שלו + מה ששותף איתו)
+  itemShown(it) {
+    if (!isCloud() || it.layer === 'links' || !it.ownerId) return true;
+    const f = prefs.authors;
+    if (f === 'all') return true;
+    if (Array.isArray(f)) return f.includes(it.ownerId);
+    return isAdmin() ? it.ownerId === CS.myId() : true;
+  }
+  canEditItem(it) { return CS.itemAccess(it, it.layer || 'markups') === 'edit'; }
+  canShareHere() { return isCloud() && (isAdmin() || CS.canEditPlanItems(this.planId)); }
+  async reloadItems() {
+    const ver = this.version; if (!ver) return;
+    if (this.gesture || this.draft) { clearTimeout(this._ri); this._ri = setTimeout(() => this.reloadItems(), 800); return; }
+    const [mk, ms, ln, cal] = await Promise.all(['markups', 'measurements', 'links', 'calibrations'].map((s) => db.byIndex(s, 'versionId', ver.id)));
+    if (this.version !== ver) return;
+    this.items = { markups: mk, measurements: ms, links: ln };
+    this.calibs = new Map(cal.map((c) => [c.page, c]));
+    if (this.selected) this.selected = [...mk, ...ms, ...ln].find((x) => x.id === this.selected.id) || null;
+    this.renderItems(); this.renderProps();
   }
   ctx() {
     return {
@@ -809,7 +842,7 @@ class Viewer {
     const type = d.type;
     const it = {
       id: preview ? 'draft' : uid(), versionId: this.version.id, planId: this.planId, page: this.pageNum, type, layer: LAYER_OF[type],
-      pts: d.pts.map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })), created: Date.now(),
+      pts: d.pts.map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })), created: Date.now(), ownerId: S.hooks.owner() || undefined,
     };
     const kind = kindOf(type);
     if (kind === 'text') {
@@ -832,7 +865,8 @@ class Viewer {
     this.renderDraft(); this.renderProps();
   }
   async addItem(it) {
-    await db.put(it.layer, it);
+    if (!CS.canMarkPlan(this.planId)) { UI.toast('אין לך הרשאת סימון בתוכנית הזו', { type: 'error' }); return; }
+    await S.putItem(it.layer, it);
     this.items[it.layer].push(it);
     this.history.push({ before: null, after: clone(it) });
     this.redoStack = [];
@@ -841,7 +875,7 @@ class Viewer {
   async commitMod(before, after) {
     const a = clone(after);
     if (a.type === 'text' && before.fontSize !== a.fontSize) { prefs.tsize = Math.max(8, Math.round(a.fontSize * this.scale)); savePrefs(); }
-    await db.put(a.layer, a);
+    await S.putItem(a.layer, a);
     this.history.push({ before: clone(before), after: a });
     this.redoStack = [];
     this.updateUndo(); this.renderItems();
@@ -850,8 +884,8 @@ class Viewer {
     const src = to || from;
     const arr = this.items[src.layer];
     const i = arr.findIndex((x) => x.id === src.id);
-    if (!to) { if (i >= 0) arr.splice(i, 1); await db.del(src.layer, src.id); if (this.selected?.id === src.id) this.selected = null; }
-    else { const c = clone(to); if (i >= 0) arr[i] = c; else arr.push(c); await db.put(src.layer, c); if (this.selected?.id === c.id) this.selected = c; }
+    if (!to) { if (i >= 0) arr.splice(i, 1); await S.delItem(src.layer, src.id); if (this.selected?.id === src.id) this.selected = null; }
+    else { const c = clone(to); if (i >= 0) arr[i] = c; else arr.push(c); await S.putItem(src.layer, c); if (this.selected?.id === c.id) this.selected = c; }
     this.renderItems(); this.renderProps();
   }
   async applyEntry(c, undo) {
@@ -893,6 +927,7 @@ class Viewer {
   }
   async deleteSelected() {
     const it = this.selected; if (!it) return;
+    if (!this.canEditItem(it)) { UI.toast('אין לך הרשאה למחוק את הפריט הזה', { type: 'error' }); return; }
     this.selected = null;
     await this.setItemState(it, null);
     this.history.push({ before: clone(it), after: null });
@@ -901,6 +936,7 @@ class Viewer {
   }
   async modifySelected(mut) {
     const it = this.selected; if (!it) return;
+    if (!this.canEditItem(it)) { UI.toast('אין לך הרשאה לערוך את הפריט הזה', { type: 'error' }); return; }
     const before = clone(it);
     mut(it);
     await this.commitMod(before, it);
@@ -986,7 +1022,7 @@ class Viewer {
     const list = this.visibleItems();
     for (let i = 0; i <= n; i++) {
       const q = { x: a.x + ((b.x - a.x) * i) / n, y: a.y + ((b.y - a.y) * i) / n };
-      for (const it of list) if (!this.eraseSet.has(it.id) && hitItem(it, q, tol)) { this.eraseSet.add(it.id); changed = true; }
+      for (const it of list) if (!this.eraseSet.has(it.id) && this.canEditItem(it) && hitItem(it, q, tol)) { this.eraseSet.add(it.id); changed = true; }
     }
     if (changed) this.renderItems();
   }
@@ -1003,11 +1039,13 @@ class Viewer {
 
   // ---------- כיול ומדידה ----------
   async needCalibration(nextTool) {
+    if (!CS.canEditPlanItems(this.planId)) { UI.toast('נדרש כיול לעמוד הזה. כיול דורש הרשאת עריכה מלאה: בקשו מהמנהל', { type: 'error', ms: 5000 }); return; }
     const ok = await UI.confirmBox('כדי למדוד צריך להגדיר סקאלה לעמוד הזה. האפליקציה לא מנחשת מידות – בחרו סקאלה (למשל 1:100) או כיילו לפי מרחק ידוע בתוכנית.', { title: 'נדרש כיול', okText: 'הגדר סקאלה' });
     if (ok) this.calibrateDialog(nextTool);
   }
   async calibrateDialog(nextTool) {
     if (!this.page) return;
+    if (!CS.canEditPlanItems(this.planId)) { UI.toast('כיול דורש הרשאת עריכה מלאה בתוכנית', { type: 'error' }); return; }
     const cal = this.calibs.get(this.pageNum);
     const paper = paperName(this.pw, this.ph);
     const wmm = Math.round((this.pw * 25.4) / 72), hmm = Math.round((this.ph * 25.4) / 72);
@@ -1019,8 +1057,8 @@ class Viewer {
       if (!(n >= 1)) { UI.toast('הזן מספר גדול מ-0', { type: 'error' }); return; }
       const pages = all.checked ? Array.from({ length: this.numPages }, (_, i) => i + 1) : [this.pageNum];
       for (const pg of pages) {
-        const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, page: pg, mpu: mpuFromRatio(n), source: 'ratio', ratio: n };
-        await db.put('calibrations', c); this.calibs.set(pg, c);
+        const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, planId: this.planId, page: pg, mpu: mpuFromRatio(n), source: 'ratio', ratio: n };
+        await S.putItem('calibrations', c); this.calibs.set(pg, c);
       }
       this.renderItems(); this.renderProps();
       UI.toast(`הוגדרה סקאלה 1:${n}`);
@@ -1038,7 +1076,7 @@ class Viewer {
       h('h4', {}, '2. כיול ידני'),
       h('p', { class: 'hint' }, 'סמנו שתי נקודות בתוכנית שהמרחק ביניהן ידוע (למשל מידה כתובה), ואז הזינו את המרחק האמיתי.'),
       h('button', { class: 'btn', onclick: () => { m.close(); this.startCalibrateTool(all.checked, nextTool); } }, icon('ruler', 18), 'סמן שתי נקודות'),
-      cal ? h('button', { class: 'btn danger', onclick: async () => { await db.del('calibrations', cal.id); this.calibs.delete(this.pageNum); this.renderItems(); this.renderProps(); m.close(); } }, 'אפס כיול בעמוד') : null);
+      cal ? h('button', { class: 'btn danger', onclick: async () => { await S.delItem('calibrations', cal.id); this.calibs.delete(this.pageNum); this.renderItems(); this.renderProps(); m.close(); } }, 'אפס כיול בעמוד') : null);
     m = UI.openModal({ title: 'סקאלה וכיול', body, buttons: [{ text: 'סגור', value: true }] });
     try { // הצעה בלבד: סקאלה שנמצאה בטקסט העמוד – חובה לאמת מול התוכנית
       const txt = await pageText(this.page);
@@ -1073,8 +1111,8 @@ class Viewer {
     const meters = unit.value === 'm' ? d : unit.value === 'cm' ? d / 100 : d / 1000;
     const pages = this.calibAll ? Array.from({ length: this.numPages }, (_, i) => i + 1) : [this.pageNum];
     for (const pg of pages) {
-      const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, page: pg, mpu: meters / len, source: 'manual' };
-      await db.put('calibrations', c); this.calibs.set(pg, c);
+      const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, planId: this.planId, page: pg, mpu: meters / len, source: 'manual' };
+      await S.putItem('calibrations', c); this.calibs.set(pg, c);
     }
     UI.toast('הכיול נשמר');
     this.renderItems();
@@ -1132,7 +1170,7 @@ class Viewer {
     const link = await db.get('links', c.linkId);
     if (link) {
       link.target = { ...link.target, planId: this.planId, page: this.pageNum, view: this.viewCenter() };
-      await db.put('links', link);
+      await S.putItem('links', link);
     }
     pickCtx = null;
     UI.toast('מיקום היעד נשמר');
@@ -1506,12 +1544,30 @@ class Viewer {
       const cb = h('input', { type: 'checkbox', checked: !!prefs.show[key], onchange: () => { prefs.show[key] = cb.checked; savePrefs(); this.renderItems(); } });
       return h('label', { class: 'check' }, cb, label);
     };
-    UI.modal({
-      title: 'שכבות תצוגה',
-      body: h('div', { class: 'stack' }, mk('markups', 'סימונים (חצים, קווים, טקסט…)'), mk('measurements', 'מדידות'), mk('links', 'קישורים בין תוכניות'),
-        h('p', { class: 'hint' }, 'הסימונים, המדידות והקישורים נשמרים בנפרד מקובץ ה-PDF ואינם משנים אותו.')),
-      buttons: [{ text: 'סגור', kind: 'primary', value: true }],
-    });
+    const parts = [mk('markups', 'סימונים (חצים, קווים, טקסט…)'), mk('measurements', 'מדידות'), mk('links', 'קישורים בין תוכניות')];
+    if (isCloud()) {
+      const owners = [...new Set([...this.items.markups, ...this.items.measurements].map((it) => it.ownerId).filter(Boolean))];
+      const me = CS.myId();
+      if (me && !owners.includes(me)) owners.unshift(me);
+      owners.sort((a, b) => (a === me ? -1 : b === me ? 1 : 0));
+      const cur = () => (prefs.authors === 'all' ? owners : Array.isArray(prefs.authors) ? prefs.authors : (isAdmin() ? [me] : owners));
+      const boxes = [];
+      const setSel = () => { const on = boxes.filter((b) => b.cb.checked).map((b) => b.id); prefs.authors = on.length === owners.length ? 'all' : on; savePrefs(); this.renderItems(); };
+      parts.push(h('h3', {}, 'סימונים ומדידות של'));
+      for (const id of owners) {
+        const cb = h('input', { type: 'checkbox', checked: cur().includes(id), onchange: setSel });
+        boxes.push({ id, cb });
+        parts.push(h('label', { class: 'check' }, cb, SH.nameOf(id)));
+      }
+      if (owners.length <= 1 && isAdmin()) parts.push(h('p', { class: 'hint' }, 'סימונים של עובדים יופיעו כאן כשיהיו כאלה בגרסה הזו. כל עובד מסמן באופן פרטי, ואתה בוחר מה להציג.'));
+      if (this.canShareHere()) {
+        parts.push(h('div', { class: 'row wrap' },
+          h('button', { class: 'btn sm primary', onclick: () => SH.shareDialog(this) }, icon('users', 16), 'שיתוף סימונים…'),
+          h('button', { class: 'btn sm', onclick: () => SH.sharesOverview(this) }, 'שיתופים פעילים')));
+      }
+    }
+    parts.push(h('p', { class: 'hint' }, 'הסימונים, המדידות והקישורים נשמרים בנפרד מקובץ ה-PDF ואינם משנים אותו.'));
+    UI.modal({ title: 'שכבות תצוגה', body: h('div', { class: 'stack' }, ...parts), buttons: [{ text: 'סגור', kind: 'primary', value: true }] });
   }
   moreMenu(anchor) {
     UI.menu(anchor, [
@@ -1520,6 +1576,7 @@ class Viewer {
       { label: this.cont ? 'מצב עמוד בודד' : 'גלילה רציפה (עמודים ברצף)', icon: 'scroll', onClick: () => this.setCont(!this.cont) },
       { label: 'זיהוי טקסט בסריקה (OCR)…', icon: 'search', onClick: () => this.ocrDialog() },
       { label: 'שכבות (הצגה/הסתרה)', icon: 'layers', onClick: () => this.layersDialog() },
+      ...(this.canShareHere() ? [{ label: 'שיתוף סימונים עם עובדים…', icon: 'users', onClick: () => SH.shareDialog(this) }] : []),
       { divider: true },
       { label: 'הדפסה / שמירה כ-PDF עם הסימונים', icon: 'print', onClick: () => this.printDialog() },
       { label: 'שנה שם תוכנית', icon: 'edit', onClick: () => this.renameDialog() },
@@ -1577,7 +1634,8 @@ class Viewer {
     document.removeEventListener('keyup', this.keyUpFn);
     this.ro?.disconnect();
     document.removeEventListener('fullscreenchange', this._onFsChange);
-    clearTimeout(this._rt);
+    clearTimeout(this._rt); clearTimeout(this._ri);
+    this.offItems?.();
     window.removeEventListener('popstate', this._onPop);
     this.layerN?.destroy(); this.layerP?.destroy();
     this.thumbIO?.disconnect();

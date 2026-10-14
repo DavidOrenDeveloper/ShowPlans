@@ -71,6 +71,18 @@ export const putMany = (s, arr) => run(s, 'readwrite', async (t) => { const os =
 export const del = (s, k) => run(s, 'readwrite', (t) => rq(t.objectStore(s).delete(k)));
 export const byIndex = (s, i, k) => run(s, 'readonly', (t) => rq(t.objectStore(s).index(i).getAll(IDBKeyRange.only(k))));
 
+// כתיבה/מחיקה מסונכרנת: לא דורסים רשומה שיש בה שינוי מקומי שטרם נשלח (_d). מחזיר כמה רשומות באמת נכתבו/נמחקו.
+export const putManyIfClean = (s, arr) => run(s, 'readwrite', async (t) => {
+  const os = t.objectStore(s); let n = 0;
+  for (const v of arr) { const cur = await rq(os.get(v.id)); if (cur && cur._d) continue; os.put(v); n++; }
+  return n;
+});
+export const delManyIfClean = (s, ids) => run(s, 'readwrite', async (t) => {
+  const os = t.objectStore(s); let n = 0;
+  for (const id of ids) { const cur = await rq(os.get(id)); if (!cur || cur._d) continue; os.delete(id); n++; }
+  return n;
+});
+
 export async function clearAll() {
   const names = Object.keys(STORES);
   await run(names, 'readwrite', async (t) => { for (const n of names) t.objectStore(n).clear(); });

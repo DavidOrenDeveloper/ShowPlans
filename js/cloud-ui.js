@@ -162,6 +162,7 @@ export function accountBox() {
       h('button', { class: 'btn ghost sm', onclick: () => diagDialog() }, icon('alert', 16), 'יומן תקלות'),
       h('button', { class: 'btn ghost sm', onclick: () => newPasswordScreen({ inline: true }) }, icon('lock', 16), 'שינוי סיסמה'),
       isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => usersDialog() }, icon('users', 16), 'עובדים') : null,
+      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => workerAccessDialog() }, icon('lock', 16), 'גישה לפי עובד') : null,
       isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => driveFilesDialog() }, icon('drive', 16), 'קבצי Drive') : null,
       h('button', { class: 'btn ghost sm', onclick: async () => { if (await UI.confirmBox('להתנתק? נתוני העבודה נשארים שמורים במכשיר ויסונכרנו בכניסה הבאה.', { title: 'התנתקות', okText: 'התנתק' })) signOut(); } }, icon('logout', 16), 'התנתק')));
 }
@@ -245,6 +246,7 @@ export async function usersDialog() {
       ...data.map((u) => h('div', { class: 'user-row' },
         h('div', { class: 'u-main' }, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email), h('span', { class: 'role-badge' }, u.role === 'admin' ? 'מנהל' : 'עובד')),
         u.id === cloud.user.id ? h('small', {}, 'אתה') : h('div', { class: 'u-btns' },
+          u.role === 'admin' ? null : h('button', { class: 'btn sm', onclick: () => workerAccessDialog(u.id) }, 'גישה לתוכניות'),
           h('button', { class: 'btn sm', onclick: () => resetPass(u) }, 'סיסמה חדשה'),
           h('button', { class: 'btn sm', onclick: async () => { const r = u.role === 'admin' ? 'worker' : 'admin'; if (await UI.confirmBox(r === 'admin' ? `להפוך את ${u.email} למנהל? הוא יראה ויערוך הכול.` : `להפוך את ${u.email} לעובד?`)) { await run(() => callFn('admin-users', { action: 'setRole', userId: u.id, role: r })); load(); } } }, u.role === 'admin' ? 'הפוך לעובד' : 'הפוך למנהל'),
           h('button', { class: 'btn sm danger', onclick: async () => { if (await UI.confirmBox(`למחוק את המשתמש ${u.email}? הסימונים שלו יישארו.`, { danger: true, okText: 'מחק' })) { await run(() => callFn('admin-users', { action: 'delete', userId: u.id })); load(); } } }, 'מחק')))),
@@ -304,6 +306,146 @@ export async function grantsDialog({ folderId = null, planId = null }) {
       sel.disabled = false;
     });
     body.append(h('div', { class: 'grant-row' }, h('div', {}, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email)), sel));
+  }
+  return m.promise;
+}
+
+// ---------- גישה לפי עובד: מה כל עובד רואה (מנהל) ----------
+// עובד לא רואה שום תיקייה או תוכנית עד שנותנים לו הרשאה. הרשאה על תיקייה חלה על כל מה שבתוכה.
+const RANK = { view: 1, mark: 2, edit: 3 };
+const LEVEL_TEXT = { view: 'צפייה', mark: 'צפייה + סימונים', edit: 'עריכה מלאה' };
+export async function workerAccessDialog(userId = null) {
+  const sb = client();
+  const body = h('div', { class: 'form' });
+  const m = UI.openModal({ title: 'גישה לתוכניות לפי עובד', body, wide: true, buttons: [{ text: 'סגור', value: true }] });
+  const { data: users, error } = await sb.from('profiles').select('*').eq('role', 'worker').order('display_name');
+  if (error) { body.append(h('p', { class: 'msg' }, 'שגיאה: ' + error.message)); return m.promise; }
+  if (!users.length) { body.append(h('p', { class: 'msg' }, 'עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.')); return m.promise; }
+  let uid = userId && users.some((u) => u.id === userId) ? userId : users[0].id;
+  let grants = [];
+  const expanded = new Set();
+  let filter = '';
+  const who = h('select', { 'aria-label': 'עובד' }, users.map((u) => h('option', { value: u.id }, u.display_name || u.email)));
+  who.value = uid;
+  const summary = h('p', { class: 'hint' });
+  const search = h('input', { type: 'search', placeholder: 'חיפוש תיקייה או תוכנית…', 'aria-label': 'חיפוש' });
+  const tree = h('div', { class: 'users' });
+  body.append(h('p', { class: 'hint' }, 'בוחרים עובד ואז קובעים לכל תיקייה או תוכנית אם הוא רואה אותה. תיקייה שניתנה לו כוללת את כל מה שבתוכה. מה שלא סומן, העובד לא רואה בכלל.'),
+    h('label', {}, 'עובד'), who, summary, search, tree);
+
+  const direct = (col, id) => grants.find((g) => g[col] === id);
+  const folderLevel = (fid) => { let best = 0, f = fid ? S.P.folders.get(fid) : null, g = 0; while (f && g++ < 200) { const d = direct('folder_id', f.id); if (d) best = Math.max(best, RANK[d.level] || 0); f = f.parentId ? S.P.folders.get(f.parentId) : null; } return best; };
+  const planLevel = (p) => Math.max(folderLevel(p.folderId || null), RANK[direct('plan_id', p.id)?.level] || 0);
+  const levelName = (n) => ['', 'view', 'mark', 'edit'][n] || '';
+
+  async function setGrant(col, id, value) {
+    const existing = direct(col, id);
+    if (!value) { if (existing) { const { error: e } = await sb.from('grants').delete().eq('id', existing.id); if (e) throw e; grants.splice(grants.indexOf(existing), 1); } }
+    else if (existing) { const { error: e } = await sb.from('grants').update({ level: value }).eq('id', existing.id); if (e) throw e; existing.level = value; }
+    else { const { data, error: e } = await sb.from('grants').insert({ user_id: uid, [col]: id, level: value }).select().single(); if (e) throw e; grants.push(data); }
+  }
+  function levelSelect(col, id, inherited) {
+    const sel = h('select', { 'aria-label': 'רמת גישה' }, LEVELS.map(([v, t]) => h('option', { value: v }, v === '' && inherited ? `ללא (יורש: ${LEVEL_TEXT[levelName(inherited)]})` : t)));
+    sel.value = direct(col, id)?.level || '';
+    sel.addEventListener('change', async () => {
+      sel.disabled = true;
+      try { await setGrant(col, id, sel.value); UI.toast('נשמר'); paint(); }
+      catch (e) { UI.toast('שגיאה: ' + e.message, { type: 'error' }); sel.value = direct(col, id)?.level || ''; sel.disabled = false; }
+    });
+    return sel;
+  }
+  const matches = (name) => !filter || name.toLowerCase().includes(filter);
+  function hasMatch(fid) { // תיקייה מוצגת בחיפוש אם היא או משהו בתוכה תואם
+    if (matches(S.P.folders.get(fid)?.name || '')) return true;
+    return S.plansIn(fid).some((p) => matches(p.name)) || S.childFolders(fid).some((c) => hasMatch(c.id));
+  }
+  function folderRows(parentId, depth, out, inheritedFrom) {
+    for (const f of S.childFolders(parentId)) {
+      if (filter && !hasMatch(f.id)) continue;
+      const open = filter ? true : expanded.has(f.id);
+      const myInherited = inheritedFrom;
+      const lvlHere = Math.max(myInherited, RANK[direct('folder_id', f.id)?.level] || 0);
+      const toggle = h('button', { class: 'icon-btn sm', 'aria-label': open ? 'סגור' : 'פתח', onclick: () => { open ? expanded.delete(f.id) : expanded.add(f.id); paint(); } }, icon(open ? 'chevD' : 'chevL', 16));
+      out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
+        h('div', {}, h('div', { class: 'row' }, toggle, icon('folder', 18), h('b', {}, f.name)), h('small', {}, lvlHere ? `העובד רואה: ${LEVEL_TEXT[levelName(lvlHere)]}` : 'העובד לא רואה')),
+        levelSelect('folder_id', f.id, myInherited && !direct('folder_id', f.id) ? myInherited : 0)));
+      if (open) folderRows(f.id, depth + 1, out, lvlHere);
+    }
+    for (const p of S.plansIn(parentId)) {
+      if (filter && !matches(p.name)) continue;
+      const eff = planLevel(p);
+      const inheritedLvl = folderLevel(p.folderId || null);
+      out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
+        h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('span', {}, p.name)), h('small', {}, eff ? `העובד רואה: ${LEVEL_TEXT[levelName(eff)]}` : 'העובד לא רואה')),
+        levelSelect('plan_id', p.id, inheritedLvl && !direct('plan_id', p.id) ? inheritedLvl : 0)));
+    }
+  }
+  function paint() {
+    const rows = [];
+    folderRows(null, 0, rows, 0);
+    tree.replaceChildren(...(rows.length ? rows : [h('p', { class: 'hint' }, filter ? 'לא נמצאו תוצאות.' : 'אין תיקיות או תוכניות.')]));
+    const vis = [...S.P.plans.values()].filter((p) => planLevel(p) > 0).length;
+    summary.textContent = `העובד רואה ${vis} מתוך ${S.P.plans.size} תוכניות.`;
+  }
+  async function loadUser() {
+    tree.replaceChildren(h('p', { class: 'hint' }, 'טוען…'));
+    const { data, error: e } = await sb.from('grants').select('*').eq('user_id', uid);
+    if (e) { tree.replaceChildren(h('p', { class: 'msg' }, 'שגיאה: ' + e.message)); return; }
+    grants = data || [];
+    for (const g of grants) { // פותחים את הענפים שיש בהם הרשאה
+      let f = g.folder_id ? S.P.folders.get(g.folder_id) : (S.P.plans.get(g.plan_id) ? S.P.folders.get(S.P.plans.get(g.plan_id).folderId) : null), n = 0;
+      while (f && n++ < 200) { f = f.parentId ? S.P.folders.get(f.parentId) : null; if (f) expanded.add(f.id); }
+    }
+    paint();
+  }
+  who.addEventListener('change', () => { uid = who.value; loadUser(); });
+  search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); paint(); });
+  loadUser();
+  return m.promise;
+}
+
+// ---------- הרשאות לכמה תיקיות/תוכניות בבת אחת (מהבחירה בדפדפן הקבצים) ----------
+export async function bulkGrantsDialog({ folders = [], plans = [] }) {
+  const sb = client();
+  const total = folders.length + plans.length;
+  const body = h('div', { class: 'form' }, h('p', { class: 'hint' }, `ההרשאה תיקבע ל-${total} פריטים שנבחרו (תיקייה כוללת את כל מה שבתוכה). "ללא שינוי" משאיר את ההרשאה הקיימת של העובד.`));
+  const m = UI.openModal({ title: 'הרשאות לפריטים שנבחרו', body, wide: true, buttons: [
+    { text: 'ביטול', value: false },
+    { text: 'החל', kind: 'primary', keepOpen: true, onClick: (mm) => apply(mm) },
+  ] });
+  const { data: users, error } = await sb.from('profiles').select('*').eq('role', 'worker').order('display_name');
+  if (error) { body.append(h('p', { class: 'msg' }, 'שגיאה: ' + error.message)); return m.promise; }
+  if (!users.length) { body.append(h('p', { class: 'msg' }, 'עוד אין עובדים.')); return m.promise; }
+  const sels = new Map();
+  for (const u of users) {
+    const sel = h('select', { 'aria-label': 'רמת גישה' }, [['keep', 'ללא שינוי'], ['', 'ללא גישה'], ['view', 'צפייה בלבד'], ['mark', 'צפייה + סימונים'], ['edit', 'עריכה מלאה']].map(([v, t]) => h('option', { value: v }, t)));
+    sel.value = 'keep'; sels.set(u.id, sel);
+    body.append(h('div', { class: 'grant-row' }, h('div', {}, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email)), sel));
+  }
+  async function apply(mm) {
+    const changes = [...sels].filter(([, s]) => s.value !== 'keep').map(([id, s]) => [id, s.value]);
+    if (!changes.length) { UI.toast('לא נבחר שינוי'); return false; }
+    try {
+      const [fg, pg] = await Promise.all([
+        folders.length ? sb.from('grants').select('*').in('folder_id', folders) : { data: [] },
+        plans.length ? sb.from('grants').select('*').in('plan_id', plans) : { data: [] },
+      ]);
+      const have = [...(fg.data || []), ...(pg.data || [])];
+      const inserts = [];
+      for (const [userId, level] of changes) {
+        const targets = [...folders.map((id) => ['folder_id', id]), ...plans.map((id) => ['plan_id', id])];
+        for (const [col, id] of targets) {
+          const ex = have.find((g) => g.user_id === userId && g[col] === id);
+          if (!level) { if (ex) { const { error: e } = await sb.from('grants').delete().eq('id', ex.id); if (e) throw e; } }
+          else if (ex) { if (ex.level !== level) { const { error: e } = await sb.from('grants').update({ level }).eq('id', ex.id); if (e) throw e; } }
+          else inserts.push({ user_id: userId, [col]: id, level });
+        }
+      }
+      if (inserts.length) { const { error: e } = await sb.from('grants').insert(inserts); if (e) throw e; }
+      UI.toast('ההרשאות עודכנו');
+      mm.close(true);
+      return true;
+    } catch (e) { UI.alertBox(e.message || String(e), { title: 'העדכון נכשל' }); return false; }
   }
   return m.promise;
 }

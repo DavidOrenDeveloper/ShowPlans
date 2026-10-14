@@ -1,12 +1,14 @@
 // סנכרון בין המסד המקומי (IndexedDB) לענן. כלל: השמירה האחרונה גוברת.
-// שלב 1: תיקיות, תוכניות, גרסאות וקבצי ה-PDF (ב-Google Drive). שלב 2 יוסיף סימונים/מדידות/כיולים/קישורים.
+// תיקיות, תוכניות, גרסאות וקבצי ה-PDF (ב-Google Drive), וגם סימונים/מדידות/כיולים/קישורים (item-sync.js).
 import * as db from './db.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
 import { cloud, client, isCloud, isAdmin, levelOfFolder, levelOfPlan, callFn, authHeaders, fnUrl, loadGrants } from './cloud.js';
 import * as diag from './diag.js';
+import { createItemSync } from './item-sync.js';
 
-const st = { pushing: false, again: false, pulling: false, timer: 0, pullTimer: 0, err: '', last: 0, started: false, fullNext: true, denied: false };
+const st = { pushing: false, again: false, pulling: false, timer: 0, pullTimer: 0, err: '', last: 0, started: false, fullNext: true, denied: false, offset: 0 };
+let dirtyItems = 0;
 const subs = new Set();
 export const onSyncStatus = (fn) => { subs.add(fn); return () => subs.delete(fn); };
 export function syncStatus() {
@@ -58,7 +60,7 @@ function endProgress(ok) {
 function pendingCount() {
   let n = 0;
   for (const m of [S.P.folders, S.P.plans, S.P.versions]) for (const r of m.values()) if (r._d) n++;
-  return n + tombs.length;
+  return n + tombs.length + dirtyItems;
 }
 
 // ---------- מחיקות שממתינות לענן ----------
@@ -83,6 +85,31 @@ function b64ToBlob(b64, type = 'image/jpeg') {
   return new Blob([u], { type });
 }
 const depth = (f) => { let d = 0, x = f, g = 0; while (x && x.parentId && g++ < 200) { d++; x = S.P.folders.get(x.parentId); } return d; };
+
+// ---------- סימונים, מדידות, כיולים וקישורים ----------
+const items = createItemSync({
+  db, sb: () => client(), me: () => cloud.user?.id, isAdmin: () => isAdmin(), now: () => S.hooks.now(),
+  planSynced: (id) => !!S.P.plans.get(id)?._s,
+  planOfVersion: (vid) => S.P.versions.get(vid)?.planId,
+  planLevel: (pid) => levelOfPlan(pid, S.P.plans, S.P.folders),
+  planInFolder: (pid, fid) => { const p = S.P.plans.get(pid); return !!p && S.isDescendant(p.folderId || null, fid); },
+  fetchChanged: (t) => fetchChanged(t), fetchIds: (t) => fetchIds(t), setSince: (t, v) => setSince(t, v),
+  addTomb: (t) => { tombs.push(t); saveTombs(); schedulePush(300); },
+  emit: (vids) => S.emitItems(vids), log: diag,
+});
+async function refreshDirty() { try { dirtyItems = await items.dirtyCount(); } catch { /* ignore */ } emitStatus(); }
+async function pushItemsStep() {
+  const r = await items.push();
+  if (r['denied-edit']) deniedToast('עריכת סימונים שאינם שלך');
+  if (r['denied-new']) deniedToast('הוספת סימונים בתוכנית הזו');
+  await refreshDirty();
+}
+// לממשק: מה מותר לי לעשות בפריט / בתוכנית
+export const itemAccess = (it, store) => (!isCloud() ? 'edit' : items.levelOf(it, store));
+export const canMarkPlan = (planId) => !isCloud() || levelOfPlan(planId, S.P.plans, S.P.folders) >= 2;
+export const canEditPlanItems = (planId) => !isCloud() || levelOfPlan(planId, S.P.plans, S.P.folders) >= 3;
+export const refreshShares = () => items.loadShares();
+export const myId = () => cloud.user?.id || null;
 
 // ---------- דחיפה לענן ----------
 const ready = () => isCloud() && cloud.session !== false && navigator.onLine && !!cloud.user;
@@ -131,6 +158,7 @@ async function pushAll() {
     await step('push:folders', {}, pushFolders);
     await step('push:plans', {}, pushPlans);
     await step('push:versions', {}, pushVersions);
+    await step('push:items', {}, pushItemsStep);
     st.last = Date.now();
     endProgress(true);
   } catch (e) {
@@ -167,7 +195,7 @@ async function pushTombs() {
   const sb = client();
   const keep = [];
   for (const t of tombs) {
-    const { error } = await sb.from(t.t).update({ deleted: true }).eq('id', t.id);
+    const { error } = await sb.from(t.t).update(t.t === 'items' ? { deleted: true, data: {} } : { deleted: true }).eq('id', t.id);
     if (error && !/permission|violates/i.test(error.message || '')) { keep.push(t); throw error; }
   }
   tombs = keep; await saveTombs();
@@ -350,6 +378,9 @@ async function pullAll() {
     if (purge.folderIds.length || purge.planIds.length || purge.versionIds.length) await S.purgeLocal(purge);
     else if (puts.folders.length || puts.plans.length || puts.versions.length) await S.reload();
     await setSince('folders', maxOf(F.rows, F.since)); await setSince('plans', maxOf(Pl.rows, Pl.since)); await setSince('versions', maxOf(V.rows, V.since));
+    stage = 'items';
+    await items.pull(full);
+    await refreshDirty();
     st.err = ''; st.last = Date.now();
     for (const v of puts.versions) if (!v.indexed) { /* ייאונדקס אחרי הורדת הקובץ */ }
   } catch (e) {
@@ -414,15 +445,36 @@ export const canEditHere = (folderId) => !isCloud() || isAdmin() || levelOfFolde
 export const canEditPlan = (planId) => !isCloud() || isAdmin() || levelOfPlan(planId, S.P.plans, S.P.folders) >= 3;
 
 // ---------- הפעלה ----------
+// הפרש השעון מול השרת, כדי ש"השמירה האחרונה גוברת" תתבסס על זמן אחיד ולא על שעון הטלפון
+async function syncClock() {
+  try {
+    const t0 = Date.now();
+    const { data, error } = await client().rpc('ping');
+    const t1 = Date.now();
+    if (error || !data) return;
+    st.offset = Math.round(new Date(data).getTime() - (t0 + t1) / 2);
+    await db.put('meta', { key: 'clockOffset', v: st.offset });
+  } catch { /* ignore */ }
+}
+
 export async function startSync() {
   if (!isCloud() || st.started) return;
   st.started = true;
   await loadTombs();
+  st.offset = (await db.get('meta', 'clockOffset'))?.v || 0;
+  S.hooks.now = () => Date.now() + st.offset;
+  S.hooks.owner = () => cloud.user?.id || null;
+  S.hooks.itemChange = () => { dirtyItems++; emitStatus(); schedulePush(); };
+  S.hooks.itemDeleted = (store, rec) => { if (rec?._s) { tombs.push({ t: 'items', id: rec.id }); saveTombs(); } };
+  await items.restoreShares();
+  await items.adoptLegacy();
+  await refreshDirty();
+  syncClock();
   S.hooks.change = () => schedulePush();
   S.hooks.purged = onPurged;
   S.hooks.remoteFile = remoteFile;
   S.hooks.guard = guard;
-  window.addEventListener('online', () => { emitStatus(); schedulePull(true, 300); schedulePush(300); });
+  window.addEventListener('online', () => { emitStatus(); syncClock(); schedulePull(true, 300); schedulePush(300); });
   window.addEventListener('offline', emitStatus);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { schedulePull(false, 300); schedulePush(300); } });
   setInterval(() => { if (document.visibilityState === 'visible') { schedulePull(false, 0); } }, 60000);
@@ -430,7 +482,8 @@ export async function startSync() {
     const sb = client();
     const ch = sb.channel('plans-sync');
     for (const t of ['folders', 'plans', 'versions']) ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => schedulePull(false, 700));
-    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'grants' }, () => schedulePull(true, 500));
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => schedulePull(false, 400));
+    for (const t of ['grants', 'item_shares', 'author_shares']) ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => schedulePull(true, 500));
     ch.subscribe();
   } catch (e) { console.warn('realtime', e); }
   await pullAll();

@@ -1,6 +1,6 @@
 // מסך ניהול הקבצים: עץ תיקיות, כרטיסי תיקיות/תוכניות, חיפוש, בחירה מרובה, גרירה, ניהול אחסון
 import { checkForUpdate, APP_VERSION } from './update.js';
-import { accountBox, grantsDialog } from './cloud-ui.js';
+import { accountBox, grantsDialog, bulkGrantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
 import { canEditHere } from './cloud-sync.js';
 import * as FI from './folder-import.js';
@@ -233,6 +233,7 @@ function renderSelbar() {
     h('button', { class: 'btn sm', onclick: async () => { if (await A.moveDialog(o, st.folderId)) clearSel(); } }, icon('move', 16), 'העבר'),
     h('button', { class: 'btn sm', onclick: () => B.downloadItems(o) }, icon('download', 16), 'הורד'),
     h('button', { class: 'btn sm', onclick: () => batchRename(o) }, icon('edit', 16), 'שנה שם'),
+    isAdmin() ? h('button', { class: 'btn sm', onclick: async () => { if (await bulkGrantsDialog(o)) clearSel(); } }, icon('lock', 16), 'הרשאות') : null,
     h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), 'מחק'));
 }
 function selectAll() {

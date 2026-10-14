@@ -15,8 +15,11 @@ let kids = new Map(), plansBy = new Map(), versBy = new Map();
 export const hooks = {
   change() {}, purged() {}, remoteFile: null, // remoteFile(versionId) => Promise<Blob|null>
   guard() {},                                  // guard(kind, ids) זורק שגיאה אם אין הרשאה
+  now: () => Date.now(),                       // שעון מתוקן לפי השרת (מצב ענן)
+  owner: () => null,                           // מזהה המשתמש הנוכחי (מצב ענן)
+  itemChange() {}, itemDeleted() {},           // סימונים/מדידות/כיולים/קישורים: שינוי / מחיקה לסנכרון
 };
-const stamp = (r) => { r.updatedAt = Date.now(); r._d = 1; return r; };
+const stamp = (r) => { r.updatedAt = hooks.now(); r._d = 1; return r; };
 
 const subs = new Set();
 export function subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }
@@ -175,6 +178,30 @@ async function purge({ folderIds = [], planIds = [], versionIds = [] }, { silent
 // מחיקה מקומית בלבד (בעקבות שינוי בענן) – לא יוצרת מחיקה בענן
 export async function purgeLocal(ids) { await purge(ids, { silent: true }); await reload(); }
 
+// ---------- סימונים, מדידות, קישורים וכיולים ----------
+// כל כתיבה של פריט עוברת כאן, כדי שהסנכרון יידע על כל שינוי (וכדי שיהיה בעלים וזמן עריכה).
+export const ITEM_STORES = ['markups', 'measurements', 'links', 'calibrations'];
+const itemSubs = new Set();
+export function onItems(fn) { itemSubs.add(fn); return () => itemSubs.delete(fn); }
+export function emitItems(versionIds) { itemSubs.forEach((f) => { try { f(versionIds); } catch (e) { console.error(e); } }); }
+
+export async function putItem(store, it) {
+  const cur = await db.get(store, it.id);
+  if (cur) { it._s = cur._s; it._srv = cur._srv; it.ownerId = it.ownerId || cur.ownerId; it._rev = cur._rev; }
+  else if (it._s) { it._rev = 1; }       // החזרת פריט שנמחק (ביטול מחיקה): הענן מחזיר אותו לחיים
+  it.ownerId = it.ownerId || hooks.owner() || undefined;
+  it.updatedAt = hooks.now(); it._d = 1;
+  await db.put(store, it);
+  hooks.itemChange(store, it);
+  return it;
+}
+export async function delItem(store, id) {
+  const cur = await db.get(store, id);
+  await db.del(store, id);
+  if (cur) hooks.itemDeleted(store, cur);
+  hooks.itemChange(store, cur);
+}
+
 // ---------- ייבוא PDF ----------
 function friendlyErr(e) {
   if (e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || ''))) return new Error('אין מספיק מקום אחסון במכשיר');
@@ -294,10 +321,11 @@ export async function duplicatePlan(planId) {
     await db.run(['plans', 'versions', 'files', 'thumbs', 'markups', 'measurements', 'links', 'calibrations', 'textindex'], 'readwrite', async (t) => {
       if (file) t.objectStore('files').put({ id: nv.id, blob: file.blob });
       if (thumb) t.objectStore('thumbs').put({ id: nv.id, blob: thumb.blob });
-      for (const m of mk) t.objectStore('markups').put({ ...m, id: uid(), versionId: nv.id, planId: np.id });
-      for (const m of ms) t.objectStore('measurements').put({ ...m, id: uid(), versionId: nv.id, planId: np.id });
-      for (const m of ln) t.objectStore('links').put({ ...m, id: uid(), versionId: nv.id, planId: np.id });
-      for (const c of cal) t.objectStore('calibrations').put({ ...c, id: `${nv.id}:${c.page}`, versionId: nv.id });
+      const fresh = (m) => ({ ...m, _s: 0, _d: 1, _srv: null, _rev: 0, ownerId: hooks.owner() || undefined, updatedAt: now });
+      for (const m of mk) t.objectStore('markups').put({ ...fresh(m), id: uid(), versionId: nv.id, planId: np.id });
+      for (const m of ms) t.objectStore('measurements').put({ ...fresh(m), id: uid(), versionId: nv.id, planId: np.id });
+      for (const m of ln) t.objectStore('links').put({ ...fresh(m), id: uid(), versionId: nv.id, planId: np.id });
+      for (const c of cal) t.objectStore('calibrations').put({ ...fresh(c), id: `${nv.id}:${c.page}`, versionId: nv.id, planId: np.id });
       for (const x of tx) t.objectStore('textindex').put({ ...x, id: `${nv.id}:${x.page}`, versionId: nv.id, planId: np.id });
       t.objectStore('versions').put(nv);
       t.objectStore('plans').put(np);
