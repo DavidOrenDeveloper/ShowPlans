@@ -422,3 +422,10 @@ body.sync-bar-on .fab { bottom: calc(120px + var(--safe-b)); }
 .v-exit-fs { display: none; position: absolute; top: calc(10px + var(--safe-t)); left: 10px; z-index: 40; align-items: center; gap: 6px; border: 0; border-radius: 99px; background: rgba(31,41,51,.78); color: #fff; padding: 9px 16px; font: inherit; font-size: 14px; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .viewer.fs .v-exit-fs { display: flex; }
 .viewer.fs .v-top, .viewer.fs .v-tools, .viewer.fs .v-props, .viewer.fs .v-cmp, .viewer.fs .v-pick, .viewer.fs .v-float, .viewer.fs .v-panel, .viewer.fs .v-exit-imm { display: none !important; }
+
+/* מסך הגדרות */
+.set-body { gap: 12px; }
+.set-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line, #e5e7eb); }
+.set-l { font-weight: 600; }
+.set-v { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: end; }
+.set-good { color: #2e7d32; } .set-bad { color: #c62828; } .set-warn { color: #b26a00; }
