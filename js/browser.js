@@ -1,6 +1,6 @@
 // מסך ניהול הקבצים: עץ תיקיות, כרטיסי תיקיות/תוכניות, חיפוש, בחירה מרובה, גרירה, ניהול אחסון
 import { checkForUpdate, APP_VERSION } from './update.js';
-import { installNow, isInstalled } from './pwa.js';
+import { installNow, isInstalled, installedElsewhere } from './pwa.js';
 import { settingsDialog } from './settings.js';
 import { accountBox, grantsDialog, bulkGrantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
@@ -26,6 +26,8 @@ const credit = () => h('div', { class: 'page-credit' }, 'נוצר על ידי ד
 let carry = null; // מצב "נושאים" תוכניות במגע: { keys, id, x, y, ghost, bar, over, second }
 export async function installApp() {
   if (isInstalled()) { UI.toast('האפליקציה כבר מותקנת ופועלת כאפליקציה.'); return; }
+  UI.toast('בודק אפשרות התקנה…', { ms: 2500 });
+  if (await installedElsewhere()) { UI.toast('האפליקציה כבר מותקנת בטלפון. פתחו אותה מהאייקון במסך הבית.', { ms: 5000 }); return; }
   const r = await installNow();
   if (r === 'unavailable') A.installHelp();
   else if (r === 'accepted') UI.toast('האפליקציה הותקנה. פתחו אותה מהאייקון במסך הבית.', { ms: 5000 });

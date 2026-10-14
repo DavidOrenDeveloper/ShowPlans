@@ -1,6 +1,6 @@
 // מסך הגדרות: גרסה, עדכון, התקנה כאפליקציה, מצב עבודה ללא אינטרנט, אחסון וחשבון.
 import { APP_VERSION, checkForUpdate, askWorker } from './update.js';
-import { swReady, swError, isInstalled, canPromptInstall, onInstallState } from './pwa.js';
+import { swReady, swError, isInstalled, canPromptInstall, onInstallState, forceRefresh, diagnoseServer } from './pwa.js';
 import { cloud, isCloud, isAdmin } from './cloud.js';
 import * as db from './db.js';
 import * as UI from './ui.js';
@@ -11,6 +11,7 @@ const row = (label, ...val) => h('div', { class: 'set-row' }, h('div', { class: 
 export async function settingsDialog({ installApp }) {
   const body = h('div', { class: 'stack set-body' });
   const m = UI.openModal({ title: 'הגדרות', body, buttons: [{ text: 'סגור', value: true }] });
+  const out = h('div', { class: 'hint-inline' });
   const off = onInstallState(() => render());
   m.promise.then(() => off());
 
@@ -38,6 +39,18 @@ export async function settingsDialog({ installApp }) {
     body.replaceChildren(
       row('גרסת האפליקציה', h('b', { dir: 'ltr' }, APP_VERSION)),
       h('button', { class: 'btn', onclick: () => { m.close(true); checkForUpdate(); } }, icon('refresh', 18), 'בדוק ועדכן לגרסה האחרונה'),
+      h('div', { class: 'stack' },
+        h('button', { class: 'btn', onclick: async (e) => {
+          const b = e.currentTarget; b.disabled = true; out.textContent = 'בודק מול השרת…';
+          try {
+            const d = await diagnoseServer();
+            out.className = 'hint-inline';
+            out.textContent = d.error ? d.error : `בשרת מפורסמת גרסה ${d.version}; פועלת אצלך ${APP_VERSION}. ` + (d.missing.length ? `קבצים חסרים בשרת (${d.missing.length}): ${d.missing.join(', ')}` : `כל ${d.total} הקבצים קיימים בשרת.`);
+          } catch (err) { out.textContent = 'הבדיקה נכשלה: ' + (err && err.message); }
+          b.disabled = false;
+        } }, 'אבחון עדכון (בדיקת קבצים בשרת)'),
+        out,
+        h('button', { class: 'btn', onclick: async () => { if (await UI.confirmBox('ינקה את הקבצים השמורים של האפליקציה ויטען אותם מחדש מהשרת. התוכניות, הסימונים והחשבון לא נמחקים. צריך חיבור לאינטרנט.', { title: 'עדכון כפוי', okText: 'נקה וטען מחדש' })) forceRefresh(); } }, 'עדכון כפוי (ניקוי קבצי האפליקציה)')),
       row('עבודה ללא אינטרנט', offline),
       row('התקנה', installRow),
       row('חשבון', acct),
