@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.4.10';
+const VERSION = '1.5.0';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -25,6 +25,9 @@ const CORE = [
   "js/db.js",
   "js/diag.js",
   "js/folder-import.js",
+  "js/item-merge.js",
+  "js/item-share-ui.js",
+  "js/item-sync.js",
   "js/layer.js",
   "js/markup.js",
   "js/ocr.js",
@@ -51,6 +54,7 @@ const CORE = [
   "supabase/functions/drive-admin/index.ts",
   "supabase/functions/drive-download/index.ts",
   "supabase/functions/drive-upload-session/index.ts",
+  "supabase/items-sync.sql",
   "supabase/schema.sql"
 ];
 const EXTRA = [
