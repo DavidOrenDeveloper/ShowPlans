@@ -1,12 +1,9 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.5.1';
+const VERSION = '1.5.2';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
-  ".github/workflows/deploy-functions.yml",
-  ".github/workflows/keepalive.yml",
-  "SETUP.md",
   "css/app.css",
   "icons/apple-touch-icon.png",
   "icons/icon-192.png",
@@ -49,15 +46,7 @@ const CORE = [
   "lib/pdfjs/pdf.min.mjs",
   "lib/pdfjs/pdf.worker.min.mjs",
   "lib/supabase.js",
-  "manifest.webmanifest",
-  "supabase/config.toml",
-  "supabase/functions/_shared/mod.ts",
-  "supabase/functions/admin-users/index.ts",
-  "supabase/functions/drive-admin/index.ts",
-  "supabase/functions/drive-download/index.ts",
-  "supabase/functions/drive-upload-session/index.ts",
-  "supabase/items-sync.sql",
-  "supabase/schema.sql"
+  "manifest.webmanifest"
 ];
 const EXTRA = [
   "lib/pdfjs/iccs/CGATS001Compat-v2-micro.icc",
