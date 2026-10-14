@@ -8,7 +8,7 @@ core, extra = ['./', 'index.html', 'manifest.webmanifest'], []
 for base, _, files in os.walk(root):
     for f in sorted(files):
         p = os.path.relpath(os.path.join(base, f), root).replace(os.sep, '/')
-        if p.startswith('tools/') or p in ('sw.js', 'README.md', 'index.html', 'manifest.webmanifest') or p.startswith('lib/ocr/') or p.endswith('.map') or f.startswith('.'):
+        if p.startswith(('tools/', '.github/', 'supabase/')) or p == 'SETUP.md' or p in ('sw.js', 'README.md', 'index.html', 'manifest.webmanifest') or p.startswith('lib/ocr/') or p.endswith('.map') or f.startswith('.'):
             continue
         if p.startswith('lib/pdfjs/standard_fonts/') or p.startswith('lib/pdfjs/wasm/') or p.startswith('lib/pdfjs/iccs/'):
             extra.append(p)
