@@ -206,13 +206,16 @@ end $$;
 create or replace function public.check_move() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if tg_table_name = 'folders' and new.parent_id is distinct from old.parent_id
-     and not public.can_upload(new.parent_id, null) then
-    raise exception 'אין הרשאה להעביר ליעד הזה';
-  end if;
-  if tg_table_name = 'plans' and new.folder_id is distinct from old.folder_id
-     and not public.can_upload(new.folder_id, null) then
-    raise exception 'אין הרשאה להעביר ליעד הזה';
+  -- הבדיקות מקוננות בכוונה: ב-plpgsql ההתייחסות ל-new.folder_id נבדקת גם כשהתנאי הראשון שקר,
+  -- ולכן בטבלת folders (שאין בה folder_id) היא גרמה לשגיאה 42703 בכל עדכון.
+  if tg_table_name = 'folders' then
+    if new.parent_id is distinct from old.parent_id and not public.can_upload(new.parent_id, null) then
+      raise exception 'אין הרשאה להעביר ליעד הזה';
+    end if;
+  elsif tg_table_name = 'plans' then
+    if new.folder_id is distinct from old.folder_id and not public.can_upload(new.folder_id, null) then
+      raise exception 'אין הרשאה להעביר ליעד הזה';
+    end if;
   end if;
   return new;
 end $$;
@@ -254,7 +257,7 @@ alter table public.grants enable row level security;
 
 do $$ declare r record; begin
   for r in select schemaname, tablename, policyname from pg_policies
-           where schemaname = 'public' and tablename in ('profiles','folders','plans','versions','items','drive_files','grants') loop
+           where schemaname = 'public' and tablename in ('profiles','folders','plans','versions','drive_files','grants') loop
     execute format('drop policy %I on %I.%I', r.policyname, r.schemaname, r.tablename);
   end loop;
 end $$;
@@ -302,26 +305,8 @@ create policy versions_insert on public.versions for insert to authenticated
 create policy versions_update on public.versions for update to authenticated
   using (public.plan_level(plan_id) >= 3) with check (public.plan_level(plan_id) >= 3);
 
--- items: עובד רואה/עורך את שלו (לפי רמה); עריכה מלאה ומנהל – את הכול. כיולים וקישורים משותפים לכל מי שרואה את התוכנית.
-create policy items_select on public.items for select to authenticated
-  using (
-    public.plan_level(plan_id) >= 1
-    and (kind in ('calibrations','links') or owner_id = auth.uid() or public.plan_level(plan_id) >= 3)
-  );
-create policy items_insert on public.items for insert to authenticated
-  with check (
-    (kind in ('markups','measurements') and owner_id = auth.uid() and public.plan_level(plan_id) >= 2)
-    or public.plan_level(plan_id) >= 3
-  );
-create policy items_update on public.items for update to authenticated
-  using (
-    (kind in ('markups','measurements') and owner_id = auth.uid() and public.plan_level(plan_id) >= 2)
-    or public.plan_level(plan_id) >= 3
-  )
-  with check (
-    (kind in ('markups','measurements') and public.plan_level(plan_id) >= 2)
-    or public.plan_level(plan_id) >= 3
-  );
+-- items: כללי ההרשאה של הסימונים/מדידות/כיולים/קישורים נמצאים בקובץ supabase/items-sync.sql (להריץ אחרי הקובץ הזה).
+-- עד שמריצים אותו אין לאף אחד גישה ל-items (RLS פעיל בלי policies = חסום).
 
 -- ---------- הרשאות API ----------
 revoke all on public.profiles, public.folders, public.plans, public.versions, public.items, public.drive_files, public.grants from anon, authenticated;
