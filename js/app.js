@@ -1,4 +1,5 @@
 // נקודת הכניסה: אתחול, ניתוב לפי hash, רישום Service Worker
+import { swReady, hadController } from './pwa.js';
 import { verifyAfterBoot } from './update.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
@@ -61,14 +62,11 @@ async function handleInbox() {
 }
 
 async function registerSW() {
-  if (!('serviceWorker' in navigator)) return;
-  try {
-    const had = !!navigator.serviceWorker.controller;
-    await navigator.serviceWorker.register('./sw.js');
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (had && !window.__updating) UI.toast('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.', { ms: 8000 });
-    });
-  } catch (e) { console.warn('SW נכשל', e); }
+  const reg = await swReady;
+  if (!reg) return;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !window.__updating) UI.toast('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.', { ms: 8000 });
+  });
 }
 
 async function main() {

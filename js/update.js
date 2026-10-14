@@ -1,11 +1,12 @@
 // עדכון האפליקציה: בדיקה מול השרת, התקנת הגרסה החדשה, טעינה מחדש ואימות.
 import { APP_VERSION } from './version.js';
 import * as UI from './ui.js';
+import { swReady, swError } from './pwa.js';
 
 export { APP_VERSION };
 const KEY = 'plans.updateTarget';
 
-function askWorker(w) {
+export function askWorker(w) {
   return new Promise((res) => {
     if (!w) { res(null); return; }
     const ch = new MessageChannel();
@@ -28,8 +29,12 @@ export async function checkForUpdate() {
   if (!('serviceWorker' in navigator)) { UI.toast('הדפדפן לא תומך בעדכון אוטומטי. טענו מחדש את הדף.', { type: 'error' }); return; }
   if (!navigator.onLine) { UI.toast('אין חיבור לאינטרנט – אי אפשר לבדוק עדכון עכשיו.', { type: 'error' }); return; }
   window.__updating = true;
-  const reg = await navigator.serviceWorker.getRegistration();
-  if (!reg) { UI.toast('האפליקציה עדיין לא הותקנה לעבודה אופליין. טענו מחדש ונסו שוב.', { type: 'error' }); return; }
+  const reg = (await navigator.serviceWorker.getRegistration()) || (await swReady);
+  if (!reg) {
+    const why = swError && swError.message ? ` (${swError.message})` : '';
+    UI.toast('לא ניתן להפעיל את מנגנון העבודה ללא אינטרנט בדפדפן הזה' + why + '. אם זה חלון גלישה פרטית – פתחו בחלון רגיל.', { type: 'error', ms: 8000 });
+    return;
+  }
   const busy = UI.toast('בודק עדכונים…', { ms: 20000 });
   try {
     await reg.update();

@@ -1,5 +1,7 @@
 // מסך ניהול הקבצים: עץ תיקיות, כרטיסי תיקיות/תוכניות, חיפוש, בחירה מרובה, גרירה, ניהול אחסון
 import { checkForUpdate, APP_VERSION } from './update.js';
+import { installNow, isInstalled } from './pwa.js';
+import { settingsDialog } from './settings.js';
 import { accountBox, grantsDialog, bulkGrantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
 import { canEditHere } from './cloud-sync.js';
@@ -22,10 +24,11 @@ let el = {};
 const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window;
 const credit = () => h('div', { class: 'page-credit' }, 'נוצר על ידי דוד אורן');
 let carry = null; // מצב "נושאים" תוכניות במגע: { keys, id, x, y, ghost, bar, over, second }
-let installEvt = null;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
-export function installApp() {
-  if (installEvt) { installEvt.prompt(); installEvt = null; } else A.installHelp();
+export async function installApp() {
+  if (isInstalled()) { UI.toast('האפליקציה כבר מותקנת ופועלת כאפליקציה.'); return; }
+  const r = await installNow();
+  if (r === 'unavailable') A.installHelp();
+  else if (r === 'accepted') UI.toast('האפליקציה הותקנה. פתחו אותה מהאייקון במסך הבית.', { ms: 5000 });
 }
 
 const saveExpanded = () => localStorage.setItem('expanded', JSON.stringify([...st.expanded]));
@@ -123,8 +126,7 @@ function mainMenu(anchor) {
     { label: 'גיבוי ושחזור…', icon: 'archive', onClick: () => B.backupDialog() },
     { divider: true },
     { label: 'שנה שם פרויקט', icon: 'edit', onClick: async () => { const v = await UI.promptBox({ title: 'שם הפרויקט', value: S.P.project.name, okText: 'שמור' }); if (v) S.renameProject(v); } },
-    { label: 'התקנה כאפליקציה', icon: 'download', onClick: installApp },
-    { label: `עדכן אפליקציה (גרסה ${APP_VERSION})`, icon: 'refresh', onClick: () => checkForUpdate() },
+    { label: `הגדרות ועדכון (גרסה ${APP_VERSION})`, icon: 'settings', onClick: () => settingsDialog({ installApp }) },
   ]);
 }
 
@@ -177,6 +179,7 @@ function renderSidebar() {
     accountBox(),
     h('button', { class: 'btn ghost block', onclick: () => { location.hash = '#/storage'; } }, icon('drive', 18), 'ניהול אחסון'),
     h('button', { class: 'btn ghost block', onclick: () => B.backupDialog() }, icon('archive', 18), 'גיבוי ושחזור'),
+    h('button', { class: 'btn ghost block', onclick: () => settingsDialog({ installApp }) }, icon('settings', 18), `הגדרות · גרסה ${APP_VERSION}`),
     el.status, h('div', { class: 'sb-credit' }, 'נוצר על ידי דוד אורן'));
   el.sidebar.replaceChildren(
     h('div', { class: 'sb-head' }, h('div', { class: 'logo' }, icon('layers', 22)), h('div', {}, h('b', {}, 'תוכניות בנייה'), h('small', {}, isCloud() ? 'מסונכרן לענן' : 'הכל שמור במכשיר'))),
