@@ -429,3 +429,15 @@ body.sync-bar-on .fab { bottom: calc(120px + var(--safe-b)); }
 .set-l { font-weight: 600; }
 .set-v { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: end; }
 .set-good { color: #2e7d32; } .set-bad { color: #c62828; } .set-warn { color: #b26a00; }
+
+/* שכבה אישית וצפייה כעובד */
+.viewas-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; margin: 0 0 10px; background: #fff4e0; color: #8a4b00; border: 1px solid #f3d29b; border-radius: var(--r); font-size: 14px; }
+.viewas-bar span { flex: 1; min-width: 180px; }
+.ov-tags { font-size: 12px; color: #8a4b00; }
+.nm.dim { opacity: .5; }
+
+/* תפריט הצד: כל הכפתורים באותו רוחב ומיושרים לתחילת השורה */
+.acct-btns { flex-direction: column; flex-wrap: nowrap; gap: 2px; }
+.acct-btns .btn { width: 100%; justify-content: flex-start; }
+.sb-foot .btn.block { justify-content: flex-start; }
+.set-sec { display: flex; flex-direction: column; gap: 6px; }
