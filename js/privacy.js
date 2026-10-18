@@ -58,6 +58,7 @@ export async function ensureConsent() {
     if (!error && data && data.length) { setLocal(uid); return true; }
     if (error && missingTable(error)) return true; // קובץ ה-SQL עוד לא הורץ: לא נועלים אף אחד בחוץ
   } catch { /* אין חיבור: מבקשים אישור מחדש */ }
+  document.getElementById('boot')?.remove(); // מסך הטעינה מכסה את החלון, אחרת ההודעה לא נראית והאפליקציה נראית תקועה
   for (;;) {
     const cb = h('input', { type: 'checkbox' });
     const agree = h('label', { class: 'check' }, cb, 'קראתי והבנתי, ואני מסכים/ה לתנאי השימוש ולאיסוף המידע כמתואר');
