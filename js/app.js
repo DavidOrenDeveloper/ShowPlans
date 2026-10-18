@@ -9,9 +9,10 @@ import { setPasswordHandler } from './pdfio.js';
 import { mountBrowser, show } from './browser.js';
 import { openViewer, closeViewer } from './viewer.js';
 import { h } from './util.js';
-import { initCloud, cloud, dbNameFor, isCloud } from './cloud.js';
+import { initCloud, cloud, dbNameFor, isCloud, isAdmin } from './cloud.js';
 import { loginScreen, newPasswordScreen, maybeImportLocal } from './cloud-ui.js';
 import { startSync } from './cloud-sync.js';
+import { ensureConsent } from './privacy.js';
 
 window.__navCount = 0;
 let viewerRoot;
@@ -75,7 +76,9 @@ async function main() {
     await initCloud();
     if (cloud.recovery && cloud.user) await newPasswordScreen();
     if (cloud.needLogin) await loginScreen();
+    if (cloud.mode === 'cloud' && cloud.user && !(await ensureConsent())) return;
     db.useDb(dbNameFor());
+    S.hooks.personal = () => isCloud() && !isAdmin();
   } catch (e) { console.error('cloud init', e); }
   try {
     await S.init();

@@ -2,6 +2,7 @@
 import { checkForUpdate, APP_VERSION } from './update.js';
 import { installNow, isInstalled, installedElsewhere } from './pwa.js';
 import { settingsDialog } from './settings.js';
+import { hiddenDialog, viewAsDialog, viewAsBanner } from './personal-ui.js';
 import { accountBox, grantsDialog, bulkGrantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
 import { canEditHere } from './cloud-sync.js';
@@ -24,6 +25,17 @@ let el = {};
 const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window;
 const credit = () => h('div', { class: 'page-credit' }, 'נוצר על ידי דוד אורן');
 let carry = null; // מצב "נושאים" תוכניות במגע: { keys, id, x, y, ghost, bar, over, second }
+const personal = () => isCloud() && !isAdmin(); // עובד בענן: שינויי מבנה הם אישיים
+// תגיות לצפייה כעובד: שם מקורי / מוסתר אצל העובד / תיקייה אישית
+function ovTags(r) {
+  if (!S.getViewAs()) return null;
+  const t = [];
+  if (r.personal) t.push('תיקייה אישית של העובד');
+  if (r.origName) t.push('שם מקורי: ' + r.origName);
+  if (r._hidden) t.push('מוסתר אצל העובד');
+  return t.length ? h('div', { class: 'ov-tags' }, t.join(' · ')) : null;
+}
+
 export async function installApp() {
   if (isInstalled()) { UI.toast('האפליקציה כבר מותקנת ופועלת כאפליקציה.'); return; }
   UI.toast('בודק אפשרות התקנה…', { ms: 2500 });
@@ -114,11 +126,14 @@ function buildTop() {
 
 function addMenu(anchor) {
   const fid = st.mode === 'folder' ? st.folderId : null;
+  const up = canEditHere(fid);
   UI.menu(anchor, [
-    { label: 'העלאת PDF (אחד או כמה)', icon: 'upload', onClick: () => A.uploadInto(fid) },
-    { label: 'העלאת תיקייה שלמה (עם תתי-תיקיות)', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(fid) },
-    { label: 'העלאת ZIP עם מבנה תיקיות', icon: 'archive', onClick: () => FI.uploadZipFlow(fid, pickFiles) },
-    { label: 'תיקייה חדשה', icon: 'folderPlus', onClick: () => A.newFolderDialog(fid) },
+    ...(up ? [
+      { label: 'העלאת PDF (אחד או כמה)', icon: 'upload', onClick: () => A.uploadInto(fid) },
+      { label: 'העלאת תיקייה שלמה (עם תתי-תיקיות)', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(fid) },
+      { label: 'העלאת ZIP עם מבנה תיקיות', icon: 'archive', onClick: () => FI.uploadZipFlow(fid, pickFiles) },
+    ] : []),
+    { label: personal() ? 'תיקייה אישית חדשה' : 'תיקייה חדשה', icon: 'folderPlus', onClick: () => A.newFolderDialog(fid) },
   ]);
 }
 
@@ -128,6 +143,8 @@ function mainMenu(anchor) {
     { label: 'גיבוי ושחזור…', icon: 'archive', onClick: () => B.backupDialog() },
     { divider: true },
     { label: 'שנה שם פרויקט', icon: 'edit', onClick: async () => { const v = await UI.promptBox({ title: 'שם הפרויקט', value: S.P.project.name, okText: 'שמור' }); if (v) S.renameProject(v); } },
+    ...(isAdmin() ? [{ label: 'צפייה כעובד…', icon: 'users', onClick: () => viewAsDialog() }] : []),
+    ...(personal() ? [{ label: 'מוסתרים אצלי', icon: 'eye', onClick: () => hiddenDialog() }] : []),
     { label: `הגדרות ועדכון (גרסה ${APP_VERSION})`, icon: 'settings', onClick: () => settingsDialog({ installApp }) },
   ]);
 }
@@ -141,7 +158,8 @@ function renderAll() {
   if (st.mode === 'folder') renderFolder();
   else if (st.mode === 'search') renderSearch();
   else if (st.mode === 'storage') renderStorage();
-  el.fab.style.display = (st.mode === 'storage' || (st.mode === 'folder' && !canEditHere(st.folderId))) ? 'none' : '';
+  el.fab.style.display = (st.mode === 'storage' || (st.mode === 'folder' && !canEditHere(st.folderId) && !personal())) ? 'none' : '';
+  const vb = viewAsBanner(); if (vb) el.content.prepend(vb);
 }
 
 // עץ צד
@@ -168,7 +186,7 @@ function renderSidebar() {
         oncontextmenu: (e) => { e.preventDefault(); folderMenu(f.id, { x: e.clientX, y: e.clientY }); },
       },
       kidsN ? h('button', { class: 'twisty', 'aria-label': open ? 'כווץ' : 'הרחב', onclick: (e) => { e.stopPropagation(); open ? st.expanded.delete(f.id) : st.expanded.add(f.id); saveExpanded(); renderSidebar(); } }, icon(open ? 'chevD' : 'chevL', 16)) : h('span', { class: 'twisty' }),
-      icon('folder', 18), h('span', { class: 'nm' }, f.name),
+      icon('folder', 18), h('span', { class: 'nm' + (f._hidden ? ' dim' : '') }, f.name),
       h('button', { class: 'icon-btn sm', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more', 16)));
       row.addEventListener('dragstart', (e) => startDrag(e, [key('f', f.id)]));
       makeDropTarget(row, f.id);
@@ -239,7 +257,7 @@ function renderSelbar() {
     h('button', { class: 'btn sm', onclick: () => B.downloadItems(o) }, icon('download', 16), 'הורד'),
     h('button', { class: 'btn sm', onclick: () => batchRename(o) }, icon('edit', 16), 'שנה שם'),
     isAdmin() ? h('button', { class: 'btn sm', onclick: async () => { if (await bulkGrantsDialog(o)) clearSel(); } }, icon('lock', 16), 'הרשאות') : null,
-    h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), 'מחק'));
+    h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), personal() ? 'הסתר' : 'מחק'));
 }
 function selectAll() {
   S.childFolders(st.folderId).forEach((f) => st.sel.add(key('f', f.id)));
@@ -271,31 +289,33 @@ function folderMenu(id, anchor) {
   UI.menu(anchor, [
     { label: 'פתח', icon: 'folder', onClick: () => { location.hash = '#/f/' + id; } },
     { label: 'תת-תיקייה חדשה', icon: 'folderPlus', onClick: () => { st.expanded.add(id); saveExpanded(); A.newFolderDialog(id); } },
-    { label: 'העלאת PDF לכאן', icon: 'upload', onClick: () => A.uploadInto(id) },
-    { label: 'העלאת תיקייה שלמה לכאן', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(id) },
-    { label: 'העלאת ZIP לכאן', icon: 'archive', onClick: () => FI.uploadZipFlow(id, pickFiles) },
-    { label: 'שנה שם', icon: 'edit', onClick: () => A.renameFolderDialog(id) },
+    ...(canEditHere(id) ? [
+      { label: 'העלאת PDF לכאן', icon: 'upload', onClick: () => A.uploadInto(id) },
+      { label: 'העלאת תיקייה שלמה לכאן', icon: 'folderPlus', onClick: () => FI.uploadFolderFlow(id) },
+      { label: 'העלאת ZIP לכאן', icon: 'archive', onClick: () => FI.uploadZipFlow(id, pickFiles) },
+    ] : []),
+    { label: personal() ? 'שנה שם (רק אצלי)' : 'שנה שם', icon: 'edit', onClick: () => A.renameFolderDialog(id) },
     { label: 'העבר…', icon: 'move', onClick: () => A.moveDialog({ folders: [id], plans: [] }, S.P.folders.get(id)?.parentId) },
     { label: 'הורד כ-ZIP', icon: 'download', onClick: () => B.downloadItems({ folders: [id], plans: [] }) },
     ...(isAdmin() ? [{ label: 'הרשאות עובדים…', icon: 'lock', onClick: () => grantsDialog({ folderId: id }) }] : []),
     { divider: true },
-    { label: 'מחק', icon: 'trash', danger: true, onClick: async () => { const wasHere = S.isDescendant(st.folderId, id); await A.deleteDialog({ folders: [id], plans: [] }); if (wasHere && !S.P.folders.has(st.folderId)) location.hash = '#/f/'; } },
+    { label: personal() ? 'הסתר ממני' : 'מחק', icon: 'trash', danger: true, onClick: async () => { const wasHere = S.isDescendant(st.folderId, id); await A.deleteDialog({ folders: [id], plans: [] }); if (wasHere && !S.P.folders.has(st.folderId)) location.hash = '#/f/'; } },
   ]);
 }
 function planMenu(id, anchor) {
   const p = S.P.plans.get(id); if (!p) return;
   UI.menu(anchor, [
     { label: 'פתח', icon: 'file', onClick: () => { location.hash = '#/p/' + id; } },
-    { label: 'שנה שם', icon: 'edit', onClick: () => A.renamePlanDialog(id) },
+    { label: personal() ? 'שנה שם (רק אצלי)' : 'שנה שם', icon: 'edit', onClick: () => A.renamePlanDialog(id) },
     { label: 'העבר…', icon: 'move', onClick: () => A.moveDialog({ folders: [], plans: [id] }, p.folderId) },
-    { label: 'שכפל', icon: 'copy', onClick: async () => { try { await S.duplicatePlan(id); UI.toast('הועתק'); } catch (e) { UI.toast(e.message, { type: 'error' }); } } },
+    ...(canEditHere(p.folderId) ? [{ label: 'שכפל', icon: 'copy', onClick: async () => { try { await S.duplicatePlan(id); UI.toast('הועתק'); } catch (e) { UI.toast(e.message, { type: 'error' }); } } }] : []),
     { label: 'גרסאות', icon: 'clock', onClick: () => A.versionsDialog(id) },
     { label: 'הורד PDF', icon: 'download', onClick: () => A.downloadVersion(p.currentVersionId, p.name) },
     { label: 'פתח באמצעות / שתף', icon: 'share', onClick: () => A.openWithDialog(p) },
     ...(isAdmin() ? [{ label: 'הרשאות עובדים…', icon: 'lock', onClick: () => grantsDialog({ planId: id }) }] : []),
     { label: 'פרטים', icon: 'info', onClick: () => A.planInfoDialog(id) },
     { divider: true },
-    { label: 'מחק', icon: 'trash', danger: true, onClick: () => A.deleteDialog({ folders: [], plans: [id] }) },
+    { label: personal() ? 'הסתר ממני' : 'מחק', icon: 'trash', danger: true, onClick: () => A.deleteDialog({ folders: [], plans: [id] }) },
   ]);
 }
 
@@ -491,7 +511,7 @@ function folderCard(f) {
   const card = cardBase(k, 'folder');
   card.append(
     h('div', { class: 'f-ic' }, icon('folder', 34)),
-    h('div', { class: 'meta' }, h('div', { class: 'name' }, f.name), h('div', { class: 'sub' }, `${S.plansIn(f.id).length} תוכניות · ${S.childFolders(f.id).length} תיקיות` + (d.plans.length !== S.plansIn(f.id).length ? ` (${d.plans.length} בסה״כ)` : ''))),
+    h('div', { class: 'meta' }, h('div', { class: 'name' }, f.name), ovTags(f), h('div', { class: 'sub' }, `${S.plansIn(f.id).length} תוכניות · ${S.childFolders(f.id).length} תיקיות` + (d.plans.length !== S.plansIn(f.id).length ? ` (${d.plans.length} בסה״כ)` : ''))),
     h('button', { class: 'icon-btn more', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more')));
   card.dataset.nav = '#/f/' + f.id;
   card.addEventListener('click', clickGuard(card, () => { location.hash = '#/f/' + f.id; }, k));
@@ -510,7 +530,7 @@ function planCard(p, extra) {
   card.append(
     h('div', { class: 'thumb' }, v?.broken ? h('div', { class: 'thumb-warn' }, icon('alert', 28), h('small', {}, 'לא ניתן להציג')) : icon('file', 32), img),
     h('div', { class: 'meta' },
-      h('div', { class: 'name' }, p.name),
+      h('div', { class: 'name' }, p.name), ovTags(p),
       h('div', { class: 'sub' }, interleave([v?.pageCount ? `${v.pageCount} עמ׳` : null, fmtSize(v?.size), nver > 1 ? `V${v.number} (${nver} גרסאות)` : null].filter(Boolean))),
       extra ? h('div', { class: 'sub path' }, extra) : null),
     h('button', { class: 'icon-btn more', 'aria-label': 'עוד', onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more')));

@@ -1,6 +1,7 @@
 // שכבת IndexedDB. כל הנתונים והקבצים נשמרים מקומית במכשיר.
 // מבנה: projects, folders, plans, versions, files (ה-PDF המקורי), thumbs,
 // markups, measurements, links, calibrations, textindex, meta
+import { unwrap } from './overlay.js';
 
 let NAME = 'planapp';
 const VER = 1;
@@ -66,8 +67,8 @@ export async function run(stores, mode, fn) {
 
 export const get = (s, k) => run(s, 'readonly', (t) => rq(t.objectStore(s).get(k)));
 export const getAll = (s) => run(s, 'readonly', (t) => rq(t.objectStore(s).getAll()));
-export const put = (s, v) => run(s, 'readwrite', (t) => rq(t.objectStore(s).put(v)));
-export const putMany = (s, arr) => run(s, 'readwrite', async (t) => { const os = t.objectStore(s); for (const v of arr) os.put(v); });
+export const put = (s, v) => run(s, 'readwrite', (t) => rq(t.objectStore(s).put(unwrap(v))));
+export const putMany = (s, arr) => run(s, 'readwrite', async (t) => { const os = t.objectStore(s); for (const v of arr) os.put(unwrap(v)); });
 export const del = (s, k) => run(s, 'readwrite', (t) => rq(t.objectStore(s).delete(k)));
 export const byIndex = (s, i, k) => run(s, 'readonly', (t) => rq(t.objectStore(s).index(i).getAll(IDBKeyRange.only(k))));
 

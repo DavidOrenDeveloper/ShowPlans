@@ -89,12 +89,12 @@ export async function newFolderDialog(parentId) {
 
 export async function renameFolderDialog(id) {
   const f = S.P.folders.get(id); if (!f) return;
-  const v = await UI.promptBox({ title: 'שינוי שם תיקייה', value: f.name, okText: 'שמור' });
+  const v = await UI.promptBox({ title: 'שינוי שם תיקייה', label: S.hooks.personal() ? 'השם יוצג רק לך, אצל אחרים לא ישתנה' : undefined, value: f.name, okText: 'שמור' });
   if (v) await S.renameFolder(id, v);
 }
 export async function renamePlanDialog(id) {
   const p = S.P.plans.get(id); if (!p) return;
-  const v = await UI.promptBox({ title: 'שינוי שם תוכנית', label: 'השם שמוצג באפליקציה (לא משנה את שם הקובץ המקורי)', value: p.name, okText: 'שמור' });
+  const v = await UI.promptBox({ title: 'שינוי שם תוכנית', label: S.hooks.personal() ? 'השם יוצג רק לך, אצל אחרים לא ישתנה' : 'השם שמוצג באפליקציה (לא משנה את שם הקובץ המקורי)', value: p.name, okText: 'שמור' });
   if (v) await S.renamePlan(id, v);
 }
 
@@ -115,6 +115,14 @@ export function countText(sel) {
 
 export async function deleteDialog(sel) {
   const c = countText(sel);
+  if (S.hooks.personal()) { // עובד: הסתרה אישית, לא מוחקת כלום אצל אחרים
+    const n = sel.folders.length + sel.plans.length;
+    const ok = await UI.confirmBox(`להסתיר ${n === 1 ? 'את הפריט' : n + ' פריטים'} ממך? זה לא ימחק אותם ולא ישפיע על אחרים. אפשר להחזיר דרך "מוסתרים אצלי" בתפריט.`, { title: 'הסתרה', okText: 'הסתר' });
+    if (!ok) return false;
+    await S.deleteItems(sel);
+    UI.toast('הוסתר. להחזרה: תפריט ⋮ ← מוסתרים אצלי');
+    return true;
+  }
   let msg;
   if (sel.folders.length === 1 && !sel.plans.length) {
     const f = S.P.folders.get(sel.folders[0]);

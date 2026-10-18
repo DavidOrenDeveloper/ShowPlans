@@ -6,6 +6,7 @@ import * as UI from './ui.js';
 import { cloud, client, isCloud, isAdmin, levelOfFolder, levelOfPlan, callFn, authHeaders, fnUrl, loadGrants } from './cloud.js';
 import * as diag from './diag.js';
 import { createItemSync } from './item-sync.js';
+import * as OVR from './overrides.js';
 
 const st = { pushing: false, again: false, pulling: false, timer: 0, pullTimer: 0, err: '', last: 0, started: false, fullNext: true, denied: false, offset: 0 };
 let dirtyItems = 0;
@@ -59,8 +60,8 @@ function endProgress(ok) {
 
 function pendingCount() {
   let n = 0;
-  for (const m of [S.P.folders, S.P.plans, S.P.versions]) for (const r of m.values()) if (r._d) n++;
-  return n + tombs.length + dirtyItems;
+  for (const m of [S.R.folders, S.R.plans, S.P.versions]) for (const r of m.values()) if (r._d) n++;
+  return n + tombs.length + dirtyItems + S.overrideDirty();
 }
 
 // ---------- מחיקות שממתינות לענן ----------
@@ -69,12 +70,12 @@ async function loadTombs() { const r = await db.get('meta', 'tomb'); tombs = r?.
 const saveTombs = () => db.put('meta', { key: 'tomb', list: tombs });
 function onPurged({ folderIds, planIds, versionIds }) {
   const add = (t, ids, map) => { for (const id of ids) if (map.get(id)?._s) tombs.push({ t, id }); };
-  add('folders', folderIds, S.P.folders); add('plans', planIds, S.P.plans); add('versions', versionIds, S.P.versions);
+  add('folders', folderIds, S.R.folders); add('plans', planIds, S.R.plans); add('versions', versionIds, S.P.versions);
   saveTombs(); schedulePush(300);
 }
 
 // ---------- המרות ----------
-const strip = (r) => { const o = {}; for (const [k, v] of Object.entries(r)) if (!k.startsWith('_') && k !== 'driveId') o[k] = v; return o; };
+const strip = (r0) => { const r = S.unwrap(r0); const o = {}; for (const [k, v] of Object.entries(r)) if (!k.startsWith('_') && k !== 'driveId') o[k] = v; return o; };
 const LOCAL_ONLY_VER = ['indexed', 'hasText', 'broken'];
 async function blobToB64(blob) {
   return new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => res(''); r.readAsDataURL(blob); });
@@ -84,15 +85,15 @@ function b64ToBlob(b64, type = 'image/jpeg') {
   for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
   return new Blob([u], { type });
 }
-const depth = (f) => { let d = 0, x = f, g = 0; while (x && x.parentId && g++ < 200) { d++; x = S.P.folders.get(x.parentId); } return d; };
+const depth = (f) => { let d = 0, x = f, g = 0; while (x && x.parentId && g++ < 200) { d++; x = S.R.folders.get(x.parentId); } return d; };
 
 // ---------- סימונים, מדידות, כיולים וקישורים ----------
 const items = createItemSync({
   db, sb: () => client(), me: () => cloud.user?.id, isAdmin: () => isAdmin(), now: () => S.hooks.now(),
-  planSynced: (id) => !!S.P.plans.get(id)?._s,
+  planSynced: (id) => !!S.R.plans.get(id)?._s,
   planOfVersion: (vid) => S.P.versions.get(vid)?.planId,
-  planLevel: (pid) => levelOfPlan(pid, S.P.plans, S.P.folders),
-  planInFolder: (pid, fid) => { const p = S.P.plans.get(pid); return !!p && S.isDescendant(p.folderId || null, fid); },
+  planLevel: (pid) => levelOfPlan(pid, S.R.plans, S.R.folders),
+  planInFolder: (pid, fid) => { const p = S.R.plans.get(pid); if (!p) return false; let f = p.folderId ? S.R.folders.get(p.folderId) : null, g = 0; while (f && g++ < 200) { if (f.id === fid) return true; f = f.parentId ? S.R.folders.get(f.parentId) : null; } return false; },
   fetchChanged: (t) => fetchChanged(t), fetchIds: (t) => fetchIds(t), setSince: (t, v) => setSince(t, v),
   addTomb: (t) => { tombs.push(t); saveTombs(); schedulePush(300); },
   emit: (vids) => S.emitItems(vids), log: diag,
@@ -106,8 +107,8 @@ async function pushItemsStep() {
 }
 // לממשק: מה מותר לי לעשות בפריט / בתוכנית
 export const itemAccess = (it, store) => (!isCloud() ? 'edit' : items.levelOf(it, store));
-export const canMarkPlan = (planId) => !isCloud() || levelOfPlan(planId, S.P.plans, S.P.folders) >= 2;
-export const canEditPlanItems = (planId) => !isCloud() || levelOfPlan(planId, S.P.plans, S.P.folders) >= 3;
+export const canMarkPlan = (planId) => !isCloud() || levelOfPlan(planId, S.R.plans, S.R.folders) >= 2;
+export const canEditPlanItems = (planId) => !isCloud() || levelOfPlan(planId, S.R.plans, S.R.folders) >= 3;
 export const refreshShares = () => items.loadShares();
 export const myId = () => cloud.user?.id || null;
 
@@ -159,6 +160,7 @@ async function pushAll() {
     await step('push:plans', {}, pushPlans);
     await step('push:versions', {}, pushVersions);
     await step('push:items', {}, pushItemsStep);
+    await step('push:overrides', {}, async () => { if (S.hooks.personal()) { await OVR.push(client(), cloud.user.id); emitStatus(); } });
     st.last = Date.now();
     endProgress(true);
   } catch (e) {
@@ -204,7 +206,7 @@ async function pushTombs() {
 function deniedToast(what) { UI.toast(`אין לך הרשאה ל${what} – השינוי בוטל`, { type: 'error', ms: 4500 }); st.denied = true; }
 
 async function pushFolders() {
-  const list = [...S.P.folders.values()].filter((f) => f._d).sort((a, b) => depth(a) - depth(b));
+  const list = [...S.R.folders.values()].filter((f) => f._d).sort((a, b) => depth(a) - depth(b));
   for (const f of list) {
     const r = await remoteWrite('folders', f, { id: f.id, parent_id: f.parentId || null, data: strip(f), deleted: false }, (x) => db.put('folders', x));
     if (r === 'denied') { f._d = 0; await db.put('folders', f); deniedToast('שינוי התיקייה'); }
@@ -212,7 +214,7 @@ async function pushFolders() {
   }
 }
 async function pushPlans() {
-  const list = [...S.P.plans.values()].filter((p) => p._d);
+  const list = [...S.R.plans.values()].filter((p) => p._d);
   for (const p of list) {
     const r = await remoteWrite('plans', p, { id: p.id, folder_id: p.folderId || null, data: strip(p), deleted: false }, (x) => db.put('plans', x));
     if (r === 'denied') { p._d = 0; await db.put('plans', p); deniedToast('שינוי התוכנית'); }
@@ -224,10 +226,10 @@ async function pushPlans() {
 }
 async function pushVersions() {
   const list = [...S.P.versions.values()].filter((v) => v._d);
-  const uploads = list.filter((v) => !v.driveId && S.P.plans.get(v.planId)?._s);
+  const uploads = list.filter((v) => !v.driveId && S.R.plans.get(v.planId)?._s);
   if (uploads.length) startProgress(uploads);
   for (const v of list) {
-    const plan = S.P.plans.get(v.planId);
+    const plan = S.R.plans.get(v.planId);
     if (!plan || !plan._s) continue; // התוכנית עוד לא בענן
     if (!v.driveId && (await adoptRemoteDrive(v))) {
       if (prog.on) { prog.done++; prog.bytesDone += v.size || 0; prog.curSent = 0; emitProgress(true); }
@@ -342,12 +344,12 @@ async function pullAll() {
     const puts = { folders: [], plans: [], versions: [] }, purge = { folderIds: [], planIds: [], versionIds: [] }, thumbs = [];
 
     for (const r of F.rows) {
-      const loc = S.P.folders.get(r.id); if (loc?._d) continue;
+      const loc = S.R.folders.get(r.id); if (loc?._d) continue;
       if (r.deleted) { if (loc) purge.folderIds.push(r.id); continue; }
       puts.folders.push({ ...r.data, id: r.id, parentId: r.parent_id || null, _s: 1, _srv: r.updated_at });
     }
     for (const r of Pl.rows) {
-      const loc = S.P.plans.get(r.id); if (loc?._d) continue;
+      const loc = S.R.plans.get(r.id); if (loc?._d) continue;
       if (r.deleted) { if (loc) purge.planIds.push(r.id); continue; }
       puts.plans.push({ ...r.data, id: r.id, folderId: r.folder_id || null, _s: 1, _srv: r.updated_at });
     }
@@ -369,8 +371,8 @@ async function pullAll() {
     stage = 'reconcile';
     if (full) {
       const [fi, pi, vi] = await Promise.all([fetchIds('folders'), fetchIds('plans'), fetchIds('versions')]);
-      for (const f of S.P.folders.values()) if (f._s && !f._d && !fi.has(f.id) && !puts.folders.some((x) => x.id === f.id)) purge.folderIds.push(f.id);
-      for (const p of S.P.plans.values()) if (p._s && !p._d && !pi.has(p.id) && !puts.plans.some((x) => x.id === p.id)) purge.planIds.push(p.id);
+      for (const f of S.R.folders.values()) if (f._s && !f._d && !fi.has(f.id) && !puts.folders.some((x) => x.id === f.id)) purge.folderIds.push(f.id);
+      for (const p of S.R.plans.values()) if (p._s && !p._d && !pi.has(p.id) && !puts.plans.some((x) => x.id === p.id)) purge.planIds.push(p.id);
       for (const v of S.P.versions.values()) if (v._s && !v._d && !vi.has(v.id) && !puts.versions.some((x) => x.id === v.id)) purge.versionIds.push(v.id);
     }
     const maxOf = (rows, since) => rows.reduce((m, r) => (r.updated_at > m ? r.updated_at : m), since);
@@ -380,6 +382,8 @@ async function pullAll() {
     await setSince('folders', maxOf(F.rows, F.since)); await setSince('plans', maxOf(Pl.rows, Pl.since)); await setSince('versions', maxOf(V.rows, V.since));
     stage = 'items';
     await items.pull(full);
+    stage = 'overrides';
+    if (S.hooks.personal() && (await OVR.pull(client(), cloud.user.id))) await S.reload();
     await refreshDirty();
     st.err = ''; st.last = Date.now();
     for (const v of puts.versions) if (!v.indexed) { /* ייאונדקס אחרי הורדת הקובץ */ }
@@ -436,13 +440,13 @@ function guard(kind, ids) {
   if (!isCloud() || isAdmin()) return;
   const deny = () => { throw new Error('אין לך הרשאת עריכה כאן'); };
   for (const id of ids) {
-    if (kind === 'folder-in') { if (levelOfFolder(id, S.P.folders) < 3) deny(); }
-    else if (kind === 'folder') { const f = S.P.folders.get(id); if (f && levelOfFolder(id, S.P.folders) < 3) deny(); }
-    else if (kind === 'plan') { const p = S.P.plans.get(id); if (p && levelOfPlan(id, S.P.plans, S.P.folders) < 3) deny(); }
+    if (kind === 'folder-in') { if (levelOfFolder(id, S.R.folders) < 3) deny(); }
+    else if (kind === 'folder') { const f = S.R.folders.get(id); if (f && levelOfFolder(id, S.R.folders) < 3) deny(); }
+    else if (kind === 'plan') { const p = S.R.plans.get(id); if (p && levelOfPlan(id, S.R.plans, S.R.folders) < 3) deny(); }
   }
 }
-export const canEditHere = (folderId) => !isCloud() || isAdmin() || levelOfFolder(folderId || null, S.P.folders) >= 3;
-export const canEditPlan = (planId) => !isCloud() || isAdmin() || levelOfPlan(planId, S.P.plans, S.P.folders) >= 3;
+export const canEditHere = (folderId) => !isCloud() || isAdmin() || levelOfFolder(S.realFolder(folderId || null), S.R.folders) >= 3;
+export const canEditPlan = (planId) => !isCloud() || isAdmin() || levelOfPlan(planId, S.R.plans, S.R.folders) >= 3;
 
 // ---------- הפעלה ----------
 // הפרש השעון מול השרת, כדי ש"השמירה האחרונה גוברת" תתבסס על זמן אחיד ולא על שעון הטלפון
@@ -483,6 +487,7 @@ export async function startSync() {
     const ch = sb.channel('plans-sync');
     for (const t of ['folders', 'plans', 'versions']) ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => schedulePull(false, 700));
     ch.on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => schedulePull(false, 400));
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'user_overrides' }, () => schedulePull(false, 400));
     for (const t of ['grants', 'item_shares', 'author_shares']) ch.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => schedulePull(true, 500));
     ch.subscribe();
   } catch (e) { console.warn('realtime', e); }

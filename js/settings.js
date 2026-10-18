@@ -3,7 +3,11 @@ import { APP_VERSION, checkForUpdate, askWorker } from './update.js';
 import { swReady, swError, isInstalled, canPromptInstall, onInstallState, forceRefresh, diagnoseServer } from './pwa.js';
 import { cloud, isCloud, isAdmin } from './cloud.js';
 import * as db from './db.js';
+import { showPrivacy } from './privacy.js';
 import * as UI from './ui.js';
+import * as S from './store.js';
+import { enterViewAs, exitViewAs } from './personal-ui.js';
+import { client } from './cloud.js';
 import { h, icon, fmtSize } from './util.js';
 
 const row = (label, ...val) => h('div', { class: 'set-row' }, h('div', { class: 'set-l' }, label), h('div', { class: 'set-v' }, ...val));
@@ -14,6 +18,23 @@ export async function settingsDialog({ installApp }) {
   const out = h('div', { class: 'hint-inline' });
   const off = onInstallState(() => render());
   m.promise.then(() => off());
+
+  // מנהל: כניסה למערכת של עובד (צפייה כפי שהוא רואה, עם כל הרשאות המנהל), מעבר בין עובדים וחזרה לחשבון שלי
+  function workersBox() {
+    const box = h('div', { class: 'set-sec' }, h('b', {}, 'כניסה כעובד'), h('small', { class: 'hint-inline' }, 'טוען…'));
+    (async () => {
+      const va = S.getViewAs();
+      const { data, error } = await client().from('profiles').select('*').order('display_name');
+      if (error) { box.replaceChildren(h('b', {}, 'כניסה כעובד'), h('small', { class: 'set-bad' }, 'שגיאה: ' + error.message)); return; }
+      const ws = data.filter((u) => u.role !== 'admin');
+      box.replaceChildren(
+        h('b', {}, 'כניסה כעובד'),
+        va ? h('div', { class: 'row' }, h('span', { class: 'set-warn' }, `כרגע צופה כעובד: ${va.name}`), h('button', { class: 'btn sm primary', onclick: () => { exitViewAs(); m.close(true); } }, 'חזרה לחשבון שלי')) : h('small', { class: 'hint-inline' }, 'כרגע בחשבון שלך. בחר עובד כדי לראות את התוכניות, השמות והסימונים שלו.'),
+        ...(ws.length ? ws.map((u) => h('div', { class: 'row' }, h('span', {}, u.display_name || u.email),
+          h('button', { class: 'btn sm', disabled: !!(va && va.userId === u.id), onclick: async () => { try { await enterViewAs(u); m.close(true); } catch (err) { UI.toast('הטעינה נכשלה: ' + err.message, { type: 'error' }); } } }, va && va.userId === u.id ? 'צופה כעת' : 'כניסה כעובד'))) : [h('small', { class: 'hint-inline' }, 'אין עובדים.')]));
+    })();
+    return box;
+  }
 
   async function render() {
     const reg = await Promise.race([swReady, new Promise((r) => setTimeout(() => r(undefined), 1500))]);
@@ -38,7 +59,8 @@ export async function settingsDialog({ installApp }) {
 
     body.replaceChildren(
       row('גרסת האפליקציה', h('b', { dir: 'ltr' }, APP_VERSION)),
-      h('button', { class: 'btn', onclick: () => { m.close(true); checkForUpdate(); } }, icon('refresh', 18), 'בדוק ועדכן לגרסה האחרונה'),
+      h('button', { class: 'btn', onclick: async (e) => { const b = e.currentTarget; b.disabled = true; try { await checkForUpdate(); } finally { b.disabled = false; } } }, icon('refresh', 18), 'בדוק ועדכן לגרסה האחרונה'),
+      isAdmin() ? workersBox() : null,
       h('div', { class: 'stack' },
         h('button', { class: 'btn', onclick: async (e) => {
           const b = e.currentTarget; b.disabled = true; out.textContent = 'בודק מול השרת…';
@@ -54,6 +76,7 @@ export async function settingsDialog({ installApp }) {
       row('עבודה ללא אינטרנט', offline),
       row('התקנה', installRow),
       row('חשבון', acct),
+      h('button', { class: 'btn', onclick: () => showPrivacy() }, 'תנאי שימוש ופרטיות'),
       row('אחסון במכשיר', h('span', {}, `${fmtSize(est.usage)} מתוך ${fmtSize(est.quota)} · ` + (est.persisted ? 'קבוע' : 'לא מסומן כקבוע')),
         est.persisted ? null : h('button', { class: 'btn sm', onclick: async () => { const ok = await db.requestPersist(); UI.toast(ok ? 'האחסון סומן כקבוע' : 'הדפדפן לא אישר אחסון קבוע', { type: ok ? '' : 'error' }); render(); } }, 'בקש אחסון קבוע')),
       h('p', { class: 'warn' }, 'האחסון של האפליקציה המותקנת נפרד מהאחסון של הדפדפן. ' + (isCloud()

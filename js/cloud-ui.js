@@ -248,6 +248,8 @@ export async function usersDialog() {
         u.id === cloud.user.id ? h('small', {}, 'אתה') : h('div', { class: 'u-btns' },
           u.role === 'admin' ? null : h('button', { class: 'btn sm', onclick: () => workerAccessDialog(u.id) }, 'גישה לתוכניות'),
           h('button', { class: 'btn sm', onclick: () => resetPass(u) }, 'סיסמה חדשה'),
+          h('button', { class: 'btn sm', onclick: () => exportData(u) }, 'ייצוא מידע'),
+          h('button', { class: 'btn sm danger', onclick: () => eraseData(u) }, 'מחק מידע'),
           h('button', { class: 'btn sm', onclick: async () => { const r = u.role === 'admin' ? 'worker' : 'admin'; if (await UI.confirmBox(r === 'admin' ? `להפוך את ${u.email} למנהל? הוא יראה ויערוך הכול.` : `להפוך את ${u.email} לעובד?`)) { await run(() => callFn('admin-users', { action: 'setRole', userId: u.id, role: r })); load(); } } }, u.role === 'admin' ? 'הפוך לעובד' : 'הפוך למנהל'),
           h('button', { class: 'btn sm danger', onclick: async () => { if (await UI.confirmBox(`למחוק את המשתמש ${u.email}? הסימונים שלו יישארו.`, { danger: true, okText: 'מחק' })) { await run(() => callFn('admin-users', { action: 'delete', userId: u.id })); load(); } } }, 'מחק')))),
       newUserForm());
@@ -262,6 +264,21 @@ export async function usersDialog() {
         const r = await run(() => callFn('admin-users', { action: 'create', name: name.value, email: em.value, password: pw.value }));
         if (r) { await UI.alertBox(`העובד נוצר.\nאימייל: ${em.value}\nסיסמה: ${pw.value}\n\nמסרו לו אותם. מומלץ לשמור את הסיסמה כעת, היא לא תוצג שוב.`, { title: 'נוצר' }); load(); }
       } }, icon('plus', 18), 'צור עובד'));
+  }
+  // מימוש זכות עיון: קובץ JSON עם כל המידע שנשמר על המשתמש
+  async function exportData(u) {
+    const r = await run(async () => { const { data, error } = await client().rpc('export_user_data', { p_user: u.id }); if (error) throw error; return data; });
+    if (!r) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' }));
+    a.download = `מידע-${(u.email || u.id).replace(/[^\w.@-]+/g, '_')}.json`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  // מימוש זכות מחיקה: הסימונים, השכבה האישית והאישורים של המשתמש (לא מוחק את החשבון)
+  async function eraseData(u) {
+    if (!(await UI.confirmBox(`למחוק את כל הסימונים, המדידות והשכבה האישית של ${u.email}? החשבון עצמו נשאר (למחיקת החשבון: כפתור "מחק"). אי אפשר לבטל.`, { title: 'מחיקת מידע', danger: true, okText: 'מחק מידע' }))) return;
+    const r = await run(async () => { const { data, error } = await client().rpc('erase_user_data', { p_user: u.id }); if (error) throw error; return data; });
+    if (r) UI.toast(`נמחקו ${r.items} סימונים/מדידות ו-${r.overrides} פריטים אישיים`);
   }
   async function resetPass(u) {
     const v = await UI.promptBox({ title: 'סיסמה חדשה ל-' + u.email, value: genPass(), okText: 'שמור' });
@@ -377,7 +394,9 @@ export async function workerAccessDialog(userId = null) {
       const inheritedLvl = folderLevel(p.folderId || null);
       out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
         h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('span', {}, p.name)), h('small', {}, eff ? `העובד רואה: ${LEVEL_TEXT[levelName(eff)]}` : 'העובד לא רואה')),
-        levelSelect('plan_id', p.id, inheritedLvl && !direct('plan_id', p.id) ? inheritedLvl : 0)));
+        h('div', { class: 'row' },
+          h('button', { class: 'btn ghost sm', title: 'פתח את התוכנית כדי להחליט אם העובד צריך לראות אותה', onclick: () => { m.close(true); location.hash = '#/p/' + p.id; } }, icon('eye', 16), 'צפייה'),
+          levelSelect('plan_id', p.id, inheritedLvl && !direct('plan_id', p.id) ? inheritedLvl : 0))));
     }
   }
   function paint() {

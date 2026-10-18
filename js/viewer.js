@@ -789,7 +789,7 @@ class Viewer {
     const f = prefs.authors;
     if (f === 'all') return true;
     if (Array.isArray(f)) return f.includes(it.ownerId);
-    return isAdmin() ? it.ownerId === CS.myId() : true;
+    return isAdmin() && !S.getViewAs() ? it.ownerId === CS.myId() : true; // בצפייה כעובד המנהל רואה את כל הסימונים
   }
   canEditItem(it) { return CS.itemAccess(it, it.layer || 'markups') === 'edit'; }
   canShareHere() { return isCloud() && (isAdmin() || CS.canEditPlanItems(this.planId)); }
@@ -1550,7 +1550,7 @@ class Viewer {
       const me = CS.myId();
       if (me && !owners.includes(me)) owners.unshift(me);
       owners.sort((a, b) => (a === me ? -1 : b === me ? 1 : 0));
-      const cur = () => (prefs.authors === 'all' ? owners : Array.isArray(prefs.authors) ? prefs.authors : (isAdmin() ? [me] : owners));
+      const cur = () => (prefs.authors === 'all' ? owners : Array.isArray(prefs.authors) ? prefs.authors : (isAdmin() && !S.getViewAs() ? [me] : owners));
       const boxes = [];
       const setSel = () => { const on = boxes.filter((b) => b.cb.checked).map((b) => b.id); prefs.authors = on.length === owners.length ? 'all' : on; savePrefs(); this.renderItems(); };
       parts.push(h('h3', {}, 'סימונים ומדידות של'));
