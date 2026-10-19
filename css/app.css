@@ -441,3 +441,23 @@ body.sync-bar-on .fab { bottom: calc(120px + var(--safe-b)); }
 .acct-btns .btn { width: 100%; justify-content: flex-start; }
 .sb-foot .btn.block { justify-content: flex-start; }
 .set-sec { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---------- אנגלית (LTR) והחלפת שפה ---------- */
+.lang-top { min-height: 40px; padding: 0 10px; gap: 6px; white-space: nowrap; }
+.lang-login { align-self: flex-end; width: auto; }
+.sidebar .lang-btn { color: #e5e9ee; }
+@media (max-width: 899px) { .sidebar .lang-btn { display: none; } }
+@media (max-width: 420px) { .lang-top { padding: 0 8px; } }
+/* שדות טקסט חופשי: יישור וכיוון לפי התוכן */
+input[dir="auto"], textarea[dir="auto"] { text-align: start; unicode-bidi: plaintext; }
+/* כללים שנכתבו בכיוון קשיח לעברית: באנגלית חוזרים לכיוון הרגיל */
+html[dir="ltr"] .v-style, html[dir="ltr"] .v-sbar, html[dir="ltr"] .syncbar { direction: ltr; }
+html[dir="ltr"] .fab { left: auto; right: 20px; }
+html[dir="ltr"] .sb-foot, html[dir="ltr"] .sidebar { text-align: start; }
+@media (max-width: 899px) {
+  html[dir="ltr"] .sidebar { transform: translateX(-100%); }
+  html[dir="ltr"] .sb-open .sidebar { transform: none; }
+}
+@media (min-width: 900px) { .lang-top { display: none; } }
+
+.login-card .btn, .modal-foot .btn { white-space: normal; text-align: center; }
