@@ -95,7 +95,7 @@ const items = createItemSync({
   planOfVersion: (vid) => S.P.versions.get(vid)?.planId,
   planLevel: (pid) => levelOfPlan(pid, S.R.plans, S.R.folders),
   planInFolder: (pid, fid) => { const p = S.R.plans.get(pid); if (!p) return false; let f = p.folderId ? S.R.folders.get(p.folderId) : null, g = 0; while (f && g++ < 200) { if (f.id === fid) return true; f = f.parentId ? S.R.folders.get(f.parentId) : null; } return false; },
-  fetchChanged: (t) => fetchChanged(t), fetchIds: (t) => fetchIds(t), setSince: (t, v) => setSince(t, v),
+  fetchChanged: (t, full) => fetchChanged(t, full), fetchIds: (t) => fetchIds(t), setSince: (t, v) => setSince(t, v),
   addTomb: (t) => { tombs.push(t); saveTombs(); schedulePush(300); },
   emit: (vids) => S.emitItems(vids), log: diag,
 });
@@ -307,8 +307,10 @@ export function schedulePull(full = false, ms = 800) {
 const getSince = async (t) => (await db.get('meta', 'pull:' + t))?.v || '1970-01-01T00:00:00Z';
 const setSince = (t, v) => db.put('meta', { key: 'pull:' + t, v });
 
-async function fetchChanged(table) {
-  const sb = client(); const since = await getSince(table);
+// full = משיכה מלאה (למשל אחרי שינוי הרשאות): מתחילים מההתחלה ולא מהסמן. אחרת פריט שהמנהל רק עכשיו נתן עליו הרשאה,
+// ושעודכן לאחרונה לפני הסמן של העובד, לא היה נמשך לעולם.
+async function fetchChanged(table, full = false) {
+  const sb = client(); const since = full ? '1970-01-01T00:00:00Z' : await getSince(table);
   const rows = []; let from = 0;
   for (;;) {
     const { data, error } = await sb.from(table).select('*').gte('updated_at', since).order('updated_at').order('id').range(from, from + 999);
@@ -341,21 +343,24 @@ async function pullAll() {
     stage = 'grants';
     if (full) await loadGrants();
     stage = 'fetch';
-    const F = await fetchChanged('folders'), Pl = await fetchChanged('plans'), V = await fetchChanged('versions');
+    const F = await fetchChanged('folders', full), Pl = await fetchChanged('plans', full), V = await fetchChanged('versions', full);
     const puts = { folders: [], plans: [], versions: [] }, purge = { folderIds: [], planIds: [], versionIds: [] }, thumbs = [];
 
     for (const r of F.rows) {
       const loc = S.R.folders.get(r.id); if (loc?._d) continue;
+      if (loc && !r.deleted && loc._srv === r.updated_at) continue; // כבר אצלי
       if (r.deleted) { if (loc) purge.folderIds.push(r.id); continue; }
       puts.folders.push({ ...r.data, id: r.id, parentId: r.parent_id || null, _s: 1, _srv: r.updated_at });
     }
     for (const r of Pl.rows) {
       const loc = S.R.plans.get(r.id); if (loc?._d) continue;
+      if (loc && !r.deleted && loc._srv === r.updated_at) continue; // כבר אצלי
       if (r.deleted) { if (loc) purge.planIds.push(r.id); continue; }
       puts.plans.push({ ...r.data, id: r.id, folderId: r.folder_id || null, _s: 1, _srv: r.updated_at });
     }
     for (const r of V.rows) {
       const loc = S.P.versions.get(r.id); if (loc?._d) continue;
+      if (loc && !r.deleted && loc._srv === r.updated_at) continue; // כבר אצלי
       if (r.deleted) { if (loc) purge.versionIds.push(r.id); continue; }
       const d = { ...r.data }; const th = d.thumb; delete d.thumb;
       puts.versions.push({ ...d, id: r.id, planId: r.plan_id, driveId: r.drive_file_id, _s: 1, _srv: r.updated_at,

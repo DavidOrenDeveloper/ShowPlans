@@ -87,7 +87,7 @@ export function createItemSync(env) {
 
   // ---------- משיכה ----------
   async function pull(full) {
-    const { rows, since } = await env.fetchChanged('items');
+    const { rows, since } = await env.fetchChanged('items', full);
     const touched = new Set();
     const byStore = new Map(ITEM_KINDS.map((k) => [k, { puts: [], dels: [] }]));
     for (const r of rows) {
