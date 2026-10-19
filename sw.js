@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.7.1';
+const VERSION = '1.8.0';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -22,11 +22,15 @@ const CORE = [
   "js/db.js",
   "js/diag.js",
   "js/folder-import.js",
+  "js/glossary.js",
+  "js/i18n.js",
   "js/item-merge.js",
   "js/item-share-ui.js",
   "js/item-sync.js",
+  "js/lang-en.js",
   "js/layer.js",
   "js/markup.js",
+  "js/names.js",
   "js/ocr.js",
   "js/overlay.js",
   "js/overrides.js",
@@ -51,6 +55,7 @@ const CORE = [
   "lib/pdfjs/pdf.min.mjs",
   "lib/pdfjs/pdf.worker.min.mjs",
   "lib/supabase.js",
+  "manifest-en.webmanifest",
   "manifest.webmanifest"
 ];
 const EXTRA = [
