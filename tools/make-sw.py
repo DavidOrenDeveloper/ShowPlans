@@ -4,11 +4,11 @@ import os, re, sys
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 version = sys.argv[1] if len(sys.argv) > 1 else '1.0.0'
 open(os.path.join(root, 'js', 'version.js'), 'w').write("export const APP_VERSION = '%s';\n" % version)
-core, extra = ['./', 'index.html', 'manifest.webmanifest'], []
+core, extra = ['./', 'index.html', 'manifest.webmanifest', 'manifest-en.webmanifest'], []
 for base, _, files in os.walk(root):
     for f in sorted(files):
         p = os.path.relpath(os.path.join(base, f), root).replace(os.sep, '/')
-        if p.startswith(('tools/', '.github/', 'supabase/')) or p == 'SETUP.md' or p in ('sw.js', 'README.md', 'index.html', 'manifest.webmanifest') or p.startswith('lib/ocr/') or p.endswith('.map') or f.startswith('.'):
+        if p.startswith(('tools/', '.github/', 'supabase/')) or p == 'SETUP.md' or p in ('sw.js', 'README.md', 'index.html', 'manifest.webmanifest', 'manifest-en.webmanifest') or p.startswith('lib/ocr/') or p.endswith('.map') or f.startswith('.'):
             continue
         if p.startswith('lib/pdfjs/standard_fonts/') or p.startswith('lib/pdfjs/wasm/') or p.startswith('lib/pdfjs/iccs/'):
             extra.append(p)
