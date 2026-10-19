@@ -1,4 +1,6 @@
 // רכיבי ממשק בסיסיים: דיאלוגים, הודעות, תפריטים, בוחרי תיקייה/תוכנית
+import { t as tr, CHEV_FWD } from './i18n.js';
+import { dn, nameVariants } from './names.js';
 import { h, icon, natural, norm } from './util.js';
 import * as S from './store.js';
 
@@ -24,7 +26,7 @@ export function openModal({ title, body, buttons = [], wide = false, cancelable 
   const back = h('div', { class: 'modal-back' });
   const box = h('div', { class: 'modal ' + (wide ? 'wide ' : '') + className, role: 'dialog', 'aria-modal': 'true' });
   const head = title ? h('div', { class: 'modal-head' }, h('h2', {}, title)) : null;
-  if (head && cancelable) head.append(h('button', { class: 'icon-btn', 'aria-label': 'סגור', onclick: () => m.close(undefined) }, icon('x')));
+  if (head && cancelable) head.append(h('button', { class: 'icon-btn', 'aria-label': tr('סגור'), onclick: () => m.close(undefined) }, icon('x')));
   const bodyEl = h('div', { class: 'modal-body' }, body);
   const foot = buttons.length ? h('div', { class: 'modal-foot' }) : null;
   const m = {
@@ -61,11 +63,11 @@ export function openModal({ title, body, buttons = [], wide = false, cancelable 
 
 export const modal = (opts) => openModal(opts).promise;
 
-export function alertBox(message, { title = 'הודעה', okText = 'הבנתי' } = {}) {
+export function alertBox(message, { title = tr('הודעה'), okText = tr('הבנתי') } = {}) {
   return modal({ title, body: h('p', { class: 'msg' }, message), buttons: [{ text: okText, kind: 'primary', value: true }] });
 }
 
-export async function confirmBox(message, { title = 'אישור', okText = 'אישור', danger = false, cancelText = 'ביטול' } = {}) {
+export async function confirmBox(message, { title = tr('אישור'), okText = tr('אישור'), danger = false, cancelText = tr('ביטול') } = {}) {
   const r = await modal({
     title,
     body: h('p', { class: 'msg' }, message),
@@ -74,7 +76,7 @@ export async function confirmBox(message, { title = 'אישור', okText = 'אי
   return r === true;
 }
 
-export function promptBox({ title, label = '', value = '', multiline = false, okText = 'אישור', placeholder = '', hint = '' }) {
+export function promptBox({ title, label = '', value = '', multiline = false, okText = tr('אישור'), placeholder = '', hint = '' }) {
   const input = multiline
     ? h('textarea', { rows: 4, value, placeholder, autofocus: true })
     : h('input', { type: 'text', value, placeholder, autofocus: true, enterKeyHint: 'done' });
@@ -82,7 +84,7 @@ export function promptBox({ title, label = '', value = '', multiline = false, ok
   const m = openModal({
     title, body,
     buttons: [
-      { text: 'ביטול', value: null },
+      { text: tr('ביטול'), value: null },
       { text: okText, kind: 'primary', onClick: (mm) => { const v = input.value.trim(); if (!v) { input.focus(); return false; } mm.close(v); return false; } },
     ],
   });
@@ -94,9 +96,9 @@ export function promptBox({ title, label = '', value = '', multiline = false, ok
 export function askPassword(reason) {
   const input = h('input', { type: 'password', autofocus: true, autocomplete: 'off' });
   const m = openModal({
-    title: 'ה-PDF מוגן בסיסמה',
-    body: h('div', { class: 'form' }, h('label', {}, reason === 2 ? 'הסיסמה שגויה, נסה שוב' : 'הזן סיסמה לפתיחת הקובץ'), input),
-    buttons: [{ text: 'ביטול', value: null }, { text: 'פתח', kind: 'primary', onClick: (mm) => { mm.close(input.value); return false; } }],
+    title: tr('ה-PDF מוגן בסיסמה'),
+    body: h('div', { class: 'form' }, h('label', {}, reason === 2 ? tr('הסיסמה שגויה, נסה שוב') : tr('הזן סיסמה לפתיחת הקובץ')), input),
+    buttons: [{ text: tr('ביטול'), value: null }, { text: tr('פתח'), kind: 'primary', onClick: (mm) => { mm.close(input.value); return false; } }],
   });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') m.close(input.value); });
   return m.promise.then((v) => (v === undefined ? null : v));
@@ -145,7 +147,7 @@ export function menu(anchor, items) {
 
 // ---------- בורר תיקייה ----------
 // מחזיר { id } (id=null לשורש) או null אם בוטל
-export function folderPicker({ title = 'בחר תיקייה', exclude = new Set(), okText = 'העבר לכאן', startId = null } = {}) {
+export function folderPicker({ title = tr('בחר תיקייה'), exclude = new Set(), okText = tr('העבר לכאן'), startId = null } = {}) {
   let selected = startId;
   const expanded = new Set(S.folderPath(startId).map((f) => f.id));
   const list = h('div', { class: 'picker-list' });
@@ -158,16 +160,16 @@ export function folderPicker({ title = 'בחר תיקייה', exclude = new Set(
         class: 'picker-row ' + (selected === id ? 'sel ' : '') + (dis ? 'dis' : ''), style: { paddingInlineStart: 8 + depth * 18 + 'px' },
         onclick: () => { if (dis) return; selected = id; render(); },
       },
-      hasKids ? h('button', { class: 'twisty', type: 'button', onclick: (e) => { e.stopPropagation(); expanded.has(id) ? expanded.delete(id) : expanded.add(id); render(); } }, icon(expanded.has(id) ? 'chevD' : 'chevL', 16)) : h('span', { class: 'twisty' }),
+      hasKids ? h('button', { class: 'twisty', type: 'button', onclick: (e) => { e.stopPropagation(); expanded.has(id) ? expanded.delete(id) : expanded.add(id); render(); } }, icon(expanded.has(id) ? 'chevD' : CHEV_FWD, 16)) : h('span', { class: 'twisty' }),
       icon('folder', 18), h('span', { class: 'nm' }, name));
       list.append(r);
     };
-    row(null, S.P.project.name + ' (שורש)', 0, false);
+    row(null, dn(S.P.project.name) + tr(' (שורש)'), 0, false);
     const walk = (pid, depth) => {
       for (const f of S.childFolders(pid)) {
         if (exclude.has(f.id)) continue;
         const has = S.childFolders(f.id).some((c) => !exclude.has(c.id));
-        row(f.id, f.name, depth, has);
+        row(f.id, dn(f.name), depth, has);
         if (has && expanded.has(f.id)) walk(f.id, depth + 1);
       }
     };
@@ -176,14 +178,14 @@ export function folderPicker({ title = 'בחר תיקייה', exclude = new Set(
   render();
   const m = openModal({
     title, body: list,
-    buttons: [{ text: 'ביטול', value: null }, { text: okText, kind: 'primary', onClick: (mm) => { mm.close({ id: selected }); return false; } }],
+    buttons: [{ text: tr('ביטול'), value: null }, { text: okText, kind: 'primary', onClick: (mm) => { mm.close({ id: selected }); return false; } }],
   });
   return m.promise.then((v) => v || null);
 }
 
 // ---------- בורר תוכנית ----------
-export function planPicker({ title = 'בחר תוכנית', excludeIds = new Set() } = {}) {
-  const q = h('input', { type: 'search', placeholder: 'חיפוש תוכנית…' });
+export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new Set() } = {}) {
+  const q = h('input', { type: 'search', placeholder: tr('חיפוש תוכנית…') });
   const list = h('div', { class: 'picker-list tall' });
   let m;
   const all = [...S.P.plans.values()].filter((p) => !excludeIds.has(p.id))
@@ -191,13 +193,13 @@ export function planPicker({ title = 'בחר תוכנית', excludeIds = new Set
   function render() {
     list.textContent = '';
     const n = norm(q.value);
-    const shown = all.filter((x) => !n || norm(x.p.name).includes(n) || norm(x.path).includes(n)).slice(0, 200);
-    if (!shown.length) list.append(h('p', { class: 'empty-sm' }, 'לא נמצאו תוכניות'));
+    const shown = all.filter((x) => !n || nameVariants(x.p.name).some((v) => norm(v).includes(n)) || norm(x.path).includes(n)).slice(0, 200);
+    if (!shown.length) list.append(h('p', { class: 'empty-sm' }, tr('לא נמצאו תוכניות')));
     shown.forEach(({ p, path }) => list.append(h('button', { class: 'picker-plan', type: 'button', onclick: () => m.close(p) },
-      icon('file', 18), h('span', { class: 'col' }, h('b', {}, p.name), h('small', {}, path)))));
+      icon('file', 18), h('span', { class: 'col' }, h('b', {}, dn(p.name)), h('small', {}, path)))));
   }
   q.addEventListener('input', render);
   render();
-  m = openModal({ title, body: h('div', {}, q, list), buttons: [{ text: 'ביטול', value: null }] });
+  m = openModal({ title, body: h('div', {}, q, list), buttons: [{ text: tr('ביטול'), value: null }] });
   return m.promise.then((v) => v || null);
 }

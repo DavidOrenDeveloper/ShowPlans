@@ -1,6 +1,7 @@
 // שכבת IndexedDB. כל הנתונים והקבצים נשמרים מקומית במכשיר.
 // מבנה: projects, folders, plans, versions, files (ה-PDF המקורי), thumbs,
 // markups, measurements, links, calibrations, textindex, meta
+import { t as tr } from './i18n.js';
 import { unwrap } from './overlay.js';
 
 let NAME = 'planapp';
@@ -43,7 +44,7 @@ export function open() {
       res(d);
     };
     r.onerror = () => rej(r.error);
-    r.onblocked = () => rej(new Error('בסיס הנתונים חסום על ידי לשונית אחרת'));
+    r.onblocked = () => rej(new Error(tr('בסיס הנתונים חסום על ידי לשונית אחרת')));
   });
   return dbp;
 }
@@ -57,7 +58,7 @@ export async function run(stores, mode, fn) {
     let out;
     t.oncomplete = () => res(out);
     t.onerror = () => rej(t.error);
-    t.onabort = () => rej(t.error || new Error('העסקה בוטלה'));
+    t.onabort = () => rej(t.error || new Error(tr('העסקה בוטלה')));
     Promise.resolve()
       .then(() => fn(t))
       .then((v) => { out = v; })

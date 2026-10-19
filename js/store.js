@@ -1,4 +1,6 @@
 // שכבת הנתונים: תיקיות, תוכניות, גרסאות. הכל נשמר ב-IndexedDB ומשוכפל בזיכרון (מטא-דאטה בלבד).
+import { t as tr } from './i18n.js';
+import { dn, nameVariants } from './names.js';
 import * as db from './db.js';
 import { uid, natural, norm } from './util.js';
 import { openPdf, renderThumb, pageText, destroyDoc } from './pdfio.js';
@@ -8,7 +10,7 @@ import * as OVR from './overrides.js';
 export { unwrap };
 
 export const P = {
-  project: { id: 'main', name: 'הפרויקט שלי', createdAt: 0 },
+  project: { id: 'main', name: tr('הפרויקט שלי'), createdAt: 0 },
   folders: new Map(),
   plans: new Map(),
   versions: new Map(),
@@ -83,7 +85,7 @@ export async function init() {
   if (hooks.personal()) await OVR.load();
   await reload(false);
   if (!P.project.createdAt) {
-    P.project = { id: 'main', name: 'הפרויקט שלי', createdAt: Date.now() };
+    P.project = { id: 'main', name: tr('הפרויקט שלי'), createdAt: Date.now() };
     await db.put('projects', P.project);
   }
   emit();
@@ -114,7 +116,7 @@ export function folderPath(id) {
   return out;
 }
 export function pathText(folderId) {
-  return [P.project.name, ...folderPath(folderId).map((f) => f.name)].join(' › ');
+  return [dn(P.project.name), ...folderPath(folderId).map((f) => dn(f.name))].join(' › ');
 }
 export function planPathText(plan) { return pathText(plan.folderId); }
 
@@ -178,7 +180,7 @@ export async function moveItems({ folders = [], plans = [] }, targetId) {
   const target = targetId || null;
   if (!hooks.personal()) { hooks.guard('folder-in', [target]); hooks.guard('folder', folders); hooks.guard('plan', plans); }
   for (const fid of folders) {
-    if (fid === target || (target && isDescendant(target, fid))) throw new Error('אי אפשר להעביר תיקייה לתוך עצמה או לתוך תת-תיקייה שלה');
+    if (fid === target || (target && isDescendant(target, fid))) throw new Error(tr('אי אפשר להעביר תיקייה לתוך עצמה או לתוך תת-תיקייה שלה'));
   }
   if (hooks.personal()) { // העברה אישית: לא משנה את המבנה אצל אחרים
     for (const fid of folders) {
@@ -281,7 +283,7 @@ export async function delItem(store, id) {
 
 // ---------- ייבוא PDF ----------
 function friendlyErr(e) {
-  if (e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || ''))) return new Error('אין מספיק מקום אחסון במכשיר');
+  if (e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || ''))) return new Error(tr('אין מספיק מקום אחסון במכשיר'));
   return e;
 }
 
@@ -307,7 +309,7 @@ export async function importPdf(file, folderId, { name } = {}) {
   const planId = uid(), verId = uid();
   const plan = {
     id: planId, projectId: 'main', folderId: folderId || null,
-    name: (name || file.name.replace(/\.pdf$/i, '')).trim() || 'תוכנית',
+    name: (name || file.name.replace(/\.pdf$/i, '')).trim() || tr('תוכנית'),
     originalName: file.name, currentVersionId: verId, notes: '', createdAt: now, updatedAt: now, _d: 1,
   };
   const ver = {
@@ -331,7 +333,7 @@ export async function importPdf(file, folderId, { name } = {}) {
 }
 
 export async function addVersion(planId, file, { date, note, makeCurrent = true } = {}) {
-  const plan = P.plans.get(planId); if (!plan) throw new Error('התוכנית לא נמצאה');
+  const plan = P.plans.get(planId); if (!plan) throw new Error(tr('התוכנית לא נמצאה'));
   hooks.guard('plan', [planId]);
   const buf = await file.arrayBuffer();
   const a = await analyze(buf);
@@ -388,7 +390,7 @@ export async function duplicatePlan(planId) {
   hooks.guard('folder-in', [rp.folderId || null]);
   const ver = curVer(plan); if (!ver) return;
   const now = Date.now();
-  const np = { ...rp, id: uid(), name: plan.name + ' (עותק)', createdAt: now, updatedAt: now, _d: 1, _s: 0, _srv: null };
+  const np = { ...rp, id: uid(), name: plan.name + tr(' (עותק)'), createdAt: now, updatedAt: now, _d: 1, _s: 0, _srv: null };
   const place = (plan.folderId || null) !== (rp.folderId || null) ? plan.folderId : null;
   const nv = { ...ver, id: uid(), planId: np.id, number: 1, createdAt: now, note: '', _d: 1, _up: 1, _s: 0, driveId: null };
   const srcBlob = await getFileBlob(ver.id);
@@ -445,8 +447,8 @@ export function searchNames(q) {
   const n = norm(q);
   if (!n) return { folders: [], plans: [] };
   return {
-    folders: [...P.folders.values()].filter((f) => norm(f.name).includes(n)).sort((a, b) => natural(a.name, b.name)),
-    plans: [...P.plans.values()].filter((p) => norm(p.name).includes(n)).sort((a, b) => natural(a.name, b.name)),
+    folders: [...P.folders.values()].filter((f) => nameVariants(f.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
+    plans: [...P.plans.values()].filter((p) => nameVariants(p.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
   };
 }
 
@@ -510,7 +512,7 @@ async function indexVersion(vid) {
   let rows = [], chars = 0;
   for (let i = 1; i <= doc.numPages; i++) {
     if (!P.versions.has(vid)) { await destroyDoc(doc); return; }
-    setStatus(`מאנדקס טקסט לחיפוש: ${plan ? plan.name : ''} (${i}/${doc.numPages})`);
+    setStatus(tr('מאנדקס טקסט לחיפוש: {0} ({1}/{2})', plan ? plan.name : '', i, doc.numPages));
     const pg = await doc.getPage(i);
     const text = await pageText(pg);
     pg.cleanup();

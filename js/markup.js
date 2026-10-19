@@ -1,3 +1,4 @@
+import { t as tr, LOCALE } from './i18n.js';
 // סימונים, מדידות וקישורים: ציור SVG, גיאומטריה ובדיקת פגיעה.
 // כל הקואורדינטות ביחידות של עמוד ה-PDF (נקודות, 1/72 אינץ') – בלתי תלויות בזום.
 
@@ -64,24 +65,25 @@ export function paperName(wPt, hPt) {
 export const mpuFromRatio = (n) => (n * 0.0254) / 72;
 
 export function fmtLen(m, unit) {
-  if (unit === 'mm') return `${Math.round(m * 1000).toLocaleString('he-IL')} מ״מ`;
-  if (unit === 'cm') return `${(m * 100).toLocaleString('he-IL', { maximumFractionDigits: 1 })} ס״מ`;
-  return `${m.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} מ׳`;
+  if (unit === 'mm') return tr('{0} מ״מ', Math.round(m * 1000).toLocaleString(LOCALE));
+  if (unit === 'cm') return tr('{0} ס״מ', (m * 100).toLocaleString(LOCALE, { maximumFractionDigits: 1 }));
+  return tr('{0} מ׳', m.toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 }
 export function fmtArea(m2, unit) {
-  if (unit === 'mm') return `${Math.round(m2 * 1e6).toLocaleString('he-IL')} מ״מ²`;
-  if (unit === 'cm') return `${Math.round(m2 * 1e4).toLocaleString('he-IL')} ס״מ²`;
-  return `${m2.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} מ״ר`;
+  if (unit === 'mm') return tr('{0} מ״מ²', Math.round(m2 * 1e6).toLocaleString(LOCALE));
+  if (unit === 'cm') return tr('{0} ס״מ²', Math.round(m2 * 1e4).toLocaleString(LOCALE));
+  return tr('{0} מ״ר', m2.toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 }
 export function measureText(it, cal, unit) {
-  if (!cal || !cal.mpu) return 'נדרש כיול';
+  if (!cal || !cal.mpu) return tr('נדרש כיול');
   if (it.type === 'area') return fmtArea(polyArea(it.pts) * cal.mpu * cal.mpu, unit);
   if (it.type === 'polyline') return fmtLen(pathLength(it.pts, it.closed) * cal.mpu, unit);
   return fmtLen(dist(it.pts[0], it.pts[1]) * cal.mpu, unit);
 }
 
 // ---------- טקסט ----------
-const isRTL = (s) => /[\u0590-\u05FF\u0600-\u06FF]/.test(s || '');
+// כיוון לפי התו ה"חזק" הראשון (כמו dir=auto): שורה שמתחילה באנגלית נשארת LTR גם אם יש בה מילה בעברית, והסוגריים נשארים במקומם
+const isRTL = (s) => { const m = /[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.exec(s || ''); return !!m && /[\u0590-\u05FF\u0600-\u06FF]/.test(m[0]); };
 export function textBox(it) {
   const lines = String(it.text || '').split('\n');
   const fs = it.fontSize;
@@ -152,17 +154,20 @@ export function drawItem(it, cx) {
       break;
     }
     case 'text': {
+      // כל שורה נבנית בנפרד עם הכיוון שלה (שורה בעברית מיושרת לימין התיבה, שורה באנגלית לשמאלה)
       const lines = String(it.text || '').split('\n');
-      const rtl = isRTL(it.text);
       const bx = textBox(it);
-      const x = rtl ? bx.x1 : bx.x0;
-      const t = svg('text', {
-        x, y: a.y + it.fontSize, 'font-size': it.fontSize, fill: it.color || '#111', opacity: op, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 600,
-        stroke: '#fff', 'stroke-width': it.fontSize * 0.16, 'paint-order': 'stroke', 'stroke-linejoin': 'round',
-        direction: rtl ? 'rtl' : 'ltr', 'text-anchor': 'start', 'unicode-bidi': 'plaintext',
+      lines.forEach((ln, i) => {
+        const rtl = isRTL(ln);
+        const x = rtl ? bx.x1 : bx.x0;
+        const t = svg('text', {
+          x, y: a.y + it.fontSize + i * it.fontSize * 1.25, 'font-size': it.fontSize, fill: it.color || '#111', opacity: op, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 600,
+          stroke: '#fff', 'stroke-width': it.fontSize * 0.16, 'paint-order': 'stroke', 'stroke-linejoin': 'round',
+          direction: rtl ? 'rtl' : 'ltr', 'text-anchor': 'start', 'unicode-bidi': 'plaintext',
+        });
+        t.textContent = ln || ' ';
+        g.append(t);
       });
-      lines.forEach((ln, i) => { const s = svg('tspan', { x, dy: i === 0 ? 0 : it.fontSize * 1.25 }); s.textContent = ln || ' '; t.append(s); });
-      g.append(t);
       break;
     }
     case 'measure': {
@@ -183,7 +188,7 @@ export function drawItem(it, cx) {
       const r = bbox([a, b]);
       g.append(svg('rect', { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0, fill: col, 'fill-opacity': 0.13, stroke: col, 'stroke-width': w, 'stroke-dasharray': `${w * 3} ${w * 2}`, 'stroke-linejoin': 'round' }));
       const name = cx.planName ? cx.planName(it.target) : '';
-      const lab = (it.text ? it.text : name) || 'קישור';
+      const lab = (it.text ? it.text : name) || tr('קישור');
       g.append(label('↗ ' + lab, r.x0 + w, r.y0 - it.fontSize * 0.3, it.fontSize, { anchor: 'start', fill: name === null ? '#b71c1c' : col, rtl: isRTL(lab) }));
       break;
     }

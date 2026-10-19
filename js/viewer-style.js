@@ -1,5 +1,6 @@
 // סרגל המאפיינים ופאנל העיצוב של ה-Viewer: צבע קו, מילוי, שקיפות, עובי, וגודל טקסט.
 // אם נבחר פריט – העריכה חלה עליו (עם Undo). אחרת – היא קובעת את ברירת המחדל לציור הבא.
+import { t as tr } from './i18n.js';
 import { h, icon, clone } from './util.js';
 import * as UI from './ui.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
@@ -8,7 +9,7 @@ import * as SH from './item-share-ui.js';
 import { itemAccess } from './cloud-sync.js';
 
 const CS_ACCESS = (v, it) => itemAccess(it, it.layer || 'markups');
-const SH_NAME = (id) => SH.nameOf(id) || 'משתמש אחר';
+const SH_NAME = (id) => SH.nameOf(id) || tr('משתמש אחר');
 const SH_DIALOG = (v, o) => SH.shareDialog(v, o);
 
 const TOOL_KIND = { pen: 'shape', line: 'shape', polyline: 'shape', arrow: 'shape', rect: 'shape', ellipse: 'shape', text: 'text', highlight: 'hl' };
@@ -97,14 +98,14 @@ export function installStyle(V) {
 
     // ---------- רכיבי עזר ----------
     swatch(color, on, onclick, cls = '') {
-      return h('button', { class: 'sw' + (on ? ' on' : '') + (cls ? ' ' + cls : ''), style: color ? { background: color } : null, 'aria-label': 'צבע', onclick });
+      return h('button', { class: 'sw' + (on ? ' on' : '') + (cls ? ' ' + cls : ''), style: color ? { background: color } : null, 'aria-label': tr('צבע'), onclick });
     },
     customColor(key) {
       const cur = this.getStyle(key);
-      const inp = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(cur || '') ? cur : '#e53935', 'aria-label': 'צבע מותאם אישית' });
+      const inp = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(cur || '') ? cur : '#e53935', 'aria-label': tr('צבע מותאם אישית') });
       inp.addEventListener('input', () => this.setStyle(key, inp.value, true));
       inp.addEventListener('change', () => { if (this.selected) this.commitEdit(); else this.setStyle(key, inp.value); });
-      return h('label', { class: 'sw custom', title: 'צבע מותאם אישית' }, inp);
+      return h('label', { class: 'sw custom', title: tr('צבע מותאם אישית') }, inp);
     },
     colorRow(key, { none = false, palette = COLORS } = {}) {
       const cur = this.getStyle(key);
@@ -132,7 +133,7 @@ export function installStyle(V) {
       const { sel, kind, type } = this.styleCtx();
       if (sel && !this.canEditItem(sel)) {
         const lvl = CS_ACCESS(this, sel);
-        row.push(h('small', { class: 'hint-inline' }, `סימון של ${SH_NAME(sel.ownerId)} · ${lvl === 'view' ? 'צפייה בלבד' : 'ללא הרשאת עריכה'}`));
+        row.push(h('small', { class: 'hint-inline' }, tr('סימון של {0} · {1}', SH_NAME(sel.ownerId), lvl === 'view' ? tr('צפייה בלבד') : tr('ללא הרשאת עריכה'))));
         p.classList.add('has'); p.append(...row);
         if (this.stylePanel) { this.stylePanel.remove(); this.stylePanel = null; }
         return;
@@ -144,62 +145,62 @@ export function installStyle(V) {
         if (kind === 'shape') {
           WIDTHS.forEach((w) => {
             const on = sel ? Math.abs(this.getStyle('width') - w) < 0.6 : prefs.w === w;
-            row.push(h('button', { class: 'wd' + (on ? ' on' : ''), 'aria-label': 'עובי קו', onclick: () => this.setStyle('width', w) }, h('i', { style: { height: w + 'px' } })));
+            row.push(h('button', { class: 'wd' + (on ? ' on' : ''), 'aria-label': tr('עובי קו'), onclick: () => this.setStyle('width', w) }, h('i', { style: { height: w + 'px' } })));
           });
           if (sel ? canFill(sel) : (type === 'rect' || type === 'ellipse')) {
             const f = this.getStyle('fill');
-            row.push(h('button', { class: 'sw fillchip' + (f ? '' : ' none'), style: f ? { background: f } : null, title: 'מילוי', 'aria-label': 'צבע מילוי', onclick: () => { this.styleOpen = true; this.renderProps(); } }));
+            row.push(h('button', { class: 'sw fillchip' + (f ? '' : ' none'), style: f ? { background: f } : null, title: tr('מילוי'), 'aria-label': tr('צבע מילוי'), onclick: () => { this.styleOpen = true; this.renderProps(); } }));
           }
         }
         if (kind === 'text' && sel) {
-          const sizeIn = h('input', { type: 'number', class: 'num sz', min: 2, max: 2000, step: 1, value: Math.round(sel.fontSize), 'aria-label': 'גודל טקסט' });
+          const sizeIn = h('input', { type: 'number', class: 'num sz', min: 2, max: 2000, step: 1, value: Math.round(sel.fontSize), 'aria-label': tr('גודל טקסט') });
           sizeIn.addEventListener('change', () => { const v = parseFloat(sizeIn.value); if (v >= 2) this.setStyle('size', v); });
           row.push(
-            h('button', { class: 'icon-btn sm', 'aria-label': 'הקטן טקסט', onclick: () => this.setStyle('size', Math.max(2, Math.round(sel.fontSize * 0.9))) }, icon('minus', 16)),
+            h('button', { class: 'icon-btn sm', 'aria-label': tr('הקטן טקסט'), onclick: () => this.setStyle('size', Math.max(2, Math.round(sel.fontSize * 0.9))) }, icon('minus', 16)),
             sizeIn,
-            h('button', { class: 'icon-btn sm', 'aria-label': 'הגדל טקסט', onclick: () => this.setStyle('size', Math.round(sel.fontSize * 1.1) + 1) }, icon('plus', 16)));
+            h('button', { class: 'icon-btn sm', 'aria-label': tr('הגדל טקסט'), onclick: () => this.setStyle('size', Math.round(sel.fontSize * 1.1) + 1) }, icon('plus', 16)));
         }
-        if (kind !== 'meas') row.push(h('button', { class: 'btn sm' + (this.styleOpen ? ' primary' : ''), onclick: () => this.togglePanel() }, icon('sliders', 16), 'עיצוב'));
+        if (kind !== 'meas') row.push(h('button', { class: 'btn sm' + (this.styleOpen ? ' primary' : ''), onclick: () => this.togglePanel() }, icon('sliders', 16), tr('עיצוב')));
       }
       if (t === 'polyline' && !sel) {
         const cb = h('input', { type: 'checkbox', checked: !!prefs.ortho, onchange: () => { prefs.ortho = cb.checked; savePrefs(); } });
-        row.push(h('label', { class: 'chip-check' }, cb, 'זוויות ישרות'));
-        row.push(h('small', { class: 'hint-inline' }, this.draft ? 'הקישו נקודות לפניות. סיום: הקישו שוב על הנקודה האחרונה (או הראשונה לסגירה)' : 'הקישו נקודות לאורך התוואי'));
+        row.push(h('label', { class: 'chip-check' }, cb, tr('זוויות ישרות')));
+        row.push(h('small', { class: 'hint-inline' }, this.draft ? tr('הקישו נקודות לפניות. סיום: הקישו שוב על הנקודה האחרונה (או הראשונה לסגירה)') : tr('הקישו נקודות לאורך התוואי')));
       }
-      if (t === 'pen' && !sel) row.push(h('small', { class: 'hint-inline' }, 'החזקה בסוף הקו מיישרת לקו ישר או לצורה'));
-      if (t === 'text' && !sel) row.push(h('small', { class: 'hint-inline' }, 'הקישו על התוכנית להוספת טקסט'));
-      if (t === 'eraser') row.push(h('small', { class: 'hint-inline' }, 'גררו על סימונים כדי למחוק אותם (אפשר לבטל)'));
+      if (t === 'pen' && !sel) row.push(h('small', { class: 'hint-inline' }, tr('החזקה בסוף הקו מיישרת לקו ישר או לצורה')));
+      if (t === 'text' && !sel) row.push(h('small', { class: 'hint-inline' }, tr('הקישו על התוכנית להוספת טקסט')));
+      if (t === 'eraser') row.push(h('small', { class: 'hint-inline' }, tr('גררו על סימונים כדי למחוק אותם (אפשר לבטל)')));
       if (t === 'measure' || t === 'area' || t === 'calibrate' || (sel && (sel.type === 'measure' || sel.type === 'area'))) {
         const cal = this.calibs.get(this.pageNum);
-        const u = h('select', { 'aria-label': 'יחידות', onchange: () => { prefs.unit = u.value; savePrefs(); this.renderItems(); } },
-          h('option', { value: 'm' }, 'מטר'), h('option', { value: 'cm' }, 'ס״מ'), h('option', { value: 'mm' }, 'מ״מ'));
+        const u = h('select', { 'aria-label': tr('יחידות'), onchange: () => { prefs.unit = u.value; savePrefs(); this.renderItems(); } },
+          h('option', { value: 'm' }, tr('מטר')), h('option', { value: 'cm' }, tr('ס״מ')), h('option', { value: 'mm' }, tr('מ״מ')));
         u.value = prefs.unit;
-        row.push(u, h('button', { class: 'btn sm', onclick: () => this.calibrateDialog() }, cal ? (cal.source === 'ratio' ? `סקאלה 1:${cal.ratio}` : 'כויל ידנית') : 'נדרש כיול'));
-        if (t === 'measure') row.push(h('small', { class: 'hint-inline' }, this.draft?.wait ? 'לחצו על הנקודה השנייה' : 'לחצו נקודה ראשונה, או גררו'));
-        if (t === 'calibrate') row.push(h('small', { class: 'hint-inline' }, 'כיול: סמנו שתי נקודות'));
-        if (t === 'area') row.push(h('small', { class: 'hint-inline' }, 'הקישו נקודות; סיום: לחצו על הנקודה הראשונה'));
+        row.push(u, h('button', { class: 'btn sm', onclick: () => this.calibrateDialog() }, cal ? (cal.source === 'ratio' ? tr('סקאלה 1:{0}', cal.ratio) : tr('כויל ידנית')) : tr('נדרש כיול')));
+        if (t === 'measure') row.push(h('small', { class: 'hint-inline' }, this.draft?.wait ? tr('לחצו על הנקודה השנייה') : tr('לחצו נקודה ראשונה, או גררו')));
+        if (t === 'calibrate') row.push(h('small', { class: 'hint-inline' }, tr('כיול: סמנו שתי נקודות')));
+        if (t === 'area') row.push(h('small', { class: 'hint-inline' }, tr('הקישו נקודות; סיום: לחצו על הנקודה הראשונה')));
       }
       if (this.draft && (t === 'area' || t === 'polyline' || this.draft.wait)) {
         // כפתורי הפעולה בראש השורה (מימין ב-RTL) כדי שלא ייגללו מחוץ למסך
         const acts = [];
         if (t === 'area' || t === 'polyline') {
-          acts.push(h('button', { class: 'btn sm primary', onclick: () => this.finishArea() }, 'סיום'));
-          acts.push(h('button', { class: 'btn sm', onclick: () => this.undoPoint() }, 'בטל נקודה'));
+          acts.push(h('button', { class: 'btn sm primary', onclick: () => this.finishArea() }, tr('סיום')));
+          acts.push(h('button', { class: 'btn sm', onclick: () => this.undoPoint() }, tr('בטל נקודה')));
         }
-        acts.push(h('button', { class: 'btn sm', onclick: () => this.cancelDraft() }, 'בטל'));
+        acts.push(h('button', { class: 'btn sm', onclick: () => this.cancelDraft() }, tr('בטל')));
         row.unshift(...acts);
       }
-      if (t === 'calibrate') row.push(h('button', { class: 'btn sm', onclick: () => { this.tool = 'pan'; this.draft = null; this.renderDraft(); this.updateToolUI(); this.renderProps(); } }, 'ביטול כיול'));
+      if (t === 'calibrate') row.push(h('button', { class: 'btn sm', onclick: () => { this.tool = 'pan'; this.draft = null; this.renderDraft(); this.updateToolUI(); this.renderProps(); } }, tr('ביטול כיול')));
       if (sel) {
-        if (sel.type === 'text') row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: 'עריכת טקסט', multiline: true, value: sel.text, okText: 'שמור' }); if (v) this.modifySelected((it) => { it.text = v; }); } }, icon('edit', 16), 'ערוך'));
-        if (sel.type === 'polyline') row.push(h('button', { class: 'btn sm' + (sel.showLen ? ' primary' : ''), onclick: () => { if (!sel.showLen && !this.calibs.get(this.pageNum)) { UI.toast('כדי להציג אורך צריך להגדיר סקאלה או כיול לעמוד'); this.calibrateDialog(); return; } this.modifySelected((it) => { it.showLen = !it.showLen; }); } }, icon('ruler', 16), 'הצג אורך'));
+        if (sel.type === 'text') row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: tr('עריכת טקסט'), multiline: true, value: sel.text, okText: tr('שמור') }); if (v) this.modifySelected((it) => { it.text = v; }); } }, icon('edit', 16), tr('ערוך')));
+        if (sel.type === 'polyline') row.push(h('button', { class: 'btn sm' + (sel.showLen ? ' primary' : ''), onclick: () => { if (!sel.showLen && !this.calibs.get(this.pageNum)) { UI.toast(tr('כדי להציג אורך צריך להגדיר סקאלה או כיול לעמוד')); this.calibrateDialog(); return; } this.modifySelected((it) => { it.showLen = !it.showLen; }); } }, icon('ruler', 16), tr('הצג אורך')));
         if (sel.type === 'link') {
-          row.push(h('button', { class: 'btn sm', onclick: () => this.followLink(sel) }, 'פתח'));
-          row.push(h('button', { class: 'btn sm', onclick: async () => { const r = await this.linkDialog(sel); if (!r) return; await this.modifySelected((it) => { it.target = r.target; }); if (r.pick) this.beginPick(this.selected); } }, icon('edit', 16), 'יעד'));
-          row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: 'שם הקישור (אופציונלי)', value: sel.text || '', okText: 'שמור' }); if (v != null) this.modifySelected((it) => { it.text = v; }); } }, 'שם'));
+          row.push(h('button', { class: 'btn sm', onclick: () => this.followLink(sel) }, tr('פתח')));
+          row.push(h('button', { class: 'btn sm', onclick: async () => { const r = await this.linkDialog(sel); if (!r) return; await this.modifySelected((it) => { it.target = r.target; }); if (r.pick) this.beginPick(this.selected); } }, icon('edit', 16), tr('יעד')));
+          row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: tr('שם הקישור (אופציונלי)'), value: sel.text || '', okText: tr('שמור') }); if (v != null) this.modifySelected((it) => { it.text = v; }); } }, tr('שם')));
         }
-        if (this.canShareHere() && (sel.layer === 'markups' || sel.layer === 'measurements')) row.push(h('button', { class: 'btn sm', onclick: () => SH_DIALOG(this, { preset: 'sel' }) }, icon('users', 16), 'שיתוף'));
-        row.push(h('button', { class: 'btn sm danger', onclick: () => this.deleteSelected() }, icon('trash', 16), 'מחק'));
+        if (this.canShareHere() && (sel.layer === 'markups' || sel.layer === 'measurements')) row.push(h('button', { class: 'btn sm', onclick: () => SH_DIALOG(this, { preset: 'sel' }) }, icon('users', 16), tr('שיתוף')));
+        row.push(h('button', { class: 'btn sm danger', onclick: () => this.deleteSelected() }, icon('trash', 16), tr('מחק')));
       }
       p.classList.toggle('has', row.length > 0);
       p.append(...row);
@@ -216,28 +217,28 @@ export function installStyle(V) {
       const body = [];
       if (kind === 'shape') {
         if (fillable) {
-          body.push(sec('מילוי', this.colorRow('fill', { none: true, palette: FILL_COLORS }), this.slider('שקיפות מילוי', 'fillOp', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
+          body.push(sec(tr('מילוי'), this.colorRow('fill', { none: true, palette: FILL_COLORS }), this.slider(tr('שקיפות מילוי'), 'fillOp', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
         }
-        body.push(sec(fillable ? 'קו מסביב' : 'צבע', this.colorRow('color', { none: fillable }),
-          this.slider('שקיפות קו', 'op', { min: 0.05, max: 1, step: 0.05, fmt: pct }),
-          this.slider('עובי', 'width', { min: 1, max: 30, step: 0.5, fmt: (v) => v + ' px' })));
+        body.push(sec(fillable ? tr('קו מסביב') : tr('צבע'), this.colorRow('color', { none: fillable }),
+          this.slider(tr('שקיפות קו'), 'op', { min: 0.05, max: 1, step: 0.05, fmt: pct }),
+          this.slider(tr('עובי'), 'width', { min: 1, max: 30, step: 0.5, fmt: (v) => v + ' px' })));
       } else if (kind === 'hl') {
-        body.push(sec('הדגשה', this.colorRow('color'), this.slider('שקיפות', 'fillOp', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
+        body.push(sec(tr('הדגשה'), this.colorRow('color'), this.slider(tr('שקיפות'), 'fillOp', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
       } else if (kind === 'text') {
-        body.push(sec('טקסט', this.colorRow('color'), this.slider('שקיפות טקסט', 'op', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
+        body.push(sec(tr('טקסט'), this.colorRow('color'), this.slider(tr('שקיפות טקסט'), 'op', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
         if (sel) {
-          const num = h('input', { type: 'number', class: 'num sz', min: 2, max: 2000, step: 1, value: Math.round(sel.fontSize), 'aria-label': 'גודל טקסט' });
-          const range = h('input', { type: 'range', min: 4, max: 400, step: 1, value: Math.min(400, Math.round(sel.fontSize)), 'aria-label': 'גודל טקסט' });
+          const num = h('input', { type: 'number', class: 'num sz', min: 2, max: 2000, step: 1, value: Math.round(sel.fontSize), 'aria-label': tr('גודל טקסט') });
+          const range = h('input', { type: 'range', min: 4, max: 400, step: 1, value: Math.min(400, Math.round(sel.fontSize)), 'aria-label': tr('גודל טקסט') });
           range.addEventListener('input', () => { num.value = range.value; this.setStyle('size', +range.value, true); });
           range.addEventListener('change', () => this.commitEdit());
           num.addEventListener('change', () => { const v = parseFloat(num.value); if (v >= 2) this.setStyle('size', v); });
-          body.push(sec('גודל טקסט (ביחידות העמוד – כך יודפס)', h('div', { class: 'st-row' }, range, num),
-            h('p', { class: 'hint' }, 'אפשר גם: צביטה עם שתי אצבעות על הטקסט, או גרירת העיגול בפינה.')));
-        } else body.push(h('p', { class: 'hint' }, 'את גודל הטקסט משנים אחרי ההוספה.'));
+          body.push(sec(tr('גודל טקסט (ביחידות העמוד – כך יודפס)'), h('div', { class: 'st-row' }, range, num),
+            h('p', { class: 'hint' }, tr('אפשר גם: צביטה עם שתי אצבעות על הטקסט, או גרירת העיגול בפינה.'))));
+        } else body.push(h('p', { class: 'hint' }, tr('את גודל הטקסט משנים אחרי ההוספה.')));
       }
       const box = h('div', { class: 'v-style' },
-        h('div', { class: 'st-head' }, h('b', {}, sel ? 'עיצוב הפריט הנבחר' : 'עיצוב לציור הבא'),
-          h('button', { class: 'icon-btn sm', 'aria-label': 'סגור', onclick: () => { this.styleOpen = false; this.renderProps(); } }, icon('x', 18))),
+        h('div', { class: 'st-head' }, h('b', {}, sel ? tr('עיצוב הפריט הנבחר') : tr('עיצוב לציור הבא')),
+          h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור'), onclick: () => { this.styleOpen = false; this.renderProps(); } }, icon('x', 18))),
         ...body);
       this.mid.append(box);
       this.stylePanel = box;

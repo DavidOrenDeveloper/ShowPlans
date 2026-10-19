@@ -1,5 +1,6 @@
 // זיהוי טקסט (OCR) לקבצי סריקה – tesseract.js מקומי (עברית + אנגלית), רץ במכשיר ולא שולח כלום החוצה.
 // התוצאות נשמרות באינדקס הטקסט (textindex) ולכן גם החיפוש הכללי מוצא אותן.
+import { t as tr } from './i18n.js';
 import * as db from './db.js';
 import * as S from './store.js';
 import { openPdf, destroyDoc, pageText } from './pdfio.js';
@@ -12,7 +13,7 @@ function loadTess() {
     const s = document.createElement('script');
     s.src = BASE + 'tesseract.min.js';
     s.onload = () => res(window.Tesseract);
-    s.onerror = () => rej(new Error('טעינת רכיב ה-OCR נכשלה'));
+    s.onerror = () => rej(new Error(tr('טעינת רכיב ה-OCR נכשלה')));
     document.head.appendChild(s);
   }));
 }
@@ -64,7 +65,7 @@ function flatWords(data) {
 export async function ocrVersion(vid, pages, { onProgress, isCancelled } = {}) {
   const v = S.P.versions.get(vid);
   const blob = await S.getFileBlob(vid, { remote: false });
-  if (!v || !blob) throw new Error('הקובץ לא זמין במכשיר');
+  if (!v || !blob) throw new Error(tr('הקובץ לא זמין במכשיר'));
   const worker = await getWorker();
   const doc = await openPdf(blob, { interactive: false });
   let done = 0, found = 0;

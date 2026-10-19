@@ -1,4 +1,6 @@
 // ה-Viewer: זום עמוק וחד, גרירה, Pinch, סימונים, מדידות, קישורים, השוואה, חיפוש, גרסאות
+import { t as tr, CHEV_FWD, CHEV_BACK, toggleLang, langButtonLabel } from './i18n.js';
+import { dn, onNamesChange } from './names.js';
 import * as OCR from './ocr.js';
 import * as S from './store.js';
 import * as db from './db.js';
@@ -24,23 +26,23 @@ const PT = 96 / 72; // "100%" = גודל אמיתי ב-96 DPI
 const GAP = 24;
 const MAXS = PT * 64; // עד 6400%
 const TOOLS = [
-  { id: 'pan', icon: 'move', label: 'הזזה' },
-  { id: 'select', icon: 'cursor', label: 'בחירה' },
+  { id: 'pan', icon: 'move', label: tr('הזזה') },
+  { id: 'select', icon: 'cursor', label: tr('בחירה') },
   { sep: true },
-  { id: 'pen', icon: 'pen', label: 'עט' },
-  { id: 'line', icon: 'line', label: 'קו' },
-  { id: 'polyline', icon: 'polyline', label: 'קו נקודות' },
-  { id: 'arrow', icon: 'arrow', label: 'חץ' },
-  { id: 'rect', icon: 'rect', label: 'מלבן' },
-  { id: 'ellipse', icon: 'circle', label: 'עיגול' },
-  { id: 'text', icon: 'type', label: 'טקסט' },
-  { id: 'highlight', icon: 'highlight', label: 'הדגשה' },
-  { id: 'eraser', icon: 'eraser', label: 'מחק' },
+  { id: 'pen', icon: 'pen', label: tr('עט') },
+  { id: 'line', icon: 'line', label: tr('קו') },
+  { id: 'polyline', icon: 'polyline', label: tr('קו נקודות') },
+  { id: 'arrow', icon: 'arrow', label: tr('חץ') },
+  { id: 'rect', icon: 'rect', label: tr('מלבן') },
+  { id: 'ellipse', icon: 'circle', label: tr('עיגול') },
+  { id: 'text', icon: 'type', label: tr('טקסט') },
+  { id: 'highlight', icon: 'highlight', label: tr('הדגשה') },
+  { id: 'eraser', icon: 'eraser', label: tr('מחק') },
   { sep: true },
-  { id: 'measure', icon: 'ruler', label: 'מרחק' },
-  { id: 'area', icon: 'polygon', label: 'שטח' },
+  { id: 'measure', icon: 'ruler', label: tr('מרחק') },
+  { id: 'area', icon: 'polygon', label: tr('שטח') },
   { sep: true },
-  { id: 'link', icon: 'link', label: 'קישור' },
+  { id: 'link', icon: 'link', label: tr('קישור') },
 ];
 
 const lastView = new Map();
@@ -77,7 +79,7 @@ class Viewer {
 
   // ---------- בנייה ----------
   build() {
-    this.titleEl = h('div', { class: 'v-title', title: 'לחצו לשינוי שם התוכנית' });
+    this.titleEl = h('div', { class: 'v-title', title: tr('לחצו לשינוי שם התוכנית') });
     this.titleEl.addEventListener('click', () => this.renameDialog());
     const btn = (ic, label, fn) => h('button', { class: 'icon-btn', 'aria-label': label, title: label, onclick: fn }, icon(ic));
     this.stage = h('div', { class: 'v-stage' });
@@ -88,35 +90,35 @@ class Viewer {
     this.svg = svg('svg', { class: 'v-overlay', preserveAspectRatio: 'none' });
     this.gSearch = svg('g'); this.gItems = svg('g'); this.gDraft = svg('g'); this.gSel = svg('g');
     this.svg.append(this.gSearch, this.gItems, this.gDraft, this.gSel);
-    this.loading = h('div', { class: 'v-loading' }, 'טוען תוכנית…');
+    this.loading = h('div', { class: 'v-loading' }, tr('טוען תוכנית…'));
     this.stage.append(this.layerA.el, this.layerB.el, this.layerN.el, this.layerP.el, this.svg, this.loading);
 
     this.topbar = h('header', { class: 'v-top' },
-      btn('back', 'חזרה', () => this.goBack()),
+      btn('back', tr('חזרה'), () => this.goBack()),
       this.titleEl,
-      btn('search', 'חיפוש בתוכנית', () => this.openPanel('search')),
-      btn('grid', 'עמודים', () => this.openPanel('pages')),
-      btn('layers', 'שכבות', () => this.layersDialog()),
-      btn('compare', 'השוואת תוכניות', () => this.openCompare()),
-      btn('clock', 'גרסאות', () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() })),
-      btn('print', 'הדפסה', () => this.printDialog()),
-      btn('more', 'עוד', (e) => this.moreMenu(e.currentTarget)));
+      btn('search', tr('חיפוש בתוכנית'), () => this.openPanel('search')),
+      btn('grid', tr('עמודים'), () => this.openPanel('pages')),
+      btn('layers', tr('שכבות'), () => this.layersDialog()),
+      btn('compare', tr('השוואת תוכניות'), () => this.openCompare()),
+      btn('clock', tr('גרסאות'), () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() })),
+      btn('print', tr('הדפסה'), () => this.printDialog()),
+      btn('more', tr('עוד'), (e) => this.moreMenu(e.currentTarget)));
     // במסכים צרים מעבירים כפתורים משניים לתפריט ⋮ כדי שיישאר מקום לשם התוכנית
-    this.topbar.querySelectorAll('[aria-label="שכבות"],[aria-label="השוואת תוכניות"],[aria-label="גרסאות"],[aria-label="הדפסה"]').forEach((b) => b.classList.add('nh'));
+    this.topbar.querySelectorAll([tr('שכבות'), tr('השוואת תוכניות'), tr('גרסאות'), tr('הדפסה')].map((x) => `[aria-label="${x}"]`).join(',')).forEach((b) => b.classList.add('nh'));
 
     this.zoomLabel = h('button', { class: 'zl', onclick: () => this.setZoom100() }, '100%');
     this.zoomBar = h('div', { class: 'v-zoom v-float' },
-      btn('zoomIn', 'הגדל', () => this.zoomBy(1.6)),
+      btn('zoomIn', tr('הגדל'), () => this.zoomBy(1.6)),
       this.zoomLabel,
-      btn('zoomOut', 'הקטן', () => this.zoomBy(1 / 1.6)),
-      btn('maximize', 'התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)', () => this.cycleFit()),
-      this.contBtn = btn('scroll', 'גלילה רציפה (עמודים ברצף) / עמוד בודד', () => this.setCont(!this.cont)));
+      btn('zoomOut', tr('הקטן'), () => this.zoomBy(1 / 1.6)),
+      btn('maximize', tr('התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)'), () => this.cycleFit()),
+      this.contBtn = btn('scroll', tr('גלילה רציפה (עמודים ברצף) / עמוד בודד'), () => this.setCont(!this.cont)));
 
     this.pageLabel = h('button', { class: 'pl', onclick: () => this.pagePrompt() }, '1 / 1');
     this.pageBar = h('div', { class: 'v-pages v-float' },
-      btn('chevR', 'עמוד קודם', () => this.goPage(this.pageNum - 1)),
+      btn(CHEV_BACK, tr('עמוד קודם'), () => this.goPage(this.pageNum - 1)),
       this.pageLabel,
-      btn('chevL', 'עמוד הבא', () => this.goPage(this.pageNum + 1)));
+      btn(CHEV_FWD, tr('עמוד הבא'), () => this.goPage(this.pageNum + 1)));
 
     this.props = h('div', { class: 'v-props' });
     this.toolbar = h('div', { class: 'v-tools' });
@@ -124,17 +126,17 @@ class Viewer {
     this.panel = h('aside', { class: 'v-panel hidden' });
     this.cmpBar = h('div', { class: 'v-cmp hidden' });
     this.pickBar = h('div', { class: 'v-pick hidden' });
-    this.exitImm = h('button', { class: 'v-exit-imm', 'aria-label': 'הצג סרגלים', onclick: () => this.el.classList.remove('immersive') }, icon('chevD'));
+    this.exitImm = h('button', { class: 'v-exit-imm', 'aria-label': tr('הצג סרגלים'), onclick: () => this.el.classList.remove('immersive') }, icon('chevD'));
 
     this.sbarLabel = h('span', { class: 'sl' }, '');
     this.sbar = h('div', { class: 'v-sbar v-float hidden' },
-      btn('chevU', 'תוצאה קודמת', () => this.gotoMatch(this.search.idx - 1)),
+      btn('chevU', tr('תוצאה קודמת'), () => this.gotoMatch(this.search.idx - 1)),
       this.sbarLabel,
-      btn('chevD', 'תוצאה הבאה', () => this.gotoMatch(this.search.idx + 1)),
-      btn('list', 'רשימת תוצאות', () => this.openPanel('search')),
-      btn('x', 'סיום חיפוש', () => this.clearSearch()));
+      btn('chevD', tr('תוצאה הבאה'), () => this.gotoMatch(this.search.idx + 1)),
+      btn('list', tr('רשימת תוצאות'), () => this.openPanel('search')),
+      btn('x', tr('סיום חיפוש'), () => this.clearSearch()));
     this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.panel);
-    this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': 'יציאה ממסך מלא', onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, 'יציאה ממסך מלא'));
+    this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': tr('יציאה ממסך מלא'), onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, tr('יציאה ממסך מלא')));
     this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar, this.mid,
       this.cmpBar, this.props, this.toolbar, this.exitImm, this.exitFs);
     this.root.append(this.el);
@@ -179,8 +181,8 @@ class Viewer {
       this.toolbar.append(b);
     }
     this.toolbar.append(h('span', { class: 'tsep' }));
-    this.undoBtn = h('button', { class: 'tool', title: 'בטל', onclick: () => this.undo() }, icon('undo', 22), h('span', {}, 'בטל'));
-    this.redoBtn = h('button', { class: 'tool', title: 'שחזר', onclick: () => this.redo() }, icon('redo', 22), h('span', {}, 'חזור'));
+    this.undoBtn = h('button', { class: 'tool', title: tr('בטל'), onclick: () => this.undo() }, icon('undo', 22), h('span', {}, tr('בטל')));
+    this.redoBtn = h('button', { class: 'tool', title: tr('שחזר'), onclick: () => this.redo() }, icon('redo', 22), h('span', {}, tr('חזור')));
     this.toolbar.append(this.undoBtn, this.redoBtn);
     this.updateToolUI();
     this.updateUndo();
@@ -188,7 +190,7 @@ class Viewer {
 
   async init() {
     const plan = S.P.plans.get(this.planId);
-    if (!plan) { UI.toast('התוכנית לא נמצאה', { type: 'error' }); location.hash = '#/f/'; return; }
+    if (!plan) { UI.toast(tr('התוכנית לא נמצאה'), { type: 'error' }); location.hash = '#/f/'; return; }
     this.plan = plan;
     this.build();
     const o = this.opts;
@@ -217,13 +219,13 @@ class Viewer {
     const ver = S.P.versions.get(vid);
     this.version = ver;
     this.loading.style.display = '';
-    this.loading.textContent = 'טוען תוכנית…';
+    this.loading.textContent = tr('טוען תוכנית…');
     const blob = await S.getFileBlob(vid);
-    if (!blob || !ver || ver.broken) { this.showFallback(blob ? 'ה-Viewer הפנימי לא הצליח לפתוח את הקובץ הזה.' : 'הקובץ לא נמצא באחסון המקומי.'); return; }
+    if (!blob || !ver || ver.broken) { this.showFallback(blob ? tr('ה-Viewer הפנימי לא הצליח לפתוח את הקובץ הזה.') : tr('הקובץ לא נמצא באחסון המקומי.')); return; }
     let doc;
     try { doc = await openPdf(blob, { interactive: true }); } catch (e) {
       console.error(e);
-      this.showFallback(e?.name === 'PasswordException' ? 'הקובץ מוגן בסיסמה.' : 'ה-Viewer הפנימי לא הצליח לפתוח את הקובץ הזה.');
+      this.showFallback(e?.name === 'PasswordException' ? tr('הקובץ מוגן בסיסמה.') : tr('ה-Viewer הפנימי לא הצליח לפתוח את הקובץ הזה.'));
       return;
     }
     if (cur !== this) { destroyDoc(doc); return; }
@@ -245,22 +247,23 @@ class Viewer {
   showFallback(msg) {
     this.loading.style.display = 'none';
     const box = h('div', { class: 'v-fallback' },
-      icon('alert', 44), h('h3', {}, 'לא ניתן להציג את התוכנית'), h('p', {}, msg),
-      h('p', { class: 'hint' }, 'הקובץ המקורי שמור ולא שונה. אפשר להוריד אותו או לפתוח אותו באפליקציית PDF אחרת.'),
+      icon('alert', 44), h('h3', {}, tr('לא ניתן להציג את התוכנית')), h('p', {}, msg),
+      h('p', { class: 'hint' }, tr('הקובץ המקורי שמור ולא שונה. אפשר להוריד אותו או לפתוח אותו באפליקציית PDF אחרת.')),
       h('div', { class: 'row' },
-        h('button', { class: 'btn primary', onclick: () => A.openWithDialog(this.plan, this.version?.id) }, icon('share', 18), 'פתח באמצעות…'),
-        h('button', { class: 'btn', onclick: () => A.downloadVersion(this.version?.id, this.plan.name) }, icon('download', 18), 'הורד')));
+        h('button', { class: 'btn primary', onclick: () => A.openWithDialog(this.plan, this.version?.id) }, icon('share', 18), tr('פתח באמצעות…')),
+        h('button', { class: 'btn', onclick: () => A.downloadVersion(this.version?.id, this.plan.name) }, icon('download', 18), tr('הורד'))));
     this.stage.append(box);
     this.updateTitle();
   }
 
   updateTitle() {
+    if (!this._nameSub) this._nameSub = onNamesChange(() => { if (this.plan) this.updateTitle(); });
     const vs = S.versionsOf(this.planId);
     const v = this.version;
     const isCur = v && this.plan.currentVersionId === v.id;
     this.titleEl.replaceChildren(
-      h('b', {}, this.plan.name, h('span', { class: 'ted' }, icon('edit', 13))),
-      h('small', {}, [v && vs.length > 1 ? `V${v.number} · ${fmtDate(v.date)}` : null, v && !isCur ? 'גרסה ישנה' : null].filter(Boolean).join(' · ') || S.planPathText(this.plan)));
+      h('b', { title: this.plan.name }, dn(this.plan.name), h('span', { class: 'ted' }, icon('edit', 13))),
+      h('small', {}, [v && vs.length > 1 ? `V${v.number} · ${fmtDate(v.date)}` : null, v && !isCur ? tr('גרסה ישנה') : null].filter(Boolean).join(' · ') || S.planPathText(this.plan)));
     this.titleEl.classList.toggle('old', !!(v && !isCur));
   }
   afterVersionsChange() {
@@ -402,14 +405,14 @@ class Viewer {
     return [ntx, nty];
   }
   setCont(on, { quiet = false } = {}) {
-    if (on && (this.cmp || this.split)) { UI.toast('גלילה רציפה לא זמינה בזמן השוואת תוכניות'); return; }
+    if (on && (this.cmp || this.split)) { UI.toast(tr('גלילה רציפה לא זמינה בזמן השוואת תוכניות')); return; }
     this.cont = !!on;
     try { localStorage.setItem('plans.cont', on ? '1' : '0'); } catch { /* ignore */ }
     this.el.classList.toggle('cont', this.cont);
     this.contBtn?.classList.toggle('on', this.cont);
     if (!this.cont) { this.layerN.clear(); this.layerP.clear(); this.fit('page'); }
     else { this.fit('width'); this.loadNeighbors(); }
-    if (!quiet) UI.toast(this.cont ? 'גלילה רציפה: גוללים מעלה/מטה בין העמודים' : 'מצב עמוד בודד', { ms: 1800 });
+    if (!quiet) UI.toast(this.cont ? tr('גלילה רציפה: גוללים מעלה/מטה בין העמודים') : tr('מצב עמוד בודד'), { ms: 1800 });
   }
   fit(mode) {
     if (!this.page) return;
@@ -421,7 +424,7 @@ class Viewer {
   cycleFit() {
     if (!this.page) return;
     const sw = this.vw / this.pw, sh = this.H / this.ph, sp = Math.min(sw, sh) * 0.98;
-    const all = [['page', sp, 'כל העמוד במסך'], ['width', sw, 'התאמה לרוחב המסך'], ['height', sh, 'התאמה לגובה המסך']];
+    const all = [['page', sp, tr('כל העמוד במסך')], ['width', sw, tr('התאמה לרוחב המסך')], ['height', sh, tr('התאמה לגובה המסך')]];
     const kept = [];
     for (const m of all) if (!kept.some((k) => Math.abs(k[1] / m[1] - 1) < 0.04)) kept.push(m);
     const i = kept.findIndex((k) => k[0] === this.fitMode);
@@ -481,7 +484,7 @@ class Viewer {
     this.updateZoomUI();
   }
   async pagePrompt() {
-    const v = await UI.promptBox({ title: 'מעבר לעמוד', label: `מספר עמוד (1–${this.numPages})`, value: String(this.pageNum), okText: 'עבור' });
+    const v = await UI.promptBox({ title: tr('מעבר לעמוד'), label: tr('מספר עמוד (1–{0})', this.numPages), value: String(this.pageNum), okText: tr('עבור') });
     const n = parseInt(v, 10);
     if (n >= 1 && n <= this.numPages) this.goPage(n);
   }
@@ -728,8 +731,8 @@ class Viewer {
 
   // ---------- כלים ----------
   setTool(t) {
-    if (t !== 'pan' && t !== 'select' && !CS.canMarkPlan(this.planId)) { UI.toast('בתוכנית הזו יש לך הרשאת צפייה בלבד. סימון דורש הרשאת סימון מהמנהל', { type: 'error' }); return; }
-    if (t === 'link' && !CS.canEditPlanItems(this.planId)) { UI.toast('קישורים בין תוכניות דורשים הרשאת עריכה מלאה', { type: 'error' }); return; }
+    if (t !== 'pan' && t !== 'select' && !CS.canMarkPlan(this.planId)) { UI.toast(tr('בתוכנית הזו יש לך הרשאת צפייה בלבד. סימון דורש הרשאת סימון מהמנהל'), { type: 'error' }); return; }
+    if (t === 'link' && !CS.canEditPlanItems(this.planId)) { UI.toast(tr('קישורים בין תוכניות דורשים הרשאת עריכה מלאה'), { type: 'error' }); return; }
     if ((t === 'measure' || t === 'area') && !this.calibs.get(this.pageNum)) { this.needCalibration(t); return; }
     if (this.draft) { this.draft = null; this.renderDraft(); }
     this.tool = t;
@@ -865,7 +868,7 @@ class Viewer {
     this.renderDraft(); this.renderProps();
   }
   async addItem(it) {
-    if (!CS.canMarkPlan(this.planId)) { UI.toast('אין לך הרשאת סימון בתוכנית הזו', { type: 'error' }); return; }
+    if (!CS.canMarkPlan(this.planId)) { UI.toast(tr('אין לך הרשאת סימון בתוכנית הזו'), { type: 'error' }); return; }
     await S.putItem(it.layer, it);
     this.items[it.layer].push(it);
     this.history.push({ before: null, after: clone(it) });
@@ -927,7 +930,7 @@ class Viewer {
   }
   async deleteSelected() {
     const it = this.selected; if (!it) return;
-    if (!this.canEditItem(it)) { UI.toast('אין לך הרשאה למחוק את הפריט הזה', { type: 'error' }); return; }
+    if (!this.canEditItem(it)) { UI.toast(tr('אין לך הרשאה למחוק את הפריט הזה'), { type: 'error' }); return; }
     this.selected = null;
     await this.setItemState(it, null);
     this.history.push({ before: clone(it), after: null });
@@ -936,7 +939,7 @@ class Viewer {
   }
   async modifySelected(mut) {
     const it = this.selected; if (!it) return;
-    if (!this.canEditItem(it)) { UI.toast('אין לך הרשאה לערוך את הפריט הזה', { type: 'error' }); return; }
+    if (!this.canEditItem(it)) { UI.toast(tr('אין לך הרשאה לערוך את הפריט הזה'), { type: 'error' }); return; }
     const before = clone(it);
     mut(it);
     await this.commitMod(before, it);
@@ -945,13 +948,13 @@ class Viewer {
 
   // ---------- טקסט ושטח ----------
   async placeText(p) {
-    const v = await UI.promptBox({ title: 'טקסט על התוכנית', multiline: true, placeholder: 'הקלד הערה…', okText: 'הוסף' });
+    const v = await UI.promptBox({ title: tr('טקסט על התוכנית'), multiline: true, placeholder: tr('הקלד הערה…'), okText: tr('הוסף') });
     if (!v) return;
     const it = this.newItem({ type: 'text', pts: [p], text: v });
     await this.addItem(it);
     // עוברים לבחירה: אפשר מיד לשנות גודל (צביטה, ידית בפינה או מספר), צבע ושקיפות
     this.tool = 'select'; this.updateToolUI(); this.select(it);
-    if (!prefs.tipText) { prefs.tipText = 1; savePrefs(); UI.toast('לשינוי גודל: צביטה עם שתי אצבעות על הטקסט, גרירת העיגול בפינה, או מספר בסרגל', { ms: 5000 }); }
+    if (!prefs.tipText) { prefs.tipText = 1; savePrefs(); UI.toast(tr('לשינוי גודל: צביטה עם שתי אצבעות על הטקסט, גרירת העיגול בפינה, או מספר בסרגל'), { ms: 5000 }); }
   }
   // אם נבחר פריט – משנים אותו. אחרת – מעדכנים את ברירת המחדל.
   orthoPt(p) {
@@ -988,7 +991,7 @@ class Viewer {
   async finishArea() {
     const d = this.draft;
     const need = d && d.type === 'polyline' ? 2 : 3;
-    if (!d || d.pts.length < need) { UI.toast(need === 2 ? 'קו דורש לפחות 2 נקודות' : 'שטח דורש לפחות 3 נקודות'); return; }
+    if (!d || d.pts.length < need) { UI.toast(need === 2 ? tr('קו דורש לפחות 2 נקודות') : tr('שטח דורש לפחות 3 נקודות')); return; }
     this.draft = null;
     delete d.hover;
     await this.commitNew(d);
@@ -1005,7 +1008,7 @@ class Viewer {
     if (this.gesture !== g || g.snapped || !this.draft || this.draft.type !== 'pen') return;
     const r = recognize(this.draft.pts, this.scale);
     if (!r) {
-      if (!g.hintShown) { g.hintShown = true; UI.toast('לא זוהתה צורה – שחררו כרגיל כדי לשמור את הקו החופשי', { ms: 2200 }); }
+      if (!g.hintShown) { g.hintShown = true; UI.toast(tr('לא זוהתה צורה – שחררו כרגיל כדי לשמור את הקו החופשי'), { ms: 2200 }); }
       return;
     }
     g.snapped = true; g.snap = r;
@@ -1034,18 +1037,18 @@ class Viewer {
     for (const e of entries) await this.setItemState(e.before, null);
     this.history.push({ multi: entries }); this.redoStack = [];
     this.updateUndo(); this.renderProps();
-    UI.toast(entries.length === 1 ? 'נמחק פריט אחד (אפשר לבטל)' : `נמחקו ${entries.length} פריטים (אפשר לבטל)`, { ms: 1800 });
+    UI.toast(entries.length === 1 ? tr('נמחק פריט אחד (אפשר לבטל)') : tr('נמחקו {0} פריטים (אפשר לבטל)', entries.length), { ms: 1800 });
   }
 
   // ---------- כיול ומדידה ----------
   async needCalibration(nextTool) {
-    if (!CS.canEditPlanItems(this.planId)) { UI.toast('נדרש כיול לעמוד הזה. כיול דורש הרשאת עריכה מלאה: בקשו מהמנהל', { type: 'error', ms: 5000 }); return; }
-    const ok = await UI.confirmBox('כדי למדוד צריך להגדיר סקאלה לעמוד הזה. האפליקציה לא מנחשת מידות – בחרו סקאלה (למשל 1:100) או כיילו לפי מרחק ידוע בתוכנית.', { title: 'נדרש כיול', okText: 'הגדר סקאלה' });
+    if (!CS.canEditPlanItems(this.planId)) { UI.toast(tr('נדרש כיול לעמוד הזה. כיול דורש הרשאת עריכה מלאה: בקשו מהמנהל'), { type: 'error', ms: 5000 }); return; }
+    const ok = await UI.confirmBox(tr('כדי למדוד צריך להגדיר סקאלה לעמוד הזה. האפליקציה לא מנחשת מידות – בחרו סקאלה (למשל 1:100) או כיילו לפי מרחק ידוע בתוכנית.'), { title: tr('נדרש כיול'), okText: tr('הגדר סקאלה') });
     if (ok) this.calibrateDialog(nextTool);
   }
   async calibrateDialog(nextTool) {
     if (!this.page) return;
-    if (!CS.canEditPlanItems(this.planId)) { UI.toast('כיול דורש הרשאת עריכה מלאה בתוכנית', { type: 'error' }); return; }
+    if (!CS.canEditPlanItems(this.planId)) { UI.toast(tr('כיול דורש הרשאת עריכה מלאה בתוכנית'), { type: 'error' }); return; }
     const cal = this.calibs.get(this.pageNum);
     const paper = paperName(this.pw, this.ph);
     const wmm = Math.round((this.pw * 25.4) / 72), hmm = Math.round((this.ph * 25.4) / 72);
@@ -1054,36 +1057,36 @@ class Viewer {
     const cands = h('div', { class: 'row wrap' });
     let m;
     const applyRatio = async (n) => {
-      if (!(n >= 1)) { UI.toast('הזן מספר גדול מ-0', { type: 'error' }); return; }
+      if (!(n >= 1)) { UI.toast(tr('הזן מספר גדול מ-0'), { type: 'error' }); return; }
       const pages = all.checked ? Array.from({ length: this.numPages }, (_, i) => i + 1) : [this.pageNum];
       for (const pg of pages) {
         const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, planId: this.planId, page: pg, mpu: mpuFromRatio(n), source: 'ratio', ratio: n };
         await S.putItem('calibrations', c); this.calibs.set(pg, c);
       }
       this.renderItems(); this.renderProps();
-      UI.toast(`הוגדרה סקאלה 1:${n}`);
+      UI.toast(tr('הוגדרה סקאלה 1:{0}', n));
       m.close(); if (nextTool) this.setTool(nextTool);
     };
     const status = cal
-      ? h('p', { class: 'ok' }, cal.source === 'ratio' ? `סקאלה נוכחית לעמוד: 1:${cal.ratio}` : 'העמוד כויל ידנית לפי מרחק ידוע.')
-      : h('p', { class: 'warn' }, 'לעמוד הזה עדיין אין כיול – מדידות לא יוצגו.');
+      ? h('p', { class: 'ok' }, cal.source === 'ratio' ? tr('סקאלה נוכחית לעמוד: 1:{0}', cal.ratio) : tr('העמוד כויל ידנית לפי מרחק ידוע.'))
+      : h('p', { class: 'warn' }, tr('לעמוד הזה עדיין אין כיול – מדידות לא יוצגו.'));
     const body = h('div', { class: 'stack' }, status,
-      h('h4', {}, '1. סקאלה מהתוכנית'),
-      h('p', { class: 'hint' }, `גודל העמוד בקובץ: ${wmm}×${hmm} מ״מ${paper ? ` (${paper})` : ' (לא גודל נייר סטנדרטי)'}. סקאלה 1:N מדויקת רק אם ה-PDF נשמר בגודל הדף המקורי, ללא הקטנה. אם יש ספק – השתמשו בכיול ידני.`),
-      h('div', { class: 'row' }, h('span', {}, '1 :'), ratio, h('button', { class: 'btn primary', onclick: () => applyRatio(parseFloat(ratio.value)) }, 'החל')),
+      h('h4', {}, tr('1. סקאלה מהתוכנית')),
+      h('p', { class: 'hint' }, tr('גודל העמוד בקובץ: {0}×{1} מ״מ{2}. סקאלה 1:N מדויקת רק אם ה-PDF נשמר בגודל הדף המקורי, ללא הקטנה. אם יש ספק – השתמשו בכיול ידני.', wmm, hmm, paper ? ` (${paper})` : tr(' (לא גודל נייר סטנדרטי)'))),
+      h('div', { class: 'row' }, h('span', {}, '1 :'), ratio, h('button', { class: 'btn primary', onclick: () => applyRatio(parseFloat(ratio.value)) }, tr('החל'))),
       cands,
-      h('label', { class: 'check' }, all, 'החל על כל עמודי הקובץ'),
-      h('h4', {}, '2. כיול ידני'),
-      h('p', { class: 'hint' }, 'סמנו שתי נקודות בתוכנית שהמרחק ביניהן ידוע (למשל מידה כתובה), ואז הזינו את המרחק האמיתי.'),
-      h('button', { class: 'btn', onclick: () => { m.close(); this.startCalibrateTool(all.checked, nextTool); } }, icon('ruler', 18), 'סמן שתי נקודות'),
-      cal ? h('button', { class: 'btn danger', onclick: async () => { await S.delItem('calibrations', cal.id); this.calibs.delete(this.pageNum); this.renderItems(); this.renderProps(); m.close(); } }, 'אפס כיול בעמוד') : null);
-    m = UI.openModal({ title: 'סקאלה וכיול', body, buttons: [{ text: 'סגור', value: true }] });
+      h('label', { class: 'check' }, all, tr('החל על כל עמודי הקובץ')),
+      h('h4', {}, tr('2. כיול ידני')),
+      h('p', { class: 'hint' }, tr('סמנו שתי נקודות בתוכנית שהמרחק ביניהן ידוע (למשל מידה כתובה), ואז הזינו את המרחק האמיתי.')),
+      h('button', { class: 'btn', onclick: () => { m.close(); this.startCalibrateTool(all.checked, nextTool); } }, icon('ruler', 18), tr('סמן שתי נקודות')),
+      cal ? h('button', { class: 'btn danger', onclick: async () => { await S.delItem('calibrations', cal.id); this.calibs.delete(this.pageNum); this.renderItems(); this.renderProps(); m.close(); } }, tr('אפס כיול בעמוד')) : null);
+    m = UI.openModal({ title: tr('סקאלה וכיול'), body, buttons: [{ text: tr('סגור'), value: true }] });
     try { // הצעה בלבד: סקאלה שנמצאה בטקסט העמוד – חובה לאמת מול התוכנית
       const txt = await pageText(this.page);
       const found = new Set();
       for (const mm of txt.matchAll(/(?:^|[^\d:])1\s*[:：]\s*(\d{1,4})(?!\d)/g)) { const n = +mm[1]; if (n >= 2 && n <= 5000) found.add(n); }
       if (found.size) {
-        cands.append(h('span', { class: 'hint' }, 'נמצא בטקסט של העמוד (יש לאמת מול התוכנית):'));
+        cands.append(h('span', { class: 'hint' }, tr('נמצא בטקסט של העמוד (יש לאמת מול התוכנית):')));
         [...found].slice(0, 5).forEach((n) => cands.append(h('button', { class: 'btn sm', onclick: () => applyRatio(n) }, `1:${n}`)));
       }
     } catch { /* ignore */ }
@@ -1092,29 +1095,29 @@ class Viewer {
     this.calibAll = applyAll; this.calibNext = nextTool;
     this.tool = 'calibrate'; this.draft = null;
     this.updateToolUI(); this.renderProps();
-    UI.toast('סמנו שתי נקודות עם מרחק ידוע', { ms: 4000 });
+    UI.toast(tr('סמנו שתי נקודות עם מרחק ידוע'), { ms: 4000 });
   }
   async calibrateFromPoints(pts) {
     this.draft = null; this.renderDraft();
     const len = dist(pts[0], pts[1]);
-    const val = h('input', { type: 'number', step: 'any', min: 0, placeholder: 'לדוגמה 3.5', inputMode: 'decimal', autofocus: true });
-    const unit = h('select', {}, h('option', { value: 'm' }, 'מטר'), h('option', { value: 'cm' }, 'ס״מ'), h('option', { value: 'mm' }, 'מ״מ'));
+    const val = h('input', { type: 'number', step: 'any', min: 0, placeholder: tr('לדוגמה 3.5'), inputMode: 'decimal', autofocus: true });
+    const unit = h('select', {}, h('option', { value: 'm' }, tr('מטר')), h('option', { value: 'cm' }, tr('ס״מ')), h('option', { value: 'mm' }, tr('מ״מ')));
     unit.value = prefs.unit;
     const r = await UI.modal({
-      title: 'המרחק האמיתי בין שתי הנקודות', body: h('div', { class: 'form' }, h('div', { class: 'row' }, val, unit)),
-      buttons: [{ text: 'ביטול', value: false }, { text: 'כייל', kind: 'primary', value: true }],
+      title: tr('המרחק האמיתי בין שתי הנקודות'), body: h('div', { class: 'form' }, h('div', { class: 'row' }, val, unit)),
+      buttons: [{ text: tr('ביטול'), value: false }, { text: tr('כייל'), kind: 'primary', value: true }],
     });
     this.tool = 'pan'; this.updateToolUI();
     if (!r) { this.renderProps(); return; }
     const d = parseFloat(val.value);
-    if (!(d > 0) || !(len > 0)) { UI.toast('מרחק לא תקין', { type: 'error' }); this.renderProps(); return; }
+    if (!(d > 0) || !(len > 0)) { UI.toast(tr('מרחק לא תקין'), { type: 'error' }); this.renderProps(); return; }
     const meters = unit.value === 'm' ? d : unit.value === 'cm' ? d / 100 : d / 1000;
     const pages = this.calibAll ? Array.from({ length: this.numPages }, (_, i) => i + 1) : [this.pageNum];
     for (const pg of pages) {
       const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, planId: this.planId, page: pg, mpu: meters / len, source: 'manual' };
       await S.putItem('calibrations', c); this.calibs.set(pg, c);
     }
-    UI.toast('הכיול נשמר');
+    UI.toast(tr('הכיול נשמר'));
     this.renderItems();
     if (this.calibNext) { const t = this.calibNext; this.calibNext = null; this.setTool(t); } else this.renderProps();
   }
@@ -1131,18 +1134,18 @@ class Viewer {
   }
   async linkDialog(existing) {
     let plan = existing ? S.P.plans.get(existing.target.planId) : null;
-    if (!plan) plan = await UI.planPicker({ title: 'לאן הקישור יוביל?' });
+    if (!plan) plan = await UI.planPicker({ title: tr('לאן הקישור יוביל?') });
     if (!plan) return null;
     const ver = S.curVer(plan);
     const page = h('input', { type: 'number', min: 1, max: ver?.pageCount || 999, value: existing?.target?.page || 1, inputMode: 'numeric' });
     const r = await UI.modal({
-      title: 'קישור אל: ' + plan.name,
-      body: h('div', { class: 'form' }, h('label', {}, `עמוד ביעד (1–${ver?.pageCount || '?'})`), page,
-        h('p', { class: 'hint' }, 'אפשר גם לקבוע מיקום והגדלה מדויקים ביעד: בחרו "שמור וקבע מיקום ביעד".')),
+      title: tr('קישור אל: ') + plan.name,
+      body: h('div', { class: 'form' }, h('label', {}, tr('עמוד ביעד (1–{0})', ver?.pageCount || '?')), page,
+        h('p', { class: 'hint' }, tr('אפשר גם לקבוע מיקום והגדלה מדויקים ביעד: בחרו "שמור וקבע מיקום ביעד".'))),
       buttons: [
-        { text: 'ביטול', value: null },
-        { text: 'שמור', kind: 'primary', value: 'save' },
-        { text: 'שמור וקבע מיקום ביעד', value: 'pick' },
+        { text: tr('ביטול'), value: null },
+        { text: tr('שמור'), kind: 'primary', value: 'save' },
+        { text: tr('שמור וקבע מיקום ביעד'), value: 'pick' },
       ],
     });
     if (!r) return null;
@@ -1161,9 +1164,9 @@ class Viewer {
     if (!pickCtx) { this.pickBar.classList.add('hidden'); return; }
     this.pickBar.classList.remove('hidden');
     this.pickBar.replaceChildren(
-      h('span', {}, 'הזיזו והגדילו לתצוגה הרצויה ליעד הקישור, ואז לחצו "קבע כיעד"'),
-      h('button', { class: 'btn sm primary', onclick: () => this.confirmPick() }, 'קבע כיעד'),
-      h('button', { class: 'btn sm', onclick: () => { const c = pickCtx; pickCtx = null; location.hash = c.returnHash; } }, 'ביטול'));
+      h('span', {}, tr('הזיזו והגדילו לתצוגה הרצויה ליעד הקישור, ואז לחצו "קבע כיעד"')),
+      h('button', { class: 'btn sm primary', onclick: () => this.confirmPick() }, tr('קבע כיעד')),
+      h('button', { class: 'btn sm', onclick: () => { const c = pickCtx; pickCtx = null; location.hash = c.returnHash; } }, tr('ביטול')));
   }
   async confirmPick() {
     const c = pickCtx; if (!c) return;
@@ -1173,13 +1176,13 @@ class Viewer {
       await S.putItem('links', link);
     }
     pickCtx = null;
-    UI.toast('מיקום היעד נשמר');
+    UI.toast(tr('מיקום היעד נשמר'));
     location.hash = c.returnHash;
   }
   followLink(l) {
     const t = l.target;
     const plan = t && S.P.plans.get(t.planId);
-    if (!plan) { UI.toast('יעד הקישור נמחק', { type: 'error' }); return; }
+    if (!plan) { UI.toast(tr('יעד הקישור נמחק'), { type: 'error' }); return; }
     const q = new URLSearchParams();
     q.set('page', t.page || 1);
     if (t.view) { q.set('x', t.view.cx.toFixed(2)); q.set('y', t.view.cy.toFixed(2)); q.set('z', t.view.scale.toFixed(4)); }
@@ -1193,14 +1196,14 @@ class Viewer {
     this.updateSearchBar();
     this.panel.classList.remove('hidden');
     this.panel.textContent = '';
-    const close = h('button', { class: 'icon-btn', 'aria-label': 'סגור', onclick: () => this.closePanel() }, icon('x'));
+    const close = h('button', { class: 'icon-btn', 'aria-label': tr('סגור'), onclick: () => this.closePanel() }, icon('x'));
     if (mode === 'pages') {
-      this.panel.append(h('div', { class: 'pn-head' }, h('b', {}, 'עמודים'), close));
+      this.panel.append(h('div', { class: 'pn-head' }, h('b', {}, tr('עמודים')), close));
       this.thumbList = h('div', { class: 'thumb-list' });
       this.panel.append(this.thumbList);
       this.buildThumbs();
     } else {
-      this.searchInput = h('input', { type: 'search', placeholder: 'חיפוש טקסט בתוכנית…', enterKeyHint: 'search', value: this.search?.q || '' });
+      this.searchInput = h('input', { type: 'search', placeholder: tr('חיפוש טקסט בתוכנית…'), enterKeyHint: 'search', value: this.search?.q || '' });
       this.searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(this._st); this.runSearch(this.searchInput.value, true).then(() => { if (window.innerWidth < 800 && this.search?.matches.length) this.closePanel(); }); } });
       // חיפוש תוך כדי הקלדה (השהיה קצרה כדי לא לחפש בכל תו)
       this.searchInput.addEventListener('input', () => {
@@ -1211,10 +1214,10 @@ class Viewer {
       });
       this.searchInfo = h('div', { class: 'hint' });
       this.searchList = h('div', { class: 'result-list compact' });
-      this.panel.append(h('div', { class: 'pn-head' }, h('b', {}, 'חיפוש בתוכנית'), close),
+      this.panel.append(h('div', { class: 'pn-head' }, h('b', {}, tr('חיפוש בתוכנית')), close),
         h('div', { class: 'pn-search' }, this.searchInput,
-          h('button', { class: 'icon-btn', onclick: () => this.gotoMatch(this.search ? this.search.idx - 1 : 0), 'aria-label': 'הקודם' }, icon('chevU')),
-          h('button', { class: 'icon-btn', onclick: () => this.gotoMatch(this.search ? this.search.idx + 1 : 0), 'aria-label': 'הבא' }, icon('chevD'))),
+          h('button', { class: 'icon-btn', onclick: () => this.gotoMatch(this.search ? this.search.idx - 1 : 0), 'aria-label': tr('הקודם') }, icon('chevU')),
+          h('button', { class: 'icon-btn', onclick: () => this.gotoMatch(this.search ? this.search.idx + 1 : 0), 'aria-label': tr('הבא') }, icon('chevD'))),
         this.searchInfo, this.searchList);
       if (this.search) this.renderSearchList();
       setTimeout(() => this.searchInput.focus(), 50);
@@ -1226,7 +1229,7 @@ class Viewer {
     const s = this.search;
     const show = !!(s && s.matches.length) && this.panelMode !== 'search';
     this.sbar.classList.toggle('hidden', !show);
-    if (show) this.sbarLabel.textContent = `${s.idx + 1} / ${s.matches.length}${s.matches.length >= 500 ? '+' : ''} · עמוד ${s.matches[s.idx]?.page ?? ''}`;
+    if (show) this.sbarLabel.textContent = tr('{0} / {1}{2} · עמוד {3}', s.idx + 1, s.matches.length, s.matches.length >= 500 ? '+' : '', s.matches[s.idx]?.page ?? '');
   }
   pushSearch() { if (!this._sPush) { try { history.pushState({ vsearch: 1 }, ''); this._sPush = true; } catch { /* ignore */ } } }
   // מצב חיפוש: מנקה תוצאות וסימונים (וסוגר את רשומת ההיסטוריה שנוספה בשבילו)
@@ -1347,7 +1350,7 @@ class Viewer {
     const ql = q.toLowerCase();
     for (let i = 1; i <= this.numPages; i++) {
       if (token !== this.searchToken || cur !== this) return;
-      if (this.searchInfo) this.searchInfo.textContent = `מחפש… עמוד ${i} מתוך ${this.numPages}`;
+      if (this.searchInfo) this.searchInfo.textContent = tr('מחפש… עמוד {0} מתוך {1}', i, this.numPages);
       let d;
       try { d = await this.pageTextData(i); } catch { continue; }
       const tl = d.text.toLowerCase();
@@ -1360,7 +1363,7 @@ class Viewer {
       if (i % 5 === 0) this.renderSearchList();
     }
     this.renderSearchList();
-    if (this.searchInfo) this.searchInfo.textContent = s.matches.length ? `${s.matches.length} תוצאות` : 'לא נמצא טקסט תואם. אם הקובץ סרוק כתמונה – אפשר להפעיל זיהוי טקסט (OCR) מהתפריט ⋮.';
+    if (this.searchInfo) this.searchInfo.textContent = s.matches.length ? tr('{0} תוצאות', s.matches.length) : tr('לא נמצא טקסט תואם. אם הקובץ סרוק כתמונה – אפשר להפעיל זיהוי טקסט (OCR) מהתפריט ⋮.');
     if (jump && s.matches.length) {
       const first = s.matches.findIndex((m) => m.page >= this.pageNum);
       this.gotoMatch(first >= 0 ? first : 0);
@@ -1370,7 +1373,7 @@ class Viewer {
     const s = this.search;
     if (!s || !this.searchList) return;
     this.searchList.replaceChildren(...s.matches.slice(0, 200).map((m, i) => h('button', { class: 'result' + (i === s.idx ? ' cur' : ''), onclick: async () => { await this.gotoMatch(i); if (window.innerWidth < 800) this.closePanel(); } },
-      h('span', { class: 'col' }, h('b', {}, `עמוד ${m.page}`), h('span', { class: 'snip' }, m.snippet)))));
+      h('span', { class: 'col' }, h('b', {}, tr('עמוד {0}', m.page)), h('span', { class: 'snip' }, m.snippet)))));
   }
   async gotoMatch(i) {
     const s = this.search;
@@ -1399,37 +1402,37 @@ class Viewer {
   async ocrDialog() {
     if (!this.version) return;
     const vid = this.version.id;
-    const info = h('p', { class: 'msg' }, 'בודק אילו עמודים חסרי טקסט…');
-    const m = UI.openModal({ title: 'זיהוי טקסט בסריקה (OCR)', body: info, buttons: [{ text: 'סגור', value: false }] });
+    const info = h('p', { class: 'msg' }, tr('בודק אילו עמודים חסרי טקסט…'));
+    const m = UI.openModal({ title: tr('זיהוי טקסט בסריקה (OCR)'), body: info, buttons: [{ text: tr('סגור'), value: false }] });
     let r;
-    try { r = await OCR.pagesNeedingOcr(vid); } catch (e) { info.textContent = 'הבדיקה נכשלה: ' + (e.message || e); return; }
-    if (!r) { info.textContent = 'הקובץ עדיין לא הורד למכשיר.'; return; }
-    if (!r.need.length) { info.textContent = 'לכל העמודים כבר יש טקסט שניתן לחיפוש – אין צורך ב-OCR.'; return; }
+    try { r = await OCR.pagesNeedingOcr(vid); } catch (e) { info.textContent = tr('הבדיקה נכשלה: ') + (e.message || e); return; }
+    if (!r) { info.textContent = tr('הקובץ עדיין לא הורד למכשיר.'); return; }
+    if (!r.need.length) { info.textContent = tr('לכל העמודים כבר יש טקסט שניתן לחיפוש – אין צורך ב-OCR.'); return; }
     const cur = this.pageNum;
     const choose = (pages) => { m.close(); this.runOcr(vid, pages); };
-    info.textContent = `נמצאו ${r.need.length} עמודים בלי טקסט (סרוקים כתמונה) מתוך ${r.total}. הזיהוי רץ במכשיר (עברית ואנגלית), בלי לשלוח כלום החוצה, ולוקח כמה שניות עד חצי דקה לעמוד בטלפון. הקובץ עצמו לא משתנה. הדיוק תלוי באיכות הסריקה – בכתב יד ובשרטוטים מסובכים הוא נמוך.`;
+    info.textContent = tr('נמצאו {0} עמודים בלי טקסט (סרוקים כתמונה) מתוך {1}. הזיהוי רץ במכשיר (עברית ואנגלית), בלי לשלוח כלום החוצה, ולוקח כמה שניות עד חצי דקה לעמוד בטלפון. הקובץ עצמו לא משתנה. הדיוק תלוי באיכות הסריקה – בכתב יד ובשרטוטים מסובכים הוא נמוך.', r.need.length, r.total);
     const foot = m.el.querySelector('.modal-foot');
-    const b1 = h('button', { class: 'btn', onclick: () => choose(r.need.includes(cur) ? [cur] : [r.need[0]]) }, 'העמוד הנוכחי בלבד');
-    const b2 = h('button', { class: 'btn primary', onclick: () => choose(r.need) }, `כל ${r.need.length} העמודים`);
+    const b1 = h('button', { class: 'btn', onclick: () => choose(r.need.includes(cur) ? [cur] : [r.need[0]]) }, tr('העמוד הנוכחי בלבד'));
+    const b2 = h('button', { class: 'btn primary', onclick: () => choose(r.need) }, tr('כל {0} העמודים', r.need.length));
     foot.prepend(b2); foot.prepend(b1);
   }
   async runOcr(vid, pages) {
     let cancel = false;
-    const status = h('p', { class: 'msg' }, 'טוען רכיבי זיהוי (בפעם הראשונה זה לוקח קצת)…');
-    const m = UI.openModal({ title: 'מזהה טקסט…', body: status, cancelable: false, buttons: [{ text: 'עצור', value: false, onClick: () => { cancel = true; status.textContent = 'עוצר אחרי העמוד הנוכחי…'; return false; } }] });
+    const status = h('p', { class: 'msg' }, tr('טוען רכיבי זיהוי (בפעם הראשונה זה לוקח קצת)…'));
+    const m = UI.openModal({ title: tr('מזהה טקסט…'), body: status, cancelable: false, buttons: [{ text: tr('עצור'), value: false, onClick: () => { cancel = true; status.textContent = tr('עוצר אחרי העמוד הנוכחי…'); return false; } }] });
     try {
       const res = await OCR.ocrVersion(vid, pages, {
         isCancelled: () => cancel || cur !== this,
-        onProgress: (p) => { if (p.page) status.textContent = `מזהה עמוד ${p.page} (${p.done + 1} מתוך ${p.total})…`; },
+        onProgress: (p) => { if (p.page) status.textContent = tr('מזהה עמוד {0} ({1} מתוך {2})…', p.page, p.done + 1, p.total); },
       });
       m.close();
       this.textCache.clear();
-      UI.toast(res.found ? `זוהה טקסט ב-${res.found} עמודים. אפשר לחפש עכשיו.` : 'לא זוהה טקסט (הסריקה ריקה או באיכות נמוכה מדי).', { ms: 5000 });
+      UI.toast(res.found ? tr('זוהה טקסט ב-{0} עמודים. אפשר לחפש עכשיו.', res.found) : tr('לא זוהה טקסט (הסריקה ריקה או באיכות נמוכה מדי).'), { ms: 5000 });
       if (this.search) this.runSearch(this.search.q, false);
     } catch (e) {
       m.close();
       console.error(e);
-      UI.toast('ה-OCR נכשל: ' + (e.message || e), { type: 'error', ms: 7000 });
+      UI.toast(tr('ה-OCR נכשל: ') + (e.message || e), { type: 'error', ms: 7000 });
     }
   }
 
@@ -1440,10 +1443,10 @@ class Viewer {
     if (!this.doc) return;
     const planSel = h('select', {}), verSel = h('select', {});
     const plans = [...S.P.plans.values()].sort((a, b) => natural(S.planPathText(a) + a.name, S.planPathText(b) + b.name));
-    plans.forEach((p) => planSel.append(h('option', { value: p.id }, p.id === this.planId ? `${p.name} (התוכנית הזו)` : `${p.name} — ${S.planPathText(p)}`)));
+    plans.forEach((p) => planSel.append(h('option', { value: p.id }, p.id === this.planId ? tr('{0} (התוכנית הזו)', dn(p.name)) : `${dn(p.name)} — ${S.planPathText(p)}`)));
     const fillVers = (sel) => {
       verSel.textContent = '';
-      S.versionsOf(planSel.value).forEach((v) => verSel.append(h('option', { value: v.id }, `V${v.number} – ${fmtDate(v.date)}${v.id === this.version.id ? ' (הפתוחה)' : ''}${S.P.plans.get(v.planId)?.currentVersionId === v.id ? ' · נוכחית' : ''}`)));
+      S.versionsOf(planSel.value).forEach((v) => verSel.append(h('option', { value: v.id }, `V${v.number} – ${fmtDate(v.date)}${v.id === this.version.id ? tr(' (הפתוחה)') : ''}${S.P.plans.get(v.planId)?.currentVersionId === v.id ? tr(' · נוכחית') : ''}`)));
       if (sel) verSel.value = sel;
     };
     const setVersion = (vid) => { const v = S.P.versions.get(vid); if (!v) return; planSel.value = v.planId; fillVers(vid); };
@@ -1452,30 +1455,30 @@ class Viewer {
     if (other) verSel.value = other.id;
     planSel.onchange = () => fillVers();
     const pageIn = h('input', { type: 'number', min: 1, value: this.pageNum, inputMode: 'numeric', class: 'num' });
-    const modeSel = h('select', {}, h('option', { value: 'diff' }, 'הבדלים (צבעים)'), h('option', { value: 'overlay' }, 'שקיפות'), h('option', { value: 'split' }, 'זו לצד זו'));
+    const modeSel = h('select', {}, h('option', { value: 'diff' }, tr('הבדלים (צבעים)')), h('option', { value: 'overlay' }, tr('שקיפות')), h('option', { value: 'split' }, tr('זו לצד זו')));
     const op = h('input', { type: 'range', min: 0, max: 100, value: 50 });
     const legend = h('div', { class: 'cmp-legend' });
     const apply = async () => {
       const vid = verSel.value;
       if (!vid) return;
-      legend.textContent = 'טוען…';
-      try { await this.startCompare(vid, parseInt(pageIn.value, 10) || 1, modeSel.value, op.value / 100); } catch (e) { console.error(e); UI.toast('לא ניתן לטעון את התוכנית להשוואה', { type: 'error' }); legend.textContent = ''; return; }
+      legend.textContent = tr('טוען…');
+      try { await this.startCompare(vid, parseInt(pageIn.value, 10) || 1, modeSel.value, op.value / 100); } catch (e) { console.error(e); UI.toast(tr('לא ניתן לטעון את התוכנית להשוואה'), { type: 'error' }); legend.textContent = ''; return; }
       this.updateCmpLegend(legend);
     };
     modeSel.onchange = () => { if (this.cmp) { this.setCompareMode(modeSel.value, op.value / 100); this.updateCmpLegend(legend); } };
     op.oninput = () => { if (this.cmp) { this.cmp.opacity = op.value / 100; if (this.cmp.mode === 'overlay') this.layerB.el.style.opacity = op.value / 100; } };
     const nudge = (dx, dy) => { if (!this.cmp) return; const st = 1.5 / this.scale; this.layerB.dx += dx * st; this.layerB.dy += dy * st; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(200); };
     const nb = (ic, fn, label) => h('button', { class: 'icon-btn sm', 'aria-label': label, onclick: fn }, icon(ic, 18));
-    const alignBtn = h('button', { class: 'btn sm', onclick: () => { this.alignDrag = !this.alignDrag; alignBtn.classList.toggle('primary', this.alignDrag); if (this.alignDrag) UI.toast('בכלי ההזזה: גררו את המסך כדי להזיז את התוכנית להשוואה'); } }, 'גרור ליישור');
+    const alignBtn = h('button', { class: 'btn sm', onclick: () => { this.alignDrag = !this.alignDrag; alignBtn.classList.toggle('primary', this.alignDrag); if (this.alignDrag) UI.toast(tr('בכלי ההזזה: גררו את המסך כדי להזיז את התוכנית להשוואה')); } }, tr('גרור ליישור'));
     const sc = (f) => { if (!this.cmp) return; this.layerB.s *= f; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(200); };
     this.cmpBar.replaceChildren(
-      h('div', { class: 'cmp-row' }, h('b', {}, 'השוואה עם:'), planSel, verSel, h('span', {}, 'עמוד'), pageIn, modeSel,
-        h('button', { class: 'btn sm primary', onclick: apply }, 'השווה'), h('button', { class: 'icon-btn sm', 'aria-label': 'סגור השוואה', onclick: () => this.closeCompare() }, icon('x', 18))),
-      h('div', { class: 'cmp-row' }, h('span', {}, 'שקיפות'), op, h('span', { class: 'sp' }), h('span', {}, 'יישור:'),
-        nb('chevU', () => nudge(0, -1), 'למעלה'), nb('chevD', () => nudge(0, 1), 'למטה'), nb('chevR', () => nudge(1, 0), 'ימינה'), nb('chevL', () => nudge(-1, 0), 'שמאלה'),
-        h('button', { class: 'btn sm', onclick: () => sc(1.002) }, 'הגדל'), h('button', { class: 'btn sm', onclick: () => sc(1 / 1.002) }, 'הקטן'),
+      h('div', { class: 'cmp-row' }, h('b', {}, tr('השוואה עם:')), planSel, verSel, h('span', {}, tr('עמוד')), pageIn, modeSel,
+        h('button', { class: 'btn sm primary', onclick: apply }, tr('השווה')), h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור השוואה'), onclick: () => this.closeCompare() }, icon('x', 18))),
+      h('div', { class: 'cmp-row' }, h('span', {}, tr('שקיפות')), op, h('span', { class: 'sp' }), h('span', {}, tr('יישור:')),
+        nb('chevU', () => nudge(0, -1), tr('למעלה')), nb('chevD', () => nudge(0, 1), tr('למטה')), nb('chevR', () => nudge(1, 0), tr('ימינה')), nb('chevL', () => nudge(-1, 0), tr('שמאלה')),
+        h('button', { class: 'btn sm', onclick: () => sc(1.002) }, tr('הגדל')), h('button', { class: 'btn sm', onclick: () => sc(1 / 1.002) }, tr('הקטן')),
         alignBtn,
-        h('button', { class: 'btn sm', onclick: () => { if (!this.cmp) return; this.layerB.dx = this.layerB.dy = 0; this.layerB.s = this.cmp.baseS; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(50); } }, 'אפס יישור')),
+        h('button', { class: 'btn sm', onclick: () => { if (!this.cmp) return; this.layerB.dx = this.layerB.dy = 0; this.layerB.s = this.cmp.baseS; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(50); } }, tr('אפס יישור'))),
       legend);
     this.cmpBar.classList.remove('hidden');
     this.el.classList.add('cmp-open');
@@ -1485,8 +1488,8 @@ class Viewer {
   updateCmpLegend(el) {
     const mode = this.cmp?.mode;
     el.replaceChildren(h('small', {},
-      mode === 'diff' ? 'אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · שחור = זהה. ' : mode === 'overlay' ? 'התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ' : 'שתי התוכניות זו לצד זו עם זום והזזה משותפים. ',
-      'זו השוואה חזותית בלבד – לא זיהוי אוטומטי של שינויים, והיא אמינה רק כשהתוכניות מיושרות.',
+      mode === 'diff' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · שחור = זהה. ') : mode === 'overlay' ? tr('התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ') : tr('שתי התוכניות זו לצד זו עם זום והזזה משותפים. '),
+      tr('זו השוואה חזותית בלבד – לא זיהוי אוטומטי של שינויים, והיא אמינה רק כשהתוכניות מיושרות.'),
       this.cmp?.sizeNote ? ' ' + this.cmp.sizeNote : ''));
   }
   async startCompare(vid, pageNo, mode, opacity) {
@@ -1506,7 +1509,7 @@ class Viewer {
     this.layerB.dx = this.layerB.dy = 0;
     const r = this.layerA.pw / this.layerB.pw;
     this.cmp.sizeNote = '';
-    if (Math.abs(r - 1) > 0.01) { this.layerB.s = r; this.cmp.baseS = r; this.cmp.sizeNote = 'גודל העמודים שונה – הותאם לפי הרוחב, כדאי לוודא יישור.'; } else { this.layerB.s = 1; this.cmp.baseS = 1; }
+    if (Math.abs(r - 1) > 0.01) { this.layerB.s = r; this.cmp.baseS = r; this.cmp.sizeNote = tr('גודל העמודים שונה – הותאם לפי הרוחב, כדאי לוודא יישור.'); } else { this.layerB.s = 1; this.cmp.baseS = 1; }
   }
   setCompareMode(mode, opacity) {
     const c = this.cmp; c.mode = mode; c.opacity = opacity;
@@ -1544,7 +1547,7 @@ class Viewer {
       const cb = h('input', { type: 'checkbox', checked: !!prefs.show[key], onchange: () => { prefs.show[key] = cb.checked; savePrefs(); this.renderItems(); } });
       return h('label', { class: 'check' }, cb, label);
     };
-    const parts = [mk('markups', 'סימונים (חצים, קווים, טקסט…)'), mk('measurements', 'מדידות'), mk('links', 'קישורים בין תוכניות')];
+    const parts = [mk('markups', tr('סימונים (חצים, קווים, טקסט…)')), mk('measurements', tr('מדידות')), mk('links', tr('קישורים בין תוכניות'))];
     if (isCloud()) {
       const owners = [...new Set([...this.items.markups, ...this.items.measurements].map((it) => it.ownerId).filter(Boolean))];
       const me = CS.myId();
@@ -1553,47 +1556,48 @@ class Viewer {
       const cur = () => (prefs.authors === 'all' ? owners : Array.isArray(prefs.authors) ? prefs.authors : (isAdmin() && !S.getViewAs() ? [me] : owners));
       const boxes = [];
       const setSel = () => { const on = boxes.filter((b) => b.cb.checked).map((b) => b.id); prefs.authors = on.length === owners.length ? 'all' : on; savePrefs(); this.renderItems(); };
-      parts.push(h('h3', {}, 'סימונים ומדידות של'));
+      parts.push(h('h3', {}, tr('סימונים ומדידות של')));
       for (const id of owners) {
         const cb = h('input', { type: 'checkbox', checked: cur().includes(id), onchange: setSel });
         boxes.push({ id, cb });
         parts.push(h('label', { class: 'check' }, cb, SH.nameOf(id)));
       }
-      if (owners.length <= 1 && isAdmin()) parts.push(h('p', { class: 'hint' }, 'סימונים של עובדים יופיעו כאן כשיהיו כאלה בגרסה הזו. כל עובד מסמן באופן פרטי, ואתה בוחר מה להציג.'));
+      if (owners.length <= 1 && isAdmin()) parts.push(h('p', { class: 'hint' }, tr('סימונים של עובדים יופיעו כאן כשיהיו כאלה בגרסה הזו. כל עובד מסמן באופן פרטי, ואתה בוחר מה להציג.')));
       if (this.canShareHere()) {
         parts.push(h('div', { class: 'row wrap' },
-          h('button', { class: 'btn sm primary', onclick: () => SH.shareDialog(this) }, icon('users', 16), 'שיתוף סימונים…'),
-          h('button', { class: 'btn sm', onclick: () => SH.sharesOverview(this) }, 'שיתופים פעילים')));
+          h('button', { class: 'btn sm primary', onclick: () => SH.shareDialog(this) }, icon('users', 16), tr('שיתוף סימונים…')),
+          h('button', { class: 'btn sm', onclick: () => SH.sharesOverview(this) }, tr('שיתופים פעילים'))));
       }
     }
-    parts.push(h('p', { class: 'hint' }, 'הסימונים, המדידות והקישורים נשמרים בנפרד מקובץ ה-PDF ואינם משנים אותו.'));
-    UI.modal({ title: 'שכבות תצוגה', body: h('div', { class: 'stack' }, ...parts), buttons: [{ text: 'סגור', kind: 'primary', value: true }] });
+    parts.push(h('p', { class: 'hint' }, tr('הסימונים, המדידות והקישורים נשמרים בנפרד מקובץ ה-PDF ואינם משנים אותו.')));
+    UI.modal({ title: tr('שכבות תצוגה'), body: h('div', { class: 'stack' }, ...parts), buttons: [{ text: tr('סגור'), kind: 'primary', value: true }] });
   }
   moreMenu(anchor) {
     UI.menu(anchor, [
-      { label: 'גרסאות', icon: 'clock', onClick: () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() }) },
-      { label: 'השוואת תוכניות', icon: 'compare', onClick: () => this.openCompare() },
-      { label: this.cont ? 'מצב עמוד בודד' : 'גלילה רציפה (עמודים ברצף)', icon: 'scroll', onClick: () => this.setCont(!this.cont) },
-      { label: 'זיהוי טקסט בסריקה (OCR)…', icon: 'search', onClick: () => this.ocrDialog() },
-      { label: 'שכבות (הצגה/הסתרה)', icon: 'layers', onClick: () => this.layersDialog() },
-      ...(this.canShareHere() ? [{ label: 'שיתוף סימונים עם עובדים…', icon: 'users', onClick: () => SH.shareDialog(this) }] : []),
+      { label: tr('גרסאות'), icon: 'clock', onClick: () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() }) },
+      { label: tr('השוואת תוכניות'), icon: 'compare', onClick: () => this.openCompare() },
+      { label: this.cont ? tr('מצב עמוד בודד') : tr('גלילה רציפה (עמודים ברצף)'), icon: 'scroll', onClick: () => this.setCont(!this.cont) },
+      { label: tr('זיהוי טקסט בסריקה (OCR)…'), icon: 'search', onClick: () => this.ocrDialog() },
+      { label: tr('שכבות (הצגה/הסתרה)'), icon: 'layers', onClick: () => this.layersDialog() },
+      ...(this.canShareHere() ? [{ label: tr('שיתוף סימונים עם עובדים…'), icon: 'users', onClick: () => SH.shareDialog(this) }] : []),
       { divider: true },
-      { label: 'הדפסה / שמירה כ-PDF עם הסימונים', icon: 'print', onClick: () => this.printDialog() },
-      { label: 'שנה שם תוכנית', icon: 'edit', onClick: () => this.renameDialog() },
-      { label: 'פתח באמצעות / שתף', icon: 'share', onClick: () => A.openWithDialog(this.plan, this.version?.id) },
-      { label: 'הורד PDF מקורי', icon: 'download', onClick: () => A.downloadVersion(this.version?.id, this.plan.name) },
-      { label: 'סקאלה וכיול לעמוד', icon: 'ruler', onClick: () => this.calibrateDialog() },
-      { label: 'מסך מלא', icon: 'maximize', onClick: () => this.toggleFullscreen() },
-      { label: 'מצב תצוגה נקי (הסתר סרגלים)', icon: 'eye', onClick: () => this.el.classList.add('immersive') },
-      { label: 'פרטי תוכנית', icon: 'info', onClick: () => A.planInfoDialog(this.planId) },
+      { label: tr('הדפסה / שמירה כ-PDF עם הסימונים'), icon: 'print', onClick: () => this.printDialog() },
+      { label: tr('שנה שם תוכנית'), icon: 'edit', onClick: () => this.renameDialog() },
+      { label: tr('פתח באמצעות / שתף'), icon: 'share', onClick: () => A.openWithDialog(this.plan, this.version?.id) },
+      { label: tr('הורד PDF מקורי'), icon: 'download', onClick: () => A.downloadVersion(this.version?.id, this.plan.name) },
+      { label: tr('סקאלה וכיול לעמוד'), icon: 'ruler', onClick: () => this.calibrateDialog() },
+      { label: tr('מסך מלא'), icon: 'maximize', onClick: () => this.toggleFullscreen() },
+      { label: tr('מצב תצוגה נקי (הסתר סרגלים)'), icon: 'eye', onClick: () => this.el.classList.add('immersive') },
+      { label: tr('פרטי תוכנית'), icon: 'info', onClick: () => A.planInfoDialog(this.planId) },
+      { label: langButtonLabel(), icon: 'globe', onClick: toggleLang },
       { divider: true },
-      { label: 'מחק את כל הסימונים בעמוד', icon: 'trash', danger: true, onClick: () => this.clearPage() },
+      { label: tr('מחק את כל הסימונים בעמוד'), icon: 'trash', danger: true, onClick: () => this.clearPage() },
     ]);
   }
   async clearPage() {
     const list = this.items.markups.filter((i) => i.page === this.pageNum);
-    if (!list.length) { UI.toast('אין סימונים בעמוד'); return; }
-    if (!(await UI.confirmBox(`למחוק ${list.length} סימונים בעמוד ${this.pageNum}? (מדידות וקישורים לא יימחקו)`, { danger: true, okText: 'מחק' }))) return;
+    if (!list.length) { UI.toast(tr('אין סימונים בעמוד')); return; }
+    if (!(await UI.confirmBox(tr('למחוק {0} סימונים בעמוד {1}? (מדידות וקישורים לא יימחקו)', list.length, this.pageNum), { danger: true, okText: tr('מחק') }))) return;
     const entries = list.map((it) => ({ before: clone(it), after: null }));
     for (const e of entries) await this.setItemState(e.before, null);
     this.history.push({ multi: entries });
@@ -1609,9 +1613,9 @@ class Viewer {
     this.el.classList.add('fs');
     this.panel?.classList.add('hidden');
     if (this.el.requestFullscreen) {
-      this.el.requestFullscreen().catch((e) => { diag.warn('fullscreen', 'הדפדפן סירב למסך מלא מלא: ' + (e?.message || e)); });
+      this.el.requestFullscreen().catch((e) => { diag.warn('fullscreen', tr('הדפדפן סירב למסך מלא מלא: ') + (e?.message || e)); });
     } else {
-      UI.toast('הדפדפן במכשיר הזה לא יכול להסתיר את שורת המערכת. להסתרה מלאה אפשר להתקין את האפליקציה למסך הבית.', { ms: 5000 });
+      UI.toast(tr('הדפדפן במכשיר הזה לא יכול להסתיר את שורת המערכת. להסתרה מלאה אפשר להתקין את האפליקציה למסך הבית.'), { ms: 5000 });
     }
   }
   exitFullscreenMode() {
@@ -1624,13 +1628,14 @@ class Viewer {
     this._quietUntil = performance.now() + 450;
     const inFs = !!document.fullscreenElement;
     if (!inFs) this.el?.classList.remove('fs'); // יציאה בתנועת מערכת / כפתור חזרה
-    if (this._fsT0) { diag.info('fullscreen', inFs ? 'נכנס למסך מלא' : 'יצא ממסך מלא', { ms: Math.round(performance.now() - this._fsT0) }); this._fsT0 = 0; }
+    if (this._fsT0) { diag.info('fullscreen', inFs ? tr('נכנס למסך מלא') : tr('יצא ממסך מלא'), { ms: Math.round(performance.now() - this._fsT0) }); this._fsT0 = 0; }
   }
 
   async destroy() {
     this.storeView();
     clearTimeout(this.dt);
     document.removeEventListener('keydown', this.keyFn);
+    this._nameSub?.();
     document.removeEventListener('keyup', this.keyUpFn);
     this.ro?.disconnect();
     document.removeEventListener('fullscreenchange', this._onFsChange);

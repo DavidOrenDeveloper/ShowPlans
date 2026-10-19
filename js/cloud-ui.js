@@ -1,4 +1,6 @@
 // ממשק הענן: מסך כניסה, תיבת חשבון בתפריט הצד, ניהול עובדים והרשאות (מנהל בלבד).
+import { t as tr, LOCALE, CHEV_FWD, toggleLang, langButtonLabel } from './i18n.js';
+import { dn } from './names.js';
 import { h, icon } from './util.js';
 import * as UI from './ui.js';
 import * as diag from './diag.js';
@@ -11,7 +13,7 @@ import { syncStatus, onSyncStatus, syncNow, onProgress, schedulePull } from './c
 // שדה סיסמה עם עין להצגה/הסתרה
 export function passField(ph, ac) {
   const input = h('input', { type: 'password', autocomplete: ac, dir: 'ltr', placeholder: ph, required: true });
-  const btn = h('button', { type: 'button', class: 'pw-eye', 'aria-label': 'הצג/הסתר סיסמה', onclick: () => {
+  const btn = h('button', { type: 'button', class: 'pw-eye', 'aria-label': tr('הצג/הסתר סיסמה'), onclick: () => {
     const show = input.type === 'password';
     input.type = show ? 'text' : 'password';
     btn.replaceChildren(icon(show ? 'eyeOff' : 'eye', 20));
@@ -22,30 +24,31 @@ export function passField(ph, ac) {
 export function loginScreen() {
   return new Promise((resolve) => {
     document.getElementById('boot')?.remove();
-    const email = h('input', { type: 'email', autocomplete: 'username', dir: 'ltr', placeholder: 'אימייל', required: true, inputMode: 'email' });
-    const pf = passField('סיסמה', 'current-password'); const pass = pf.input;
+    const email = h('input', { type: 'email', autocomplete: 'username', dir: 'ltr', placeholder: tr('אימייל'), required: true, inputMode: 'email' });
+    const pf = passField(tr('סיסמה'), 'current-password'); const pass = pf.input;
     try { const e0 = localStorage.getItem('plans.cloud.email'); if (e0) email.value = e0; } catch { /* ignore */ }
     const err = h('div', { class: 'login-err', role: 'alert' });
     if (cloud.linkError) err.textContent = cloud.linkError;
-    const btn = h('button', { class: 'btn primary block', type: 'submit' }, 'כניסה');
+    const btn = h('button', { class: 'btn primary block', type: 'submit' }, tr('כניסה'));
     const forgot = h('button', { class: 'btn ghost block', type: 'button', onclick: async () => {
-      if (!email.value.trim()) { err.textContent = 'כתבו קודם את האימייל בשדה למעלה, ואז לחצו שוב על "שכחתי סיסמה".'; email.focus(); return; }
+      if (!email.value.trim()) { err.textContent = tr('כתבו קודם את האימייל בשדה למעלה, ואז לחצו שוב על "שכחתי סיסמה".'); email.focus(); return; }
       forgot.disabled = true;
-      try { await requestPasswordReset(email.value); err.style.color = '#2e7d32'; err.textContent = 'נשלח מייל עם קישור לבחירת סיסמה חדשה. בדקו גם בספאם. פתחו את הקישור באותו דפדפן/מכשיר.'; }
+      try { await requestPasswordReset(email.value); err.style.color = '#2e7d32'; err.textContent = tr('נשלח מייל עם קישור לבחירת סיסמה חדשה. בדקו גם בספאם. פתחו את הקישור באותו דפדפן/מכשיר.'); }
       catch (ex) { err.style.color = ''; err.textContent = ex.message; }
       setTimeout(() => { forgot.disabled = false; }, 4000);
-    } }, 'שכחתי סיסמה');
+    } }, tr('שכחתי סיסמה'));
     const form = h('form', { class: 'login-card', onsubmit: async (e) => {
-      e.preventDefault(); err.style.color = ''; err.textContent = ''; btn.disabled = true; btn.textContent = 'נכנס…';
+      e.preventDefault(); err.style.color = ''; err.textContent = ''; btn.disabled = true; btn.textContent = tr('נכנס…');
       try { await signIn(email.value, pass.value); box.remove(); resolve('cloud'); }
-      catch (ex) { err.textContent = /fetch|network/i.test(ex.message) ? 'אין חיבור לשרת. בדקו אינטרנט ונסו שוב.' : ex.message; btn.disabled = false; btn.textContent = 'כניסה'; }
+      catch (ex) { err.textContent = /fetch|network/i.test(ex.message) ? tr('אין חיבור לשרת. בדקו אינטרנט ונסו שוב.') : ex.message; btn.disabled = false; btn.textContent = tr('כניסה'); }
     } },
+    h('button', { class: 'btn sm lang-login', type: 'button', onclick: toggleLang }, icon('globe', 16), langButtonLabel()),
     h('div', { class: 'logo big' }, icon('layers', 30)),
-    h('h1', {}, 'תוכניות בנייה'),
-    h('p', { class: 'hint' }, 'התחברו עם האימייל והסיסמה שקיבלתם מהמנהל'),
-    h('label', {}, 'אימייל'), email, h('label', {}, 'סיסמה'), pf.el, err, btn, forgot,
-    h('button', { class: 'btn ghost block', type: 'button', onclick: () => { chooseLocal(); box.remove(); resolve('local'); } }, 'המשך בלי חשבון (שמירה מקומית בלבד)'),
-    h('div', { class: 'page-credit' }, 'נוצר על ידי דוד אורן'));
+    h('h1', {}, tr('תוכניות בנייה')),
+    h('p', { class: 'hint' }, tr('התחברו עם האימייל והסיסמה שקיבלתם מהמנהל')),
+    h('label', {}, tr('אימייל')), email, h('label', {}, tr('סיסמה')), pf.el, err, btn, forgot,
+    h('button', { class: 'btn ghost block', type: 'button', onclick: () => { chooseLocal(); box.remove(); resolve('local'); } }, tr('המשך בלי חשבון (שמירה מקומית בלבד)')),
+    h('div', { class: 'page-credit' }, tr('נוצר על ידי דוד אורן')));
     const box = h('div', { class: 'login-screen' }, form);
     document.body.append(box);
     setTimeout(() => email.focus(), 80);
@@ -56,21 +59,21 @@ export function loginScreen() {
 export function newPasswordScreen({ inline = false } = {}) {
   return new Promise((resolve) => {
     document.getElementById('boot')?.remove();
-    const p1 = passField('סיסמה חדשה', 'new-password'), p2 = passField('סיסמה חדשה שוב', 'new-password');
+    const p1 = passField(tr('סיסמה חדשה'), 'new-password'), p2 = passField(tr('סיסמה חדשה שוב'), 'new-password');
     const err = h('div', { class: 'login-err', role: 'alert' });
-    const btn = h('button', { class: 'btn primary block', type: 'submit' }, 'שמירת סיסמה');
+    const btn = h('button', { class: 'btn primary block', type: 'submit' }, tr('שמירת סיסמה'));
     const form = h('form', { class: 'login-card', onsubmit: async (e) => {
       e.preventDefault(); err.textContent = '';
-      if (!p1.input.value) { err.textContent = 'כתבו סיסמה.'; return; }
-      if (p1.input.value !== p2.input.value) { err.textContent = 'שתי הסיסמאות לא זהות.'; return; }
+      if (!p1.input.value) { err.textContent = tr('כתבו סיסמה.'); return; }
+      if (p1.input.value !== p2.input.value) { err.textContent = tr('שתי הסיסמאות לא זהות.'); return; }
       btn.disabled = true;
-      try { await setNewPassword(p1.input.value); box.remove(); UI.toast('הסיסמה עודכנה'); resolve(true); }
+      try { await setNewPassword(p1.input.value); box.remove(); UI.toast(tr('הסיסמה עודכנה')); resolve(true); }
       catch (ex) { err.textContent = ex.message; btn.disabled = false; }
     } },
     h('div', { class: 'logo big' }, icon('lock', 30)),
-    h('h1', {}, 'בחירת סיסמה חדשה'),
+    h('h1', {}, tr('בחירת סיסמה חדשה')),
     p1.el, p2.el, err, btn,
-    inline ? h('button', { class: 'btn ghost block', type: 'button', onclick: () => { box.remove(); resolve(false); } }, 'ביטול') : null);
+    inline ? h('button', { class: 'btn ghost block', type: 'button', onclick: () => { box.remove(); resolve(false); } }, tr('ביטול')) : null);
     const box = h('div', { class: 'login-screen' }, form);
     document.body.append(box);
     setTimeout(() => p1.input.focus(), 80);
@@ -79,12 +82,12 @@ export function newPasswordScreen({ inline = false } = {}) {
 
 // ---------- פס התקדמות העלאה ----------
 function fmtEta(sec) {
-  if (sec == null) return 'מחשב זמן…';
-  if (sec < 5) return 'עוד כמה שניות';
+  if (sec == null) return tr('מחשב זמן…');
+  if (sec < 5) return tr('עוד כמה שניות');
   const hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60), ss = sec % 60;
-  if (hh) return `נשארו ${hh} שע׳ ${mm} דק׳`;
-  if (mm) return `נשארו ${mm} דק׳ ו-${ss} שנ׳`;
-  return `נשארו ${ss} שנ׳`;
+  if (hh) return tr('נשארו {0} שע׳ {1} דק׳', hh, mm);
+  if (mm) return tr('נשארו {0} דק׳ ו-{1} שנ׳', mm, ss);
+  return tr('נשארו {0} שנ׳', ss);
 }
 const fmtMB = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(1) + ' MB');
 let barEl = null;
@@ -98,11 +101,11 @@ function paintBar(i) {
     document.body.append(barEl); document.body.classList.add('sync-bar-on');
   }
   barEl.classList.toggle('done', !!i.finished);
-  barEl.querySelector('.sb-title').textContent = i.finished ? `הסנכרון הסתיים ✓ (${i.total} קבצים)` : `מעלה לענן · ${i.done} מתוך ${i.total} קבצים`;
+  barEl.querySelector('.sb-title').textContent = i.finished ? tr('הסנכרון הסתיים ✓ ({0} קבצים)', i.total) : tr('מעלה לענן · {0} מתוך {1} קבצים', i.done, i.total);
   barEl.querySelector('.sb-pct').textContent = i.pct + '%';
   barEl.querySelector('.sb-fill').style.width = i.pct + '%';
   barEl.querySelector('.sb-file').textContent = i.finished ? '' : (i.cur || '') ;
-  barEl.querySelector('.sb-eta').textContent = i.finished ? '' : `${fmtMB(i.sent)} מתוך ${fmtMB(i.bytes)} · ${fmtEta(i.eta)}`;
+  barEl.querySelector('.sb-eta').textContent = i.finished ? '' : tr('{0} מתוך {1} · {2}', fmtMB(i.sent), fmtMB(i.bytes), fmtEta(i.eta));
 }
 onProgress(paintBar);
 
@@ -111,7 +114,7 @@ let statusEl = null;
 onSyncStatus((s) => { if (statusEl?.isConnected) paintStatus(s); });
 function paintStatus(s = syncStatus()) {
   statusEl.className = 'acct-status ' + s.kind; statusEl.textContent = s.text;
-  if (s.kind === 'error') statusEl.append(' ', h('button', { class: 'link-btn', onclick: () => diagDialog() }, 'פרטי התקלה'));
+  if (s.kind === 'error') statusEl.append(' ', h('button', { class: 'link-btn', onclick: () => diagDialog() }, tr('פרטי התקלה')));
 }
 
 // ---------- יומן תקלות ----------
@@ -120,28 +123,28 @@ export function diagDialog() {
   const top = h('div', { class: 'diag-top' });
   function paint() {
     const s = syncStatus();
-    top.replaceChildren(h('b', {}, 'מצב נוכחי: '), s.text);
+    top.replaceChildren(h('b', {}, tr('מצב נוכחי: ')), s.text);
     const es = diag.entries();
     list.replaceChildren(...(es.length ? es.map((x) => h('div', { class: 'diag-row ' + x.level },
-      h('div', { class: 'd-head' }, h('span', { class: 'd-lvl' }, x.level === 'error' ? 'שגיאה' : x.level === 'warn' ? 'אזהרה' : 'מידע'), h('b', {}, diag.label(x.where)), h('small', {}, diag.fmtTime(x.t))),
+      h('div', { class: 'd-head' }, h('span', { class: 'd-lvl' }, x.level === 'error' ? tr('שגיאה') : x.level === 'warn' ? tr('אזהרה') : tr('מידע')), h('b', {}, diag.label(x.where)), h('small', {}, diag.fmtTime(x.t))),
       h('div', { class: 'd-msg' }, x.msg),
       x.ctx ? h('pre', { class: 'd-ctx', dir: 'ltr' }, Object.entries(x.ctx).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n')) : null))
-      : [h('p', { class: 'hint' }, 'היומן ריק. כשתהיה תקלה היא תופיע כאן עם השלב המדויק.')]));
+      : [h('p', { class: 'hint' }, tr('היומן ריק. כשתהיה תקלה היא תופיע כאן עם השלב המדויק.'))]));
   }
   paint();
   const off = diag.onDiag(paint);
-  const m = UI.openModal({ title: 'יומן תקלות', wide: true, body: h('div', {}, top, list), buttons: [
-    { text: 'העתק דוח', kind: 'primary', keepOpen: true, onClick: async () => {
+  const m = UI.openModal({ title: tr('יומן תקלות'), wide: true, body: h('div', {}, top, list), buttons: [
+    { text: tr('העתק דוח'), kind: 'primary', keepOpen: true, onClick: async () => {
       const txt = await diag.report({ סטטוס: syncStatus().text });
-      try { await navigator.clipboard.writeText(txt); UI.toast('הדוח הועתק. אפשר להדביק אותו בשיחה'); }
-      catch { const ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = txt; document.body.append(ta); ta.select(); try { document.execCommand('copy'); UI.toast('הדוח הועתק'); } catch { UI.alertBox(txt, { title: 'דוח תקלות' }); } ta.remove(); }
+      try { await navigator.clipboard.writeText(txt); UI.toast(tr('הדוח הועתק. אפשר להדביק אותו בשיחה')); }
+      catch { const ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = txt; document.body.append(ta); ta.select(); try { document.execCommand('copy'); UI.toast(tr('הדוח הועתק')); } catch { UI.alertBox(txt, { title: tr('דוח תקלות') }); } ta.remove(); }
     } },
-    { text: 'הורד כקובץ', keepOpen: true, onClick: async () => {
+    { text: tr('הורד כקובץ'), keepOpen: true, onClick: async () => {
       const a = h('a', { href: URL.createObjectURL(new Blob([await diag.report({ סטטוס: syncStatus().text })], { type: 'text/plain' })), download: 'showplans-diag.txt' });
       document.body.append(a); a.click(); a.remove();
     } },
-    { text: 'נקה יומן', keepOpen: true, onClick: () => { diag.clear(); } },
-    { text: 'סגור', value: true },
+    { text: tr('נקה יומן'), keepOpen: true, onClick: () => { diag.clear(); } },
+    { text: tr('סגור'), value: true },
   ] });
   m.promise.then(off);
   return m;
@@ -149,22 +152,22 @@ export function diagDialog() {
 export function accountBox() {
   if (!isCloud()) {
     return h('div', { class: 'acct' },
-      h('div', { class: 'acct-line' }, icon('cloud', 16), h('span', {}, 'מצב מקומי – ללא סנכרון')),
-      h('button', { class: 'btn ghost block', onclick: () => switchToLogin() }, icon('user', 18), 'התחברות לענן'));
+      h('div', { class: 'acct-line' }, icon('cloud', 16), h('span', {}, tr('מצב מקומי – ללא סנכרון'))),
+      h('button', { class: 'btn ghost block', onclick: () => switchToLogin() }, icon('user', 18), tr('התחברות לענן')));
   }
   const p = cloud.profile;
   statusEl = h('div', { class: 'acct-status' }); paintStatus();
   return h('div', { class: 'acct' },
-    h('div', { class: 'acct-line' }, icon('user', 16), h('b', {}, p.display_name || p.email), h('span', { class: 'role-badge' }, p.role === 'admin' ? 'מנהל' : 'עובד')),
+    h('div', { class: 'acct-line' }, icon('user', 16), h('b', {}, p.display_name || p.email), h('span', { class: 'role-badge' }, p.role === 'admin' ? tr('מנהל') : tr('עובד'))),
     statusEl,
     h('div', { class: 'acct-btns' },
-      h('button', { class: 'btn ghost sm', onclick: async () => { await syncNow(); UI.toast('הסנכרון הסתיים'); } }, icon('refresh', 16), 'סנכרן'),
-      h('button', { class: 'btn ghost sm', onclick: () => diagDialog() }, icon('alert', 16), 'יומן תקלות'),
-      h('button', { class: 'btn ghost sm', onclick: () => newPasswordScreen({ inline: true }) }, icon('lock', 16), 'שינוי סיסמה'),
-      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => usersDialog() }, icon('users', 16), 'עובדים') : null,
-      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => workerAccessDialog() }, icon('lock', 16), 'גישה לפי עובד') : null,
-      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => driveFilesDialog() }, icon('drive', 16), 'קבצי Drive') : null,
-      h('button', { class: 'btn ghost sm', onclick: async () => { if (await UI.confirmBox('להתנתק? נתוני העבודה נשארים שמורים במכשיר ויסונכרנו בכניסה הבאה.', { title: 'התנתקות', okText: 'התנתק' })) signOut(); } }, icon('logout', 16), 'התנתק')));
+      h('button', { class: 'btn ghost sm', onclick: async () => { await syncNow(); UI.toast(tr('הסנכרון הסתיים')); } }, icon('refresh', 16), tr('סנכרן')),
+      h('button', { class: 'btn ghost sm', onclick: () => diagDialog() }, icon('alert', 16), tr('יומן תקלות')),
+      h('button', { class: 'btn ghost sm', onclick: () => newPasswordScreen({ inline: true }) }, icon('lock', 16), tr('שינוי סיסמה')),
+      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => usersDialog() }, icon('users', 16), tr('עובדים')) : null,
+      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => workerAccessDialog() }, icon('lock', 16), tr('גישה לפי עובד')) : null,
+      isAdmin() ? h('button', { class: 'btn ghost sm', onclick: () => driveFilesDialog() }, icon('drive', 16), tr('קבצי Drive')) : null,
+      h('button', { class: 'btn ghost sm', onclick: async () => { if (await UI.confirmBox(tr('להתנתק? נתוני העבודה נשארים שמורים במכשיר ויסונכרנו בכניסה הבאה.'), { title: tr('התנתקות'), okText: tr('התנתק') })) signOut(); } }, icon('logout', 16), tr('התנתק'))));
 }
 
 // ---------- ניהול קבצי Drive (מנהל בלבד) ----------
@@ -172,63 +175,63 @@ const fmtSize = (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : b >= 1e6 ? (b 
 export async function driveFilesDialog() {
   if (!isAdmin()) return;
   const list = h('div', { class: 'dfiles' });
-  const info = h('div', { class: 'dfiles-info' }, 'טוען…');
+  const info = h('div', { class: 'dfiles-info' }, tr('טוען…'));
   let files = [];
   const sel = new Set();
-  const delBtn = h('button', { class: 'btn danger sm', disabled: true }, icon('trash', 16), 'מחק נבחרים');
-  const orphanBtn = h('button', { class: 'btn ghost sm' }, 'סמן את כל הלא-בשימוש');
-  const clearBtn = h('button', { class: 'btn ghost sm' }, 'נקה בחירה');
+  const delBtn = h('button', { class: 'btn danger sm', disabled: true }, icon('trash', 16), tr('מחק נבחרים'));
+  const orphanBtn = h('button', { class: 'btn ghost sm' }, tr('סמן את כל הלא-בשימוש'));
+  const clearBtn = h('button', { class: 'btn ghost sm' }, tr('נקה בחירה'));
   function paint() {
     const orphans = files.filter((f) => !f.versionId);
     const total = files.reduce((a, f) => a + f.size, 0);
-    info.textContent = `${files.length} קבצים ב-Drive (${fmtSize(total)}). ${orphans.length} מהם לא בשימוש (${fmtSize(orphans.reduce((a, f) => a + f.size, 0))}).`;
-    delBtn.disabled = !sel.size; delBtn.lastChild.textContent = sel.size ? `מחק נבחרים (${sel.size})` : 'מחק נבחרים';
+    info.textContent = tr('{0} קבצים ב-Drive ({1}). {2} מהם לא בשימוש ({3}).', files.length, fmtSize(total), orphans.length, fmtSize(orphans.reduce((a, f) => a + f.size, 0)));
+    delBtn.disabled = !sel.size; delBtn.lastChild.textContent = sel.size ? tr('מחק נבחרים ({0})', sel.size) : tr('מחק נבחרים');
     list.replaceChildren(...(files.length ? files : []).map((f) => {
       const cb = h('input', { type: 'checkbox', checked: sel.has(f.id), onchange: (e) => { e.target.checked ? sel.add(f.id) : sel.delete(f.id); paint(); } });
       return h('label', { class: 'dfile ' + (f.versionId ? 'used' : 'orphan') },
         cb,
         h('div', { class: 'df-main' },
           h('b', { dir: 'auto' }, f.name || f.id),
-          h('small', {}, `${fmtSize(f.size)}${f.created ? ' · ' + new Date(f.created).toLocaleDateString('he-IL') : ''}`)),
-        f.versionId ? h('span', { class: 'df-badge used' }, 'בשימוש' + (f.planName ? ': ' + f.planName : '')) : h('span', { class: 'df-badge orphan' }, 'לא בשימוש'));
+          h('small', {}, `${fmtSize(f.size)}${f.created ? ' · ' + new Date(f.created).toLocaleDateString(LOCALE) : ''}`)),
+        f.versionId ? h('span', { class: 'df-badge used' }, tr('בשימוש') + (f.planName ? ': ' + f.planName : '')) : h('span', { class: 'df-badge orphan' }, tr('לא בשימוש')));
     }));
-    if (!files.length) list.replaceChildren(h('p', { class: 'hint' }, 'אין קבצים בתיקיית האפליקציה ב-Drive.'));
+    if (!files.length) list.replaceChildren(h('p', { class: 'hint' }, tr('אין קבצים בתיקיית האפליקציה ב-Drive.')));
   }
   async function load() {
-    info.textContent = 'טוען רשימת קבצים מ-Drive…';
+    info.textContent = tr('טוען רשימת קבצים מ-Drive…');
     try {
       const r = await callFn('drive-admin', { action: 'list' });
       files = (r.files || []).sort((a, b) => (!a.versionId) === (!b.versionId) ? String(b.created || '').localeCompare(String(a.created || '')) : (a.versionId ? 1 : -1));
       for (const id of [...sel]) if (!files.some((f) => f.id === id)) sel.delete(id);
       paint();
-    } catch (e) { info.textContent = 'שגיאה בטעינה: ' + e.message; diag.err('drive-admin', e); }
+    } catch (e) { info.textContent = tr('שגיאה בטעינה: ') + e.message; diag.err('drive-admin', e); }
   }
   orphanBtn.onclick = () => { files.filter((f) => !f.versionId).forEach((f) => sel.add(f.id)); paint(); };
   clearBtn.onclick = () => { sel.clear(); paint(); };
   delBtn.onclick = async () => {
     const chosen = files.filter((f) => sel.has(f.id));
     const used = chosen.filter((f) => f.versionId);
-    const msg = `להעביר ${chosen.length} קבצים (${fmtSize(chosen.reduce((a, f) => a + f.size, 0))}) לפח של Drive?`
-      + (used.length ? `\n\nשים לב: ${used.length} מהם בשימוש. הגרסאות שלהן יימחקו מהאפליקציה בכל המכשירים, והסימונים והמדידות של אותן גרסאות לא יהיו נגישים.` : '')
-      + '\n\nבפח של Drive אפשר לשחזר קבצים במשך כ-30 יום.';
-    if (!(await UI.confirmBox(msg, { title: 'מחיקת קבצים מ-Drive', danger: true, okText: 'מחק' }))) return;
+    const msg = tr('להעביר {0} קבצים ({1}) לפח של Drive?', chosen.length, fmtSize(chosen.reduce((a, f) => a + f.size, 0)))
+      + (used.length ? tr('\n\nשים לב: {0} מהם בשימוש. הגרסאות שלהן יימחקו מהאפליקציה בכל המכשירים, והסימונים והמדידות של אותן גרסאות לא יהיו נגישים.', used.length) : '')
+      + tr('\n\nבפח של Drive אפשר לשחזר קבצים במשך כ-30 יום.');
+    if (!(await UI.confirmBox(msg, { title: tr('מחיקת קבצים מ-Drive'), danger: true, okText: tr('מחק') }))) return;
     delBtn.disabled = true;
     let ok = 0; const failed = [];
     const ids = chosen.map((f) => f.id);
     for (let i = 0; i < ids.length; i += 25) {
-      info.textContent = `מוחק… ${Math.min(i + 25, ids.length)} מתוך ${ids.length}`;
+      info.textContent = tr('מוחק… {0} מתוך {1}', Math.min(i + 25, ids.length), ids.length);
       try {
         const r = await callFn('drive-admin', { action: 'delete', fileIds: ids.slice(i, i + 25) });
         for (const x of r.results || []) { if (x.ok) { ok++; sel.delete(x.id); } else failed.push(x); }
       } catch (e) { ids.slice(i, i + 25).forEach((id) => failed.push({ id, error: e.message })); diag.err('drive-admin', e); }
     }
-    failed.forEach((x) => diag.warn('drive-admin', 'מחיקת קובץ נכשלה: ' + x.error, { id: x.id, file: files.find((f) => f.id === x.id)?.name }));
-    UI.toast(failed.length ? `נמחקו ${ok}, נכשלו ${failed.length} (פרטים ביומן התקלות)` : `נמחקו ${ok} קבצים`, { type: failed.length ? 'error' : '', ms: 5000 });
+    failed.forEach((x) => diag.warn('drive-admin', tr('מחיקת קובץ נכשלה: ') + x.error, { id: x.id, file: files.find((f) => f.id === x.id)?.name }));
+    UI.toast(failed.length ? tr('נמחקו {0}, נכשלו {1} (פרטים ביומן התקלות)', ok, failed.length) : tr('נמחקו {0} קבצים', ok), { type: failed.length ? 'error' : '', ms: 5000 });
     await load();
     schedulePull(true, 300); // מעדכן את המכשיר אחרי מחיקת גרסאות בשימוש
   };
-  const m = UI.openModal({ title: 'קבצי Drive', wide: true, body: h('div', {}, info,
-    h('div', { class: 'dfiles-btns' }, orphanBtn, clearBtn, delBtn), list), buttons: [{ text: 'סגור', value: true }] });
+  const m = UI.openModal({ title: tr('קבצי Drive'), wide: true, body: h('div', {}, info,
+    h('div', { class: 'dfiles-btns' }, orphanBtn, clearBtn, delBtn), list), buttons: [{ text: tr('סגור'), value: true }] });
   load();
   return m;
 }
@@ -237,33 +240,33 @@ export async function driveFilesDialog() {
 const genPass = () => { const c = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'; let s = ''; const r = crypto.getRandomValues(new Uint32Array(10)); r.forEach((x) => { s += c[x % c.length]; }); return s; };
 export async function usersDialog() {
   const list = h('div', { class: 'users' });
-  const m = UI.openModal({ title: 'ניהול עובדים', wide: true, body: h('div', {}, list), buttons: [{ text: 'סגור', value: true }] });
+  const m = UI.openModal({ title: tr('ניהול עובדים'), wide: true, body: h('div', {}, list), buttons: [{ text: tr('סגור'), value: true }] });
   async function load() {
-    list.replaceChildren(h('p', { class: 'hint' }, 'טוען…'));
+    list.replaceChildren(h('p', { class: 'hint' }, tr('טוען…')));
     const { data, error } = await client().from('profiles').select('*').order('created_at');
-    if (error) { list.replaceChildren(h('p', { class: 'msg' }, 'שגיאה: ' + error.message)); return; }
+    if (error) { list.replaceChildren(h('p', { class: 'msg' }, tr('שגיאה: ') + error.message)); return; }
     list.replaceChildren(
       ...data.map((u) => h('div', { class: 'user-row' },
-        h('div', { class: 'u-main' }, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email), h('span', { class: 'role-badge' }, u.role === 'admin' ? 'מנהל' : 'עובד')),
-        u.id === cloud.user.id ? h('small', {}, 'אתה') : h('div', { class: 'u-btns' },
-          u.role === 'admin' ? null : h('button', { class: 'btn sm', onclick: () => workerAccessDialog(u.id) }, 'גישה לתוכניות'),
-          h('button', { class: 'btn sm', onclick: () => resetPass(u) }, 'סיסמה חדשה'),
-          h('button', { class: 'btn sm', onclick: () => exportData(u) }, 'ייצוא מידע'),
-          h('button', { class: 'btn sm danger', onclick: () => eraseData(u) }, 'מחק מידע'),
-          h('button', { class: 'btn sm', onclick: async () => { const r = u.role === 'admin' ? 'worker' : 'admin'; if (await UI.confirmBox(r === 'admin' ? `להפוך את ${u.email} למנהל? הוא יראה ויערוך הכול.` : `להפוך את ${u.email} לעובד?`)) { await run(() => callFn('admin-users', { action: 'setRole', userId: u.id, role: r })); load(); } } }, u.role === 'admin' ? 'הפוך לעובד' : 'הפוך למנהל'),
-          h('button', { class: 'btn sm danger', onclick: async () => { if (await UI.confirmBox(`למחוק את המשתמש ${u.email}? הסימונים שלו יישארו.`, { danger: true, okText: 'מחק' })) { await run(() => callFn('admin-users', { action: 'delete', userId: u.id })); load(); } } }, 'מחק')))),
+        h('div', { class: 'u-main' }, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email), h('span', { class: 'role-badge' }, u.role === 'admin' ? tr('מנהל') : tr('עובד'))),
+        u.id === cloud.user.id ? h('small', {}, tr('אתה')) : h('div', { class: 'u-btns' },
+          u.role === 'admin' ? null : h('button', { class: 'btn sm', onclick: () => workerAccessDialog(u.id) }, tr('גישה לתוכניות')),
+          h('button', { class: 'btn sm', onclick: () => resetPass(u) }, tr('סיסמה חדשה')),
+          h('button', { class: 'btn sm', onclick: () => exportData(u) }, tr('ייצוא מידע')),
+          h('button', { class: 'btn sm danger', onclick: () => eraseData(u) }, tr('מחק מידע')),
+          h('button', { class: 'btn sm', onclick: async () => { const r = u.role === 'admin' ? 'worker' : 'admin'; if (await UI.confirmBox(r === 'admin' ? tr('להפוך את {0} למנהל? הוא יראה ויערוך הכול.', u.email) : tr('להפוך את {0} לעובד?', u.email))) { await run(() => callFn('admin-users', { action: 'setRole', userId: u.id, role: r })); load(); } } }, u.role === 'admin' ? tr('הפוך לעובד') : tr('הפוך למנהל')),
+          h('button', { class: 'btn sm danger', onclick: async () => { if (await UI.confirmBox(tr('למחוק את המשתמש {0}? הסימונים שלו יישארו.', u.email), { danger: true, okText: tr('מחק') })) { await run(() => callFn('admin-users', { action: 'delete', userId: u.id })); load(); } } }, tr('מחק'))))),
       newUserForm());
   }
-  async function run(fn) { try { return await fn(); } catch (e) { UI.alertBox(e.message, { title: 'שגיאה' }); return null; } }
+  async function run(fn) { try { return await fn(); } catch (e) { UI.alertBox(e.message, { title: tr('שגיאה') }); return null; } }
   function newUserForm() {
-    const name = h('input', { placeholder: 'שם העובד' });
-    const em = h('input', { type: 'email', dir: 'ltr', placeholder: 'אימייל (ישמש לכניסה)' });
+    const name = h('input', { placeholder: tr('שם העובד') });
+    const em = h('input', { type: 'email', dir: 'ltr', placeholder: tr('אימייל (ישמש לכניסה)') });
     const pw = h('input', { dir: 'ltr', value: genPass() });
-    return h('div', { class: 'form new-user' }, h('h3', {}, 'הוספת עובד'), name, em, h('label', {}, 'סיסמה (אפשר לשנות)'), pw,
+    return h('div', { class: 'form new-user' }, h('h3', {}, tr('הוספת עובד')), name, em, h('label', {}, tr('סיסמה (אפשר לשנות)')), pw,
       h('button', { class: 'btn primary', onclick: async () => {
         const r = await run(() => callFn('admin-users', { action: 'create', name: name.value, email: em.value, password: pw.value }));
-        if (r) { await UI.alertBox(`העובד נוצר.\nאימייל: ${em.value}\nסיסמה: ${pw.value}\n\nמסרו לו אותם. מומלץ לשמור את הסיסמה כעת, היא לא תוצג שוב.`, { title: 'נוצר' }); load(); }
-      } }, icon('plus', 18), 'צור עובד'));
+        if (r) { await UI.alertBox(tr('העובד נוצר.\nאימייל: {0}\nסיסמה: {1}\n\nמסרו לו אותם. מומלץ לשמור את הסיסמה כעת, היא לא תוצג שוב.', em.value, pw.value), { title: tr('נוצר') }); load(); }
+      } }, icon('plus', 18), tr('צור עובד')));
   }
   // מימוש זכות עיון: קובץ JSON עם כל המידע שנשמר על המשתמש
   async function exportData(u) {
@@ -271,38 +274,38 @@ export async function usersDialog() {
     if (!r) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' }));
-    a.download = `מידע-${(u.email || u.id).replace(/[^\w.@-]+/g, '_')}.json`;
+    a.download = tr('מידע-{0}.json', (u.email || u.id).replace(/[^\w.@-]+/g, '_'));
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
   // מימוש זכות מחיקה: הסימונים, השכבה האישית והאישורים של המשתמש (לא מוחק את החשבון)
   async function eraseData(u) {
-    if (!(await UI.confirmBox(`למחוק את כל הסימונים, המדידות והשכבה האישית של ${u.email}? החשבון עצמו נשאר (למחיקת החשבון: כפתור "מחק"). אי אפשר לבטל.`, { title: 'מחיקת מידע', danger: true, okText: 'מחק מידע' }))) return;
+    if (!(await UI.confirmBox(tr('למחוק את כל הסימונים, המדידות והשכבה האישית של {0}? החשבון עצמו נשאר (למחיקת החשבון: כפתור "מחק"). אי אפשר לבטל.', u.email), { title: tr('מחיקת מידע'), danger: true, okText: tr('מחק מידע') }))) return;
     const r = await run(async () => { const { data, error } = await client().rpc('erase_user_data', { p_user: u.id }); if (error) throw error; return data; });
-    if (r) UI.toast(`נמחקו ${r.items} סימונים/מדידות ו-${r.overrides} פריטים אישיים`);
+    if (r) UI.toast(tr('נמחקו {0} סימונים/מדידות ו-{1} פריטים אישיים', r.items, r.overrides));
   }
   async function resetPass(u) {
-    const v = await UI.promptBox({ title: 'סיסמה חדשה ל-' + u.email, value: genPass(), okText: 'שמור' });
+    const v = await UI.promptBox({ title: tr('סיסמה חדשה ל-') + u.email, value: genPass(), okText: tr('שמור') });
     if (!v) return;
-    if (await run(() => callFn('admin-users', { action: 'reset', userId: u.id, password: v }))) UI.alertBox('הסיסמה עודכנה: ' + v, { title: 'בוצע' });
+    if (await run(() => callFn('admin-users', { action: 'reset', userId: u.id, password: v }))) UI.alertBox(tr('הסיסמה עודכנה: ') + v, { title: tr('בוצע') });
   }
   load();
   return m.promise;
 }
 
 // ---------- הרשאות לתיקייה/תוכנית (מנהל) ----------
-const LEVELS = [['', 'ללא גישה'], ['view', 'צפייה בלבד'], ['mark', 'צפייה + סימונים'], ['edit', 'עריכה מלאה']];
+const LEVELS = [['', tr('ללא גישה')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]];
 export async function grantsDialog({ folderId = null, planId = null }) {
   const sb = client();
   const target = planId ? S.P.plans.get(planId)?.name : S.P.folders.get(folderId)?.name;
   const col = planId ? 'plan_id' : 'folder_id', tid = planId || folderId;
-  const body = h('div', { class: 'form' }, h('p', { class: 'hint' }, planId ? 'ההרשאה חלה על התוכנית הזו.' : 'ההרשאה חלה על התיקייה ועל כל מה שבתוכה.'));
-  const m = UI.openModal({ title: `הרשאות: ${target || ''}`, body, wide: true, buttons: [{ text: 'סגור', value: true }] });
+  const body = h('div', { class: 'form' }, h('p', { class: 'hint' }, planId ? tr('ההרשאה חלה על התוכנית הזו.') : tr('ההרשאה חלה על התיקייה ועל כל מה שבתוכה.')));
+  const m = UI.openModal({ title: tr('הרשאות: {0}', target || ''), body, wide: true, buttons: [{ text: tr('סגור'), value: true }] });
   const [{ data: users, error: e1 }, { data: grants, error: e2 }] = await Promise.all([
     sb.from('profiles').select('*').eq('role', 'worker').order('display_name'),
     sb.from('grants').select('*').eq(col, tid),
   ]);
-  if (e1 || e2) { body.append(h('p', { class: 'msg' }, 'שגיאה: ' + (e1 || e2).message)); return m.promise; }
-  if (!users.length) body.append(h('p', { class: 'msg' }, 'עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.'));
+  if (e1 || e2) { body.append(h('p', { class: 'msg' }, tr('שגיאה: ') + (e1 || e2).message)); return m.promise; }
+  if (!users.length) body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.')));
   for (const u of users) {
     const cur = grants.find((g) => g.user_id === u.id);
     const sel = h('select', {}, LEVELS.map(([v, t]) => h('option', { value: v }, t)));
@@ -318,8 +321,8 @@ export async function grantsDialog({ folderId = null, planId = null }) {
         } else {
           const { data, error } = await sb.from('grants').insert({ user_id: u.id, [col]: tid, level: sel.value }).select().single(); if (error) throw error; grants.push(data);
         }
-        UI.toast('נשמר');
-      } catch (e) { UI.toast('שגיאה: ' + e.message, { type: 'error' }); sel.value = grants.find((g) => g.user_id === u.id)?.level || ''; }
+        UI.toast(tr('נשמר'));
+      } catch (e) { UI.toast(tr('שגיאה: ') + e.message, { type: 'error' }); sel.value = grants.find((g) => g.user_id === u.id)?.level || ''; }
       sel.disabled = false;
     });
     body.append(h('div', { class: 'grant-row' }, h('div', {}, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email)), sel));
@@ -330,25 +333,25 @@ export async function grantsDialog({ folderId = null, planId = null }) {
 // ---------- גישה לפי עובד: מה כל עובד רואה (מנהל) ----------
 // עובד לא רואה שום תיקייה או תוכנית עד שנותנים לו הרשאה. הרשאה על תיקייה חלה על כל מה שבתוכה.
 const RANK = { view: 1, mark: 2, edit: 3 };
-const LEVEL_TEXT = { view: 'צפייה', mark: 'צפייה + סימונים', edit: 'עריכה מלאה' };
+const LEVEL_TEXT = { view: tr('צפייה'), mark: tr('צפייה + סימונים'), edit: tr('עריכה מלאה') };
 export async function workerAccessDialog(userId = null) {
   const sb = client();
   const body = h('div', { class: 'form' });
-  const m = UI.openModal({ title: 'גישה לתוכניות לפי עובד', body, wide: true, buttons: [{ text: 'סגור', value: true }] });
+  const m = UI.openModal({ title: tr('גישה לתוכניות לפי עובד'), body, wide: true, buttons: [{ text: tr('סגור'), value: true }] });
   const { data: users, error } = await sb.from('profiles').select('*').eq('role', 'worker').order('display_name');
-  if (error) { body.append(h('p', { class: 'msg' }, 'שגיאה: ' + error.message)); return m.promise; }
-  if (!users.length) { body.append(h('p', { class: 'msg' }, 'עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.')); return m.promise; }
+  if (error) { body.append(h('p', { class: 'msg' }, tr('שגיאה: ') + error.message)); return m.promise; }
+  if (!users.length) { body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.'))); return m.promise; }
   let uid = userId && users.some((u) => u.id === userId) ? userId : users[0].id;
   let grants = [];
   const expanded = new Set();
   let filter = '';
-  const who = h('select', { 'aria-label': 'עובד' }, users.map((u) => h('option', { value: u.id }, u.display_name || u.email)));
+  const who = h('select', { 'aria-label': tr('עובד') }, users.map((u) => h('option', { value: u.id }, u.display_name || u.email)));
   who.value = uid;
   const summary = h('p', { class: 'hint' });
-  const search = h('input', { type: 'search', placeholder: 'חיפוש תיקייה או תוכנית…', 'aria-label': 'חיפוש' });
+  const search = h('input', { type: 'search', placeholder: tr('חיפוש תיקייה או תוכנית…'), 'aria-label': tr('חיפוש') });
   const tree = h('div', { class: 'users' });
-  body.append(h('p', { class: 'hint' }, 'בוחרים עובד ואז קובעים לכל תיקייה או תוכנית אם הוא רואה אותה. תיקייה שניתנה לו כוללת את כל מה שבתוכה. מה שלא סומן, העובד לא רואה בכלל.'),
-    h('label', {}, 'עובד'), who, summary, search, tree);
+  body.append(h('p', { class: 'hint' }, tr('בוחרים עובד ואז קובעים לכל תיקייה או תוכנית אם הוא רואה אותה. תיקייה שניתנה לו כוללת את כל מה שבתוכה. מה שלא סומן, העובד לא רואה בכלל.')),
+    h('label', {}, tr('עובד')), who, summary, search, tree);
 
   const direct = (col, id) => grants.find((g) => g[col] === id);
   const folderLevel = (fid) => { let best = 0, f = fid ? S.P.folders.get(fid) : null, g = 0; while (f && g++ < 200) { const d = direct('folder_id', f.id); if (d) best = Math.max(best, RANK[d.level] || 0); f = f.parentId ? S.P.folders.get(f.parentId) : null; } return best; };
@@ -362,12 +365,12 @@ export async function workerAccessDialog(userId = null) {
     else { const { data, error: e } = await sb.from('grants').insert({ user_id: uid, [col]: id, level: value }).select().single(); if (e) throw e; grants.push(data); }
   }
   function levelSelect(col, id, inherited) {
-    const sel = h('select', { 'aria-label': 'רמת גישה' }, LEVELS.map(([v, t]) => h('option', { value: v }, v === '' && inherited ? `ללא (יורש: ${LEVEL_TEXT[levelName(inherited)]})` : t)));
+    const sel = h('select', { 'aria-label': tr('רמת גישה') }, LEVELS.map(([v, t]) => h('option', { value: v }, v === '' && inherited ? tr('ללא (יורש: {0})', LEVEL_TEXT[levelName(inherited)]) : t)));
     sel.value = direct(col, id)?.level || '';
     sel.addEventListener('change', async () => {
       sel.disabled = true;
-      try { await setGrant(col, id, sel.value); UI.toast('נשמר'); paint(); }
-      catch (e) { UI.toast('שגיאה: ' + e.message, { type: 'error' }); sel.value = direct(col, id)?.level || ''; sel.disabled = false; }
+      try { await setGrant(col, id, sel.value); UI.toast(tr('נשמר')); paint(); }
+      catch (e) { UI.toast(tr('שגיאה: ') + e.message, { type: 'error' }); sel.value = direct(col, id)?.level || ''; sel.disabled = false; }
     });
     return sel;
   }
@@ -382,9 +385,9 @@ export async function workerAccessDialog(userId = null) {
       const open = filter ? true : expanded.has(f.id);
       const myInherited = inheritedFrom;
       const lvlHere = Math.max(myInherited, RANK[direct('folder_id', f.id)?.level] || 0);
-      const toggle = h('button', { class: 'icon-btn sm', 'aria-label': open ? 'סגור' : 'פתח', onclick: () => { open ? expanded.delete(f.id) : expanded.add(f.id); paint(); } }, icon(open ? 'chevD' : 'chevL', 16));
+      const toggle = h('button', { class: 'icon-btn sm', 'aria-label': open ? tr('סגור') : tr('פתח'), onclick: () => { open ? expanded.delete(f.id) : expanded.add(f.id); paint(); } }, icon(open ? 'chevD' : CHEV_FWD, 16));
       out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
-        h('div', {}, h('div', { class: 'row' }, toggle, icon('folder', 18), h('b', {}, f.name)), h('small', {}, lvlHere ? `העובד רואה: ${LEVEL_TEXT[levelName(lvlHere)]}` : 'העובד לא רואה')),
+        h('div', {}, h('div', { class: 'row' }, toggle, icon('folder', 18), h('b', {}, dn(f.name))), h('small', {}, lvlHere ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(lvlHere)]) : tr('העובד לא רואה'))),
         levelSelect('folder_id', f.id, myInherited && !direct('folder_id', f.id) ? myInherited : 0)));
       if (open) folderRows(f.id, depth + 1, out, lvlHere);
     }
@@ -393,23 +396,23 @@ export async function workerAccessDialog(userId = null) {
       const eff = planLevel(p);
       const inheritedLvl = folderLevel(p.folderId || null);
       out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
-        h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('span', {}, p.name)), h('small', {}, eff ? `העובד רואה: ${LEVEL_TEXT[levelName(eff)]}` : 'העובד לא רואה')),
+        h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('span', {}, dn(p.name))), h('small', {}, eff ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(eff)]) : tr('העובד לא רואה'))),
         h('div', { class: 'row' },
-          h('button', { class: 'btn ghost sm', title: 'פתח את התוכנית כדי להחליט אם העובד צריך לראות אותה', onclick: () => { m.close(true); location.hash = '#/p/' + p.id; } }, icon('eye', 16), 'צפייה'),
+          h('button', { class: 'btn ghost sm', title: tr('פתח את התוכנית כדי להחליט אם העובד צריך לראות אותה'), onclick: () => { m.close(true); location.hash = '#/p/' + p.id; } }, icon('eye', 16), tr('צפייה')),
           levelSelect('plan_id', p.id, inheritedLvl && !direct('plan_id', p.id) ? inheritedLvl : 0))));
     }
   }
   function paint() {
     const rows = [];
     folderRows(null, 0, rows, 0);
-    tree.replaceChildren(...(rows.length ? rows : [h('p', { class: 'hint' }, filter ? 'לא נמצאו תוצאות.' : 'אין תיקיות או תוכניות.')]));
+    tree.replaceChildren(...(rows.length ? rows : [h('p', { class: 'hint' }, filter ? tr('לא נמצאו תוצאות.') : tr('אין תיקיות או תוכניות.'))]));
     const vis = [...S.P.plans.values()].filter((p) => planLevel(p) > 0).length;
-    summary.textContent = `העובד רואה ${vis} מתוך ${S.P.plans.size} תוכניות.`;
+    summary.textContent = tr('העובד רואה {0} מתוך {1} תוכניות.', vis, S.P.plans.size);
   }
   async function loadUser() {
-    tree.replaceChildren(h('p', { class: 'hint' }, 'טוען…'));
+    tree.replaceChildren(h('p', { class: 'hint' }, tr('טוען…')));
     const { data, error: e } = await sb.from('grants').select('*').eq('user_id', uid);
-    if (e) { tree.replaceChildren(h('p', { class: 'msg' }, 'שגיאה: ' + e.message)); return; }
+    if (e) { tree.replaceChildren(h('p', { class: 'msg' }, tr('שגיאה: ') + e.message)); return; }
     grants = data || [];
     for (const g of grants) { // פותחים את הענפים שיש בהם הרשאה
       let f = g.folder_id ? S.P.folders.get(g.folder_id) : (S.P.plans.get(g.plan_id) ? S.P.folders.get(S.P.plans.get(g.plan_id).folderId) : null), n = 0;
@@ -427,23 +430,23 @@ export async function workerAccessDialog(userId = null) {
 export async function bulkGrantsDialog({ folders = [], plans = [] }) {
   const sb = client();
   const total = folders.length + plans.length;
-  const body = h('div', { class: 'form' }, h('p', { class: 'hint' }, `ההרשאה תיקבע ל-${total} פריטים שנבחרו (תיקייה כוללת את כל מה שבתוכה). "ללא שינוי" משאיר את ההרשאה הקיימת של העובד.`));
-  const m = UI.openModal({ title: 'הרשאות לפריטים שנבחרו', body, wide: true, buttons: [
-    { text: 'ביטול', value: false },
-    { text: 'החל', kind: 'primary', keepOpen: true, onClick: (mm) => apply(mm) },
+  const body = h('div', { class: 'form' }, h('p', { class: 'hint' }, tr('ההרשאה תיקבע ל-{0} פריטים שנבחרו (תיקייה כוללת את כל מה שבתוכה). "ללא שינוי" משאיר את ההרשאה הקיימת של העובד.', total)));
+  const m = UI.openModal({ title: tr('הרשאות לפריטים שנבחרו'), body, wide: true, buttons: [
+    { text: tr('ביטול'), value: false },
+    { text: tr('החל'), kind: 'primary', keepOpen: true, onClick: (mm) => apply(mm) },
   ] });
   const { data: users, error } = await sb.from('profiles').select('*').eq('role', 'worker').order('display_name');
-  if (error) { body.append(h('p', { class: 'msg' }, 'שגיאה: ' + error.message)); return m.promise; }
-  if (!users.length) { body.append(h('p', { class: 'msg' }, 'עוד אין עובדים.')); return m.promise; }
+  if (error) { body.append(h('p', { class: 'msg' }, tr('שגיאה: ') + error.message)); return m.promise; }
+  if (!users.length) { body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים.'))); return m.promise; }
   const sels = new Map();
   for (const u of users) {
-    const sel = h('select', { 'aria-label': 'רמת גישה' }, [['keep', 'ללא שינוי'], ['', 'ללא גישה'], ['view', 'צפייה בלבד'], ['mark', 'צפייה + סימונים'], ['edit', 'עריכה מלאה']].map(([v, t]) => h('option', { value: v }, t)));
+    const sel = h('select', { 'aria-label': tr('רמת גישה') }, [['keep', tr('ללא שינוי')], ['', tr('ללא גישה')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]].map(([v, t]) => h('option', { value: v }, t)));
     sel.value = 'keep'; sels.set(u.id, sel);
     body.append(h('div', { class: 'grant-row' }, h('div', {}, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email)), sel));
   }
   async function apply(mm) {
     const changes = [...sels].filter(([, s]) => s.value !== 'keep').map(([id, s]) => [id, s.value]);
-    if (!changes.length) { UI.toast('לא נבחר שינוי'); return false; }
+    if (!changes.length) { UI.toast(tr('לא נבחר שינוי')); return false; }
     try {
       const [fg, pg] = await Promise.all([
         folders.length ? sb.from('grants').select('*').in('folder_id', folders) : { data: [] },
@@ -461,10 +464,10 @@ export async function bulkGrantsDialog({ folders = [], plans = [] }) {
         }
       }
       if (inserts.length) { const { error: e } = await sb.from('grants').insert(inserts); if (e) throw e; }
-      UI.toast('ההרשאות עודכנו');
+      UI.toast(tr('ההרשאות עודכנו'));
       mm.close(true);
       return true;
-    } catch (e) { UI.alertBox(e.message || String(e), { title: 'העדכון נכשל' }); return false; }
+    } catch (e) { UI.alertBox(e.message || String(e), { title: tr('העדכון נכשל') }); return false; }
   }
   return m.promise;
 }
@@ -477,10 +480,10 @@ export async function maybeImportLocal() {
   const sum = await localDataSummary();
   await db.put('meta', { key: 'importAsked', v: 1 });
   if (!sum) return;
-  const ok = await UI.confirmBox(`נמצאו ${sum.plans} תוכניות בשמירה המקומית של המכשיר הזה (לפני החיבור לענן). להעתיק אותן לענן? הן יישארו גם במצב המקומי.`, { title: 'העלאת התוכניות הקיימות לענן', okText: 'העתק לענן', cancelText: 'לא עכשיו' });
+  const ok = await UI.confirmBox(tr('נמצאו {0} תוכניות בשמירה המקומית של המכשיר הזה (לפני החיבור לענן). להעתיק אותן לענן? הן יישארו גם במצב המקומי.', sum.plans), { title: tr('העלאת התוכניות הקיימות לענן'), okText: tr('העתק לענן'), cancelText: tr('לא עכשיו') });
   if (!ok) return;
-  const pb = UI.progressBox('מעתיק…');
-  try { await copyLocalIntoCurrent((n) => pb.set('מעתיק: ' + n)); await S.reload(); UI.toast('הועתק. ההעלאה ל-Drive תתבצע ברקע.', { ms: 5000 }); }
-  catch (e) { UI.alertBox('ההעתקה נכשלה: ' + (e.message || e), { title: 'שגיאה' }); }
+  const pb = UI.progressBox(tr('מעתיק…'));
+  try { await copyLocalIntoCurrent((n) => pb.set(tr('מעתיק: ') + n)); await S.reload(); UI.toast(tr('הועתק. ההעלאה ל-Drive תתבצע ברקע.'), { ms: 5000 }); }
+  catch (e) { UI.alertBox(tr('ההעתקה נכשלה: ') + (e.message || e), { title: tr('שגיאה') }); }
   finally { pb.close(); }
 }

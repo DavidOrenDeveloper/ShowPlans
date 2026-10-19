@@ -1,3 +1,4 @@
+import { t as tr } from './i18n.js';
 // שכבה אישית מעל המבנה המשותף: שם אישי, הסתרה, העברה ותיקיות אישיות.
 // לוגיקה טהורה (בלי דפדפן) כדי שאפשר יהיה לבדוק אותה בנפרד. המבנה המשותף (raw) לא משתנה אף פעם.
 // rows: Map(id -> { kind: 'folder'|'plan'|'pfolder', data: { name?, hidden?, parentId? } })
@@ -25,7 +26,7 @@ export function applyOverlay(rawF, rawP, rows, opt = {}) {
   for (const [id, o] of rows) {
     if (o.kind !== 'pfolder') continue;
     const d = o.data || {};
-    eff.set(id, { pers: { id, projectId: 'main', parentId: d.parentId || null, name: d.name || 'תיקייה', createdAt: d.createdAt || 0, personal: true }, name: d.name || 'תיקייה', parent: d.parentId || null, origParent: null, hidden: false, ov: true });
+    eff.set(id, { pers: { id, projectId: 'main', parentId: d.parentId || null, name: d.name || tr('תיקייה'), createdAt: d.createdAt || 0, personal: true }, name: d.name || tr('תיקייה'), parent: d.parentId || null, origParent: null, hidden: false, ov: true });
   }
   // הורה שלא קיים או מעגל -> חוזרים להורה המקורי (או לשורש)
   for (const [id, n] of eff) { if (n.parent && !eff.has(n.parent)) n.parent = n.origParent && eff.has(n.origParent) ? n.origParent : null; }

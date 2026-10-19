@@ -1,10 +1,11 @@
+import { t as tr } from './i18n.js';
 // התקנה כאפליקציה ו-Service Worker: רישום מוקדם, זיהוי מצב התקנה, התקנה ישירה (beforeinstallprompt).
 // הרישום מתחיל כבר בטעינת המודול (לא מחכה לסיום עליית המסכים), כדי שהאפליקציה תהיה "מותקנת לאופליין" ותעמוד בתנאי ההתקנה של Chrome.
 export const hadController = !!(typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.controller);
 export let swError = null;
 
 export const swReady = (async () => {
-  if (!('serviceWorker' in navigator)) { swError = new Error('הדפדפן לא תומך ב-Service Worker'); return null; }
+  if (!('serviceWorker' in navigator)) { swError = new Error(tr('הדפדפן לא תומך ב-Service Worker')); return null; }
   try { return await navigator.serviceWorker.register('./sw.js'); } catch (e) { swError = e; console.warn('SW נכשל', e); return null; }
 })();
 
@@ -46,7 +47,7 @@ export async function forceRefresh() {
 // בודק מול השרת: איזו גרסה מפורסמת, ואילו קבצים שנדרשים לעבודה ללא אינטרנט חסרים שם
 export async function diagnoseServer() {
   const res = await fetch('./sw.js', { cache: 'no-store' });
-  if (!res.ok) return { error: `sw.js לא נמצא בשרת (${res.status})` };
+  if (!res.ok) return { error: tr('sw.js לא נמצא בשרת ({0})', res.status) };
   const txt = await res.text();
   const version = (txt.match(/const VERSION = '([^']+)'/) || [])[1] || '?';
   const core = (txt.match(/const CORE = \[([\s\S]*?)\];/) || [, ''])[1].match(/"([^"]+)"/g) || [];

@@ -1,4 +1,5 @@
 // גיבוי ושחזור לקובץ ZIP יחיד + הורדת פריטים נבחרים
+import { t as tr, LOCALE } from './i18n.js';
 import * as db from './db.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
@@ -9,9 +10,9 @@ import { h, fmtSize, downloadBlob, todayISO, safeName, uid } from './util.js';
 const FORMAT = 'planapp-backup';
 
 export async function exportProject() {
-  const pb = UI.progressBox('מכין גיבוי…');
+  const pb = UI.progressBox(tr('מכין גיבוי…'));
   try {
-    pb.set('אוסף נתונים…', 0.02);
+    pb.set(tr('אוסף נתונים…'), 0.02);
     const [folders, plans, versions, markups, measurements, links, calibrations] = await Promise.all(
       ['folders', 'plans', 'versions', 'markups', 'measurements', 'links', 'calibrations'].map((s) => db.getAll(s)));
     const data = {
@@ -25,29 +26,29 @@ export async function exportProject() {
       const t = await db.get('thumbs', v.id);
       if (t) entries.push({ name: `thumbs/${v.id}.jpg`, data: t.blob });
     }
-    const zip = await buildZip(entries, (i, n, name) => pb.set(`אורז ${i + 1}/${n}`, 0.05 + 0.6 * (i / n)));
+    const zip = await buildZip(entries, (i, n, name) => pb.set(tr('אורז {0}/{1}', i + 1, n), 0.05 + 0.6 * (i / n)));
     // אימות: פותחים את הגיבוי מחדש ובודקים שלמות (CRC) והתאמה לנתונים
-    pb.set('בודק שהגיבוי ניתן לשחזור…', 0.7);
+    pb.set(tr('בודק שהגיבוי ניתן לשחזור…'), 0.7);
     const z = await readZip(zip);
     const back = JSON.parse(await z.getText('project.json'));
     const problems = [];
-    if (back.format !== FORMAT) problems.push('פורמט לא תקין');
+    if (back.format !== FORMAT) problems.push(tr('פורמט לא תקין'));
     let k = 0;
     for (const v of back.versions) {
       const name = `files/${v.id}.pdf`;
-      if (!z.entries.has(name)) { problems.push('חסר קובץ PDF: ' + v.fileName); continue; }
-      if (z.entries.get(name).usize !== v.size) problems.push('גודל לא תואם: ' + v.fileName);
-      if (!(await z.checkCRC(name))) problems.push('שגיאת CRC: ' + v.fileName);
-      pb.set(`בודק ${++k}/${back.versions.length}`, 0.7 + 0.28 * (k / back.versions.length));
+      if (!z.entries.has(name)) { problems.push(tr('חסר קובץ PDF: ') + v.fileName); continue; }
+      if (z.entries.get(name).usize !== v.size) problems.push(tr('גודל לא תואם: ') + v.fileName);
+      if (!(await z.checkCRC(name))) problems.push(tr('שגיאת CRC: ') + v.fileName);
+      pb.set(tr('בודק {0}/{1}', ++k, back.versions.length), 0.7 + 0.28 * (k / back.versions.length));
     }
-    if (problems.length) throw new Error('הגיבוי לא עבר בדיקה, לא נשמר:\n' + problems.slice(0, 5).join('\n'));
+    if (problems.length) throw new Error(tr('הגיבוי לא עבר בדיקה, לא נשמר:\n') + problems.slice(0, 5).join('\n'));
     pb.close();
     downloadBlob(zip, `plans-backup-${todayISO()}.zip`);
-    UI.toast(`הגיבוי נוצר ועבר בדיקה (${fmtSize(zip.size)})`);
+    UI.toast(tr('הגיבוי נוצר ועבר בדיקה ({0})', fmtSize(zip.size)));
   } catch (e) {
     pb.close();
     console.error(e);
-    await UI.alertBox(e.message || String(e), { title: 'יצירת הגיבוי נכשלה' });
+    await UI.alertBox(e.message || String(e), { title: tr('יצירת הגיבוי נכשלה') });
   }
 }
 
@@ -58,24 +59,24 @@ export async function importFlow() {
   try {
     z = await readZip(file);
     data = JSON.parse(await z.getText('project.json'));
-    if (data.format !== FORMAT) throw new Error('זה לא קובץ גיבוי של האפליקציה');
-  } catch (e) { await UI.alertBox(e.message || String(e), { title: 'קובץ הגיבוי לא תקין' }); return; }
+    if (data.format !== FORMAT) throw new Error(tr('זה לא קובץ גיבוי של האפליקציה'));
+  } catch (e) { await UI.alertBox(e.message || String(e), { title: tr('קובץ הגיבוי לא תקין') }); return; }
 
   const totalSize = data.versions.reduce((s, v) => s + (v.size || 0), 0);
   const mode = { v: 'add' };
   const radio = (val, text, desc) => h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'mode', checked: val === 'add', onchange: () => { mode.v = val; } }), h('span', {}, h('b', {}, text), h('small', {}, desc)));
   const body = h('div', { class: 'stack' },
-    h('p', { class: 'msg' }, `הגיבוי מכיל ${data.folders.length} תיקיות, ${data.plans.length} תוכניות, ${data.versions.length} גרסאות (${fmtSize(totalSize)}). נוצר בתאריך ${new Date(data.createdAt).toLocaleDateString('he-IL')}.`),
-    radio('add', 'הוסף לפרויקט הקיים', 'הנתונים המשוחזרים יתווספו לצד מה שיש עכשיו. שום דבר לא נמחק.'),
-    radio('replace', 'החלף את כל הפרויקט הנוכחי', 'מוחק את כל מה שקיים כרגע במכשיר ומשחזר בדיוק את הגיבוי.'));
-  const go = await UI.modal({ title: 'שחזור מגיבוי', body, buttons: [{ text: 'ביטול', value: false }, { text: 'שחזר', kind: 'primary', value: true }] });
+    h('p', { class: 'msg' }, tr('הגיבוי מכיל {0} תיקיות, {1} תוכניות, {2} גרסאות ({3}). נוצר בתאריך {4}.', data.folders.length, data.plans.length, data.versions.length, fmtSize(totalSize), new Date(data.createdAt).toLocaleDateString(LOCALE))),
+    radio('add', tr('הוסף לפרויקט הקיים'), tr('הנתונים המשוחזרים יתווספו לצד מה שיש עכשיו. שום דבר לא נמחק.')),
+    radio('replace', tr('החלף את כל הפרויקט הנוכחי'), tr('מוחק את כל מה שקיים כרגע במכשיר ומשחזר בדיוק את הגיבוי.')));
+  const go = await UI.modal({ title: tr('שחזור מגיבוי'), body, buttons: [{ text: tr('ביטול'), value: false }, { text: tr('שחזר'), kind: 'primary', value: true }] });
   if (!go) return;
   if (mode.v === 'replace') {
-    const ok = await UI.confirmBox('כל התוכניות, התיקיות והסימונים הקיימים במכשיר יימחקו ויוחלפו בגיבוי. להמשיך?', { danger: true, okText: 'החלף הכל', title: 'אזהרה' });
+    const ok = await UI.confirmBox(tr('כל התוכניות, התיקיות והסימונים הקיימים במכשיר יימחקו ויוחלפו בגיבוי. להמשיך?'), { danger: true, okText: tr('החלף הכל'), title: tr('אזהרה') });
     if (!ok) return;
   }
 
-  const pb = UI.progressBox('משחזר…');
+  const pb = UI.progressBox(tr('משחזר…'));
   try {
     const add = mode.v === 'add';
     const maps = { f: new Map(), p: new Map(), v: new Map() };
@@ -88,12 +89,12 @@ export async function importFlow() {
     if (!add && data.project) await db.put('projects', data.project);
     let i = 0;
     for (const v of data.versions) {
-      pb.set(`משחזר ${++i}/${data.versions.length} – ${v.fileName}`, i / (data.versions.length + 1));
+      pb.set(tr('משחזר {0}/{1} – {2}', ++i, data.versions.length, v.fileName), i / (data.versions.length + 1));
       const nid = mp(maps.v, v.id);
       const fb = await z.getBlob(`files/${v.id}.pdf`);
       const bytes = await fb.arrayBuffer();
       const entry = z.entries.get(`files/${v.id}.pdf`);
-      if (crc32(new Uint8Array(bytes)) !== entry.crc) throw new Error('הקובץ פגום בגיבוי: ' + v.fileName);
+      if (crc32(new Uint8Array(bytes)) !== entry.crc) throw new Error(tr('הקובץ פגום בגיבוי: ') + v.fileName);
       const blob = new Blob([bytes], { type: 'application/pdf' });
       let thumb = null;
       if (z.entries.has(`thumbs/${v.id}.jpg`)) thumb = new Blob([await (await z.getBlob(`thumbs/${v.id}.jpg`)).arrayBuffer()], { type: 'image/jpeg' });
@@ -115,12 +116,12 @@ export async function importFlow() {
     await S.reload();
     for (const v of S.P.versions.values()) if (!v.indexed && !v.broken) S.enqueueIndex(v.id);
     pb.close();
-    UI.toast('השחזור הושלם');
+    UI.toast(tr('השחזור הושלם'));
   } catch (e) {
     pb.close();
     console.error(e);
     await S.reload();
-    await UI.alertBox((e.message || String(e)) + (mode.v === 'replace' ? '\nהשחזור נעצר באמצע – ייתכן שחלק מהנתונים חסרים. נסו שוב עם אותו קובץ.' : ''), { title: 'השחזור נכשל' });
+    await UI.alertBox((e.message || String(e)) + (mode.v === 'replace' ? tr('\nהשחזור נעצר באמצע – ייתכן שחלק מהנתונים חסרים. נסו שוב עם אותו קובץ.') : ''), { title: tr('השחזור נכשל') });
   }
 }
 
@@ -129,10 +130,10 @@ export async function downloadItems({ folders = [], plans = [] }) {
   if (!folders.length && plans.length === 1) {
     const p = S.P.plans.get(plans[0]);
     const b = await S.getFileBlob(p.currentVersionId);
-    if (b) downloadBlob(b, safeName(p.name) + '.pdf'); else UI.toast('הקובץ לא נמצא', { type: 'error' });
+    if (b) downloadBlob(b, safeName(p.name) + '.pdf'); else UI.toast(tr('הקובץ לא נמצא'), { type: 'error' });
     return;
   }
-  const pb = UI.progressBox('מכין קובץ ZIP…');
+  const pb = UI.progressBox(tr('מכין קובץ ZIP…'));
   try {
     const entries = [];
     const used = new Set();
@@ -149,23 +150,23 @@ export async function downloadItems({ folders = [], plans = [] }) {
     };
     for (const f of folders) await addFolder(f, '');
     for (const p of plans) await addPlan(p, '');
-    if (!entries.length) { pb.close(); UI.toast('אין קבצים להורדה'); return; }
-    const zip = await buildZip(entries, (i, n) => pb.set(`אורז ${i + 1}/${n}`, i / n));
+    if (!entries.length) { pb.close(); UI.toast(tr('אין קבצים להורדה')); return; }
+    const zip = await buildZip(entries, (i, n) => pb.set(tr('אורז {0}/{1}', i + 1, n), i / n));
     pb.close();
     downloadBlob(zip, `plans-${todayISO()}.zip`);
-  } catch (e) { pb.close(); await UI.alertBox(e.message || String(e), { title: 'ההורדה נכשלה' }); }
+  } catch (e) { pb.close(); await UI.alertBox(e.message || String(e), { title: tr('ההורדה נכשלה') }); }
 }
 
 // מסך אחד לגיבוי ושחזור (במקום כפתורי "ייצוא/ייבוא" מפוזרים)
 export function backupDialog() {
   const body = h('div', { class: 'form' },
-    h('h3', {}, 'גיבוי'),
-    h('p', { class: 'hint' }, 'קובץ ZIP אחד עם כל התוכניות, התיקיות, הגרסאות והסימונים. נשמר אצלך (הורדות) ומאומת אחרי היצירה. מומלץ לגבות מדי פעם ולשמור את הקובץ מחוץ לטלפון.'),
-    h('button', { class: 'btn primary', onclick: () => { m.close(); exportProject(); } }, 'צור גיבוי'),
-    h('h3', {}, 'שחזור'),
-    h('p', { class: 'hint' }, 'טוען קובץ גיבוי שיצרתם קודם. תוכלו לבחור אם להחליף את כל מה שיש כעת, או להוסיף אליו.'),
-    h('button', { class: 'btn', onclick: () => { m.close(); importFlow(); } }, 'שחזר מקובץ גיבוי'),
-    h('p', { class: 'hint' }, 'הורדת תוכניות או תיקייה בלי הסימונים (קבצי PDF בלבד, כ-ZIP): תפריט ⋮ של התיקייה ← "הורד כ-ZIP".'));
-  const m = UI.openModal({ title: 'גיבוי ושחזור', body, buttons: [{ text: 'סגור', value: true }] });
+    h('h3', {}, tr('גיבוי')),
+    h('p', { class: 'hint' }, tr('קובץ ZIP אחד עם כל התוכניות, התיקיות, הגרסאות והסימונים. נשמר אצלך (הורדות) ומאומת אחרי היצירה. מומלץ לגבות מדי פעם ולשמור את הקובץ מחוץ לטלפון.')),
+    h('button', { class: 'btn primary', onclick: () => { m.close(); exportProject(); } }, tr('צור גיבוי')),
+    h('h3', {}, tr('שחזור')),
+    h('p', { class: 'hint' }, tr('טוען קובץ גיבוי שיצרתם קודם. תוכלו לבחור אם להחליף את כל מה שיש כעת, או להוסיף אליו.')),
+    h('button', { class: 'btn', onclick: () => { m.close(); importFlow(); } }, tr('שחזר מקובץ גיבוי')),
+    h('p', { class: 'hint' }, tr('הורדת תוכניות או תיקייה בלי הסימונים (קבצי PDF בלבד, כ-ZIP): תפריט ⋮ של התיקייה ← "הורד כ-ZIP".')));
+  const m = UI.openModal({ title: tr('גיבוי ושחזור'), body, buttons: [{ text: tr('סגור'), value: true }] });
   return m.promise;
 }

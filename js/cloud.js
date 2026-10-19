@@ -1,4 +1,5 @@
 // חיבור לענן (Supabase): התחברות, תפקידים והרשאות. אם לא מחוברים – האפליקציה עובדת מקומית כמו קודם.
+import { t as tr } from './i18n.js';
 import { createClient } from '../lib/supabase.js';
 import { CLOUD } from './config.js';
 import * as db from './db.js';
@@ -67,21 +68,21 @@ async function handleAuthLink(sb) {
   if (!/access_token=|error_description=|type=recovery/.test(hash)) return;
   const q = new URLSearchParams(hash.replace(/^#\/?/, ''));
   try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ }
-  if (q.get('error_description')) { cloud.linkError = 'הקישור לא תקין או שפג תוקפו. בקשו קישור חדש.'; return; }
+  if (q.get('error_description')) { cloud.linkError = tr('הקישור לא תקין או שפג תוקפו. בקשו קישור חדש.'); return; }
   if (q.get('access_token') && q.get('refresh_token')) {
     const { error } = await sb.auth.setSession({ access_token: q.get('access_token'), refresh_token: q.get('refresh_token') });
-    if (error) { cloud.linkError = 'הקישור לא תקין או שפג תוקפו. בקשו קישור חדש.'; return; }
+    if (error) { cloud.linkError = tr('הקישור לא תקין או שפג תוקפו. בקשו קישור חדש.'); return; }
     if (q.get('type') === 'recovery') cloud.recovery = true;
   }
 }
 export async function requestPasswordReset(email) {
   const redirectTo = location.origin + location.pathname;
   const { error } = await client().auth.resetPasswordForEmail(email.trim(), { redirectTo });
-  if (error) throw new Error(/rate|seconds/i.test(error.message) ? 'נשלח כבר מייל לאחרונה. המתינו דקה ונסו שוב.' : error.message);
+  if (error) throw new Error(/rate|seconds/i.test(error.message) ? tr('נשלח כבר מייל לאחרונה. המתינו דקה ונסו שוב.') : error.message);
 }
 export async function setNewPassword(pw) {
   const { error } = await client().auth.updateUser({ password: pw });
-  if (error) throw new Error(/same|different/i.test(error.message) ? 'הסיסמה החדשה זהה לקודמת' : error.message);
+  if (error) throw new Error(/same|different/i.test(error.message) ? tr('הסיסמה החדשה זהה לקודמת') : error.message);
 }
 
 export async function loadProfile() {
@@ -111,7 +112,7 @@ export async function loadGrants() {
 
 export async function signIn(email, password) {
   const { data, error } = await client().auth.signInWithPassword({ email: email.trim(), password });
-  if (error) throw new Error(error.message === 'Invalid login credentials' ? 'אימייל או סיסמה שגויים' : error.message);
+  if (error) throw new Error(error.message === 'Invalid login credentials' ? tr('אימייל או סיסמה שגויים') : error.message);
   cloud.user = { id: data.user.id, email: data.user.email };
   ls.set('uid', cloud.user.id); ls.set('email', cloud.user.email); ls.set('mode', 'cloud');
   cloud.mode = 'cloud'; cloud.needLogin = false;
@@ -151,7 +152,7 @@ export function levelOfPlan(id, plans, folders) {
 export const fnUrl = (name) => `${CLOUD.url}/functions/v1/${name}`;
 export async function authHeaders(extra = {}) {
   const { data: { session } } = await client().auth.getSession();
-  if (!session) throw new Error('לא מחובר');
+  if (!session) throw new Error(tr('לא מחובר'));
   return { Authorization: `Bearer ${session.access_token}`, apikey: CLOUD.key, ...extra };
 }
 export async function callFn(name, body) {
@@ -160,7 +161,7 @@ export async function callFn(name, body) {
   catch (e) { if (e && typeof e === 'object') { e.where = e.where || 'fn:' + name; e.fn = name; } diag.err('fn:' + name, e, { phase: 'network' }); throw e; }
   let j = null; try { j = await res.json(); } catch { /* ignore */ }
   if (!res.ok) {
-    const e = new Error(j?.message || j?.error || ('שגיאה ' + res.status));
+    const e = new Error(j?.message || j?.error || (tr('שגיאה ') + res.status));
     e.status = res.status; e.code = j?.error; e.fn = name; e.step = j?.step; e.serverStatus = j?.status; e.where = 'fn:' + name;
     diag.err('fn:' + name, e, { action: body?.action || undefined });
     throw e;

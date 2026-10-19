@@ -1,5 +1,6 @@
 // סנכרון בין המסד המקומי (IndexedDB) לענן. כלל: השמירה האחרונה גוברת.
 // תיקיות, תוכניות, גרסאות וקבצי ה-PDF (ב-Google Drive), וגם סימונים/מדידות/כיולים/קישורים (item-sync.js).
+import { t as tr, LOCALE } from './i18n.js';
 import * as db from './db.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
@@ -13,13 +14,13 @@ let dirtyItems = 0;
 const subs = new Set();
 export const onSyncStatus = (fn) => { subs.add(fn); return () => subs.delete(fn); };
 export function syncStatus() {
-  if (!isCloud()) return { kind: 'local', text: 'מצב מקומי' };
-  if (!navigator.onLine) return { kind: 'offline', text: 'אין חיבור – השינויים יסונכרנו בהמשך' + (pendingCount() ? ` (${pendingCount()} ממתינים)` : '') };
-  if (st.err) return { kind: 'error', text: 'שגיאת סנכרון: ' + st.err };
-  if (st.pushing || st.pulling) return { kind: 'busy', text: 'מסנכרן…' };
+  if (!isCloud()) return { kind: 'local', text: tr('מצב מקומי') };
+  if (!navigator.onLine) return { kind: 'offline', text: tr('אין חיבור – השינויים יסונכרנו בהמשך') + (pendingCount() ? tr(' ({0} ממתינים)', pendingCount()) : '') };
+  if (st.err) return { kind: 'error', text: tr('שגיאת סנכרון: ') + st.err };
+  if (st.pushing || st.pulling) return { kind: 'busy', text: tr('מסנכרן…') };
   const n = pendingCount();
-  if (n) return { kind: 'pending', text: `${n} שינויים ממתינים לסנכרון` };
-  return { kind: 'ok', text: st.last ? 'מסונכרן ' + new Date(st.last).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : 'מחובר' };
+  if (n) return { kind: 'pending', text: tr('{0} שינויים ממתינים לסנכרון', n) };
+  return { kind: 'ok', text: st.last ? tr('מסונכרן ') + new Date(st.last).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : tr('מחובר') };
 }
 const emitStatus = () => subs.forEach((f) => { try { f(syncStatus()); } catch { /* ignore */ } });
 
@@ -101,8 +102,8 @@ const items = createItemSync({
 async function refreshDirty() { try { dirtyItems = await items.dirtyCount(); } catch { /* ignore */ } emitStatus(); }
 async function pushItemsStep() {
   const r = await items.push();
-  if (r['denied-edit']) deniedToast('עריכת סימונים שאינם שלך');
-  if (r['denied-new']) deniedToast('הוספת סימונים בתוכנית הזו');
+  if (r['denied-edit']) deniedToast(tr('עריכת סימונים שאינם שלך'));
+  if (r['denied-new']) deniedToast(tr('הוספת סימונים בתוכנית הזו'));
   await refreshDirty();
 }
 // לממשק: מה מותר לי לעשות בפריט / בתוכנית
@@ -127,7 +128,7 @@ async function remoteWrite(table, rec, row, markDone) {
     const { error } = await sb.from(table).insert(row);
     if (!error) ok = true;
     else if (error.code === '23505') rec._s = 1;                       // כבר קיים – נמשיך לעדכון
-    else if (error.code === '42501') { diag.warn('write:' + table, 'אין הרשאה להוסיף לענן (RLS 42501)', { id: rec.id, name: rec.name || rec.fileName }); return 'denied-new'; }
+    else if (error.code === '42501') { diag.warn('write:' + table, tr('אין הרשאה להוסיף לענן (RLS 42501)'), { id: rec.id, name: rec.name || rec.fileName }); return 'denied-new'; }
     else throw tag(error, 'write:' + table, { op: 'insert', id: rec.id, name: rec.name || rec.fileName });
   }
   if (!ok) {
@@ -136,13 +137,13 @@ async function remoteWrite(table, rec, row, markDone) {
       // המזהה המקומי של קובץ ה-Drive שונה מזה שבענן (למשל אחרי העלאה כפולה). הענן הוא המקור הקובע.
       const { data: cur } = await sb.from('versions').select('drive_file_id').eq('id', rec.id).maybeSingle();
       if (cur?.drive_file_id && cur.drive_file_id !== row.drive_file_id) {
-        diag.warn('write:versions', 'מזהה הקובץ המקומי שונה מזה שבענן. משתמשים בזה שבענן', { id: rec.id, name: rec.fileName, local: row.drive_file_id, cloud: cur.drive_file_id });
+        diag.warn('write:versions', tr('מזהה הקובץ המקומי שונה מזה שבענן. משתמשים בזה שבענן'), { id: rec.id, name: rec.fileName, local: row.drive_file_id, cloud: cur.drive_file_id });
         row.drive_file_id = cur.drive_file_id; rec.driveId = cur.drive_file_id;
         ({ data, error } = await sb.from(table).update(row).eq('id', rec.id).select('id'));
       }
     }
     if (error) throw tag(error, 'write:' + table, { op: 'update', id: rec.id, name: rec.name || rec.fileName, driveId: row.drive_file_id });
-    if (!data || !data.length) { diag.warn('write:' + table, 'העדכון לא נקלט בענן (אין הרשאה או שהרשומה לא קיימת)', { id: rec.id, name: rec.name || rec.fileName }); return 'denied'; }
+    if (!data || !data.length) { diag.warn('write:' + table, tr('העדכון לא נקלט בענן (אין הרשאה או שהרשומה לא קיימת)'), { id: rec.id, name: rec.name || rec.fileName }); return 'denied'; }
   }
   rec._s = 1;
   if (rec.updatedAt === stampv) rec._d = 0;
@@ -177,8 +178,8 @@ async function pushAll() {
 function friendly(e) {
   const m = String(e?.message || e || '');
   const w = e?.where ? `[${diag.label(e.where)}] ` : '';
-  if (/Failed to fetch|NetworkError|network/i.test(m)) return (w + 'אין חיבור לשרת').slice(0, 220);
-  const extra = [e?.step && `שלב ${e.step}`, (e?.serverStatus || e?.status) && `סטטוס ${e.serverStatus || e.status}`, e?.code && !m.includes(String(e.code)) && `קוד ${e.code}`].filter(Boolean).join(', ');
+  if (/Failed to fetch|NetworkError|network/i.test(m)) return (w + tr('אין חיבור לשרת')).slice(0, 220);
+  const extra = [e?.step && tr('שלב {0}', e.step), (e?.serverStatus || e?.status) && tr('סטטוס {0}', e.serverStatus || e.status), e?.code && !m.includes(String(e.code)) && tr('קוד {0}', e.code)].filter(Boolean).join(', ');
   return (w + m + (extra ? ` (${extra})` : '')).slice(0, 260);
 }
 // מסמן על שגיאה באיזה שלב היא קרתה, ורושם ביומן התקלות
@@ -186,7 +187,7 @@ function tag(e, where, ctx = {}) {
   const err = e && typeof e === 'object' ? e : new Error(String(e));
   if (!err.where) err.where = where;
   err.ctx = { ...(err.ctx || {}), ...ctx };
-  if (err._diag) { if (Object.keys(ctx).length) diag.log('error', where, 'השלב נכשל: ' + (err.message || ''), ctx); }
+  if (err._diag) { if (Object.keys(ctx).length) diag.log('error', where, tr('השלב נכשל: ') + (err.message || ''), ctx); }
   else diag.err(where, err, ctx);
   return err;
 }
@@ -203,23 +204,23 @@ async function pushTombs() {
   tombs = keep; await saveTombs();
 }
 
-function deniedToast(what) { UI.toast(`אין לך הרשאה ל${what} – השינוי בוטל`, { type: 'error', ms: 4500 }); st.denied = true; }
+function deniedToast(what) { UI.toast(tr('אין לך הרשאה ל{0} – השינוי בוטל', what), { type: 'error', ms: 4500 }); st.denied = true; }
 
 async function pushFolders() {
   const list = [...S.R.folders.values()].filter((f) => f._d).sort((a, b) => depth(a) - depth(b));
   for (const f of list) {
     const r = await remoteWrite('folders', f, { id: f.id, parent_id: f.parentId || null, data: strip(f), deleted: false }, (x) => db.put('folders', x));
-    if (r === 'denied') { f._d = 0; await db.put('folders', f); deniedToast('שינוי התיקייה'); }
-    else if (r === 'denied-new') { deniedToast('יצירת תיקייה כאן'); await S.purgeLocal({ folderIds: [f.id] }); }
+    if (r === 'denied') { f._d = 0; await db.put('folders', f); deniedToast(tr('שינוי התיקייה')); }
+    else if (r === 'denied-new') { deniedToast(tr('יצירת תיקייה כאן')); await S.purgeLocal({ folderIds: [f.id] }); }
   }
 }
 async function pushPlans() {
   const list = [...S.R.plans.values()].filter((p) => p._d);
   for (const p of list) {
     const r = await remoteWrite('plans', p, { id: p.id, folder_id: p.folderId || null, data: strip(p), deleted: false }, (x) => db.put('plans', x));
-    if (r === 'denied') { p._d = 0; await db.put('plans', p); deniedToast('שינוי התוכנית'); }
+    if (r === 'denied') { p._d = 0; await db.put('plans', p); deniedToast(tr('שינוי התוכנית')); }
     else if (r === 'denied-new') {
-      deniedToast('הוספת תוכניות כאן');
+      deniedToast(tr('הוספת תוכניות כאן'));
       await S.purgeLocal({ planIds: [p.id], versionIds: S.versionsOf(p.id).map((v) => v.id) });
     }
   }
@@ -243,8 +244,8 @@ async function pushVersions() {
     delete data.thumb;
     if (th?.blob && th.blob.size < 120000) data.thumb = await blobToB64(th.blob);
     const r = await remoteWrite('versions', v, { id: v.id, plan_id: v.planId, drive_file_id: v.driveId, data, deleted: false }, (x) => db.put('versions', x));
-    if (r === 'denied') { v._d = 0; await db.put('versions', v); deniedToast('שינוי הגרסה'); }
-    else if (r === 'denied-new') { deniedToast('הוספת גרסה'); await S.purgeLocal({ versionIds: [v.id] }); }
+    if (r === 'denied') { v._d = 0; await db.put('versions', v); deniedToast(tr('שינוי הגרסה')); }
+    else if (r === 'denied-new') { deniedToast(tr('הוספת גרסה')); await S.purgeLocal({ versionIds: [v.id] }); }
   }
 }
 
@@ -257,7 +258,7 @@ async function adoptRemoteDrive(v) {
     if (!data?.drive_file_id) return false;
     v.driveId = data.drive_file_id; v._up = 0;
     await db.put('versions', v);
-    diag.info('adopt', 'הגרסה כבר קיימת בענן, משתמשים בקובץ שלה ולא מעלים שוב', { id: v.id, file: v.fileName });
+    diag.info('adopt', tr('הגרסה כבר קיימת בענן, משתמשים בקובץ שלה ולא מעלים שוב'), { id: v.id, file: v.fileName });
     return true;
   } catch (e) { diag.err('adopt', e, { id: v.id }); return false; }
 }
@@ -266,10 +267,10 @@ async function adoptRemoteDrive(v) {
 async function uploadFile(v) {
   const rec = await db.get('files', v.id);
   const ctx = { id: v.id, file: v.fileName, size: v.size };
-  if (!rec?.blob) { diag.warn('upload', 'הקובץ לא נמצא בזיכרון המכשיר, לא ניתן להעלות אותו (ייתכן שנמחק או שלא נשמר)', ctx); return false; }
+  if (!rec?.blob) { diag.warn('upload', tr('הקובץ לא נמצא בזיכרון המכשיר, לא ניתן להעלות אותו (ייתכן שנמחק או שלא נשמר)'), ctx); return false; }
   const blob = rec.blob;
   const t0 = Date.now();
-  prog.cur = v.fileName || 'תוכנית'; prog.curSent = 0; emitProgress(true);
+  prog.cur = v.fileName || tr('תוכנית'); prog.curSent = 0; emitProgress(true);
   const s = await step('upload:session', ctx, () => callFn('drive-upload-session', { planId: v.planId, name: v.fileName || 'plan.pdf', size: blob.size }));
   // העלאה עם דיווח התקדמות (fetch לא מדווח על העלאה, XHR כן). שגיאת CORS בסוף לא משנה – מאמתים מול השרת.
   const put = { status: 0, how: '' };
@@ -283,17 +284,17 @@ async function uploadFile(v) {
     x.onabort = () => { put.how = 'abort'; res(false); };
     x.send(blob);
   });
-  if (!putOk) diag.warn('upload:put', `שליחת הקובץ לגוגל לא החזירה הצלחה (${put.how}, סטטוס ${put.status || 'לא ידוע'}). בודקים מול השרת אם הקובץ בכל זאת הגיע`, { ...ctx, ms: Date.now() - t0 });
+  if (!putOk) diag.warn('upload:put', tr('שליחת הקובץ לגוגל לא החזירה הצלחה ({0}, סטטוס {1}). בודקים מול השרת אם הקובץ בכל זאת הגיע', put.how, put.status || tr('לא ידוע')), { ...ctx, ms: Date.now() - t0 });
   let verr = null;
   const chk = await callFn('drive-upload-session', { action: 'verify', fileId: s.fileId }).catch((e) => { verr = e; return null; });
   if (!chk?.exists || chk.size !== blob.size) {
-    const e = new Error(putOk ? 'ההעלאה לא אומתה (הקובץ ב-Drive שונה מהמקורי או חסר)' : 'ההעלאה ל-Drive נכשלה');
+    const e = new Error(putOk ? tr('ההעלאה לא אומתה (הקובץ ב-Drive שונה מהמקורי או חסר)') : tr('ההעלאה ל-Drive נכשלה'));
     e.where = 'upload:verify';
     throw tag(e, 'upload:verify', { ...ctx, putOk, putStatus: put.status, putHow: put.how, remoteExists: chk?.exists, remoteSize: chk?.size, driveStatus: chk?.driveStatus, driveMessage: chk?.driveMessage, localSize: blob.size, verifyError: verr ? String(verr.message) : undefined });
   }
   v.driveId = s.fileId; v._up = 0;
   await db.put('versions', v);
-  diag.info('upload', 'הקובץ הועלה ל-Drive ואומת', { ...ctx, ms: Date.now() - t0 });
+  diag.info('upload', tr('הקובץ הועלה ל-Drive ואומת'), { ...ctx, ms: Date.now() - t0 });
   return true;
 }
 
@@ -399,15 +400,15 @@ const inflight = new Map();
 async function remoteFile(versionId) {
   const v = S.P.versions.get(versionId);
   if (!isCloud() || !v?.driveId) return null;
-  if (!navigator.onLine) { UI.toast('אין חיבור לאינטרנט, והקובץ הזה עוד לא הורד למכשיר', { type: 'error', ms: 4500 }); return null; }
+  if (!navigator.onLine) { UI.toast(tr('אין חיבור לאינטרנט, והקובץ הזה עוד לא הורד למכשיר'), { type: 'error', ms: 4500 }); return null; }
   if (inflight.has(versionId)) return inflight.get(versionId);
   const pr = (async () => {
-    const pb = UI.progressBox ? UI.progressBox('מוריד את התוכנית מהענן…') : null;
+    const pb = UI.progressBox ? UI.progressBox(tr('מוריד את התוכנית מהענן…')) : null;
     try {
       const res = await fetch(`${fnUrl('drive-download')}?v=${encodeURIComponent(versionId)}`, { headers: await authHeaders() });
       if (!res.ok) {
         let j = null; try { j = await res.clone().json(); } catch { /* ignore */ }
-        const e = new Error(res.status === 404 ? 'אין הרשאה או שהקובץ לא נמצא' : 'ההורדה נכשלה (' + res.status + ')');
+        const e = new Error(res.status === 404 ? tr('אין הרשאה או שהקובץ לא נמצא') : tr('ההורדה נכשלה (') + res.status + ')');
         e.status = res.status; e.code = j?.error; e.step = j?.step; e.serverStatus = j?.status; e.detail = j?.message;
         throw e;
       }
@@ -418,10 +419,10 @@ async function remoteFile(versionId) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value); got += value.length;
-        if (pb && total) pb.set(`מוריד… ${Math.round((got / 1048576) * 10) / 10}MB`, Math.min(0.99, got / total));
+        if (pb && total) pb.set(tr('מוריד… {0}MB', Math.round((got / 1048576) * 10) / 10), Math.min(0.99, got / total));
       }
       const blob = new Blob(chunks, { type: 'application/pdf' });
-      if (v.size && blob.size !== v.size) throw new Error('הקובץ שהורד לא שלם, נסו שוב');
+      if (v.size && blob.size !== v.size) throw new Error(tr('הקובץ שהורד לא שלם, נסו שוב'));
       await db.put('files', { id: versionId, blob });
       S.enqueueIndex(versionId);
       return blob;
@@ -438,7 +439,7 @@ async function remoteFile(versionId) {
 // ---------- הרשאות בצד הממשק ----------
 function guard(kind, ids) {
   if (!isCloud() || isAdmin()) return;
-  const deny = () => { throw new Error('אין לך הרשאת עריכה כאן'); };
+  const deny = () => { throw new Error(tr('אין לך הרשאת עריכה כאן')); };
   for (const id of ids) {
     if (kind === 'folder-in') { if (levelOfFolder(id, S.R.folders) < 3) deny(); }
     else if (kind === 'folder') { const f = S.R.folders.get(id); if (f && levelOfFolder(id, S.R.folders) < 3) deny(); }

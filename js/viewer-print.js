@@ -1,5 +1,6 @@
 // הדפסה ושמירה כ-PDF של העמוד הנוכחי כולל הסימונים, הטקסטים והמדידות שמוצגים.
 // הערה: התוכנית עצמה נשלחת כתמונה ברזולוציה עד ~200 DPI (מוגבלת ל-12 מגה-פיקסל, כדי לא לקרוס בטלפון).
+import { t as tr } from './i18n.js';
 import * as UI from './ui.js';
 import { h, icon, safeName, downloadBlob } from './util.js';
 import { svg, drawItem } from './markup.js';
@@ -36,23 +37,23 @@ export function installPrint(V) {
   Object.assign(V.prototype, {
     async printDialog() {
       if (!this.page) return;
-      const paper = h('select', {}, h('option', { value: 'plan' }, 'כגודל התוכנית המקורי'), h('option', { value: 'A4' }, 'A4 (מתאים את התוכנית לדף)'), h('option', { value: 'A3' }, 'A3 (מתאים את התוכנית לדף)'));
+      const paper = h('select', {}, h('option', { value: 'plan' }, tr('כגודל התוכנית המקורי')), h('option', { value: 'A4' }, tr('A4 (מתאים את התוכנית לדף)')), h('option', { value: 'A3' }, tr('A3 (מתאים את התוכנית לדף)')));
       const mk = (label, on) => { const cb = h('input', { type: 'checkbox', checked: on }); return { cb, el: h('label', { class: 'check' }, cb, label) }; };
-      const cMk = mk('סימונים וטקסטים שלי', true), cMs = mk('מדידות', true), cLn = mk('קישורים (המסגרות המקווקוות)', false);
+      const cMk = mk(tr('סימונים וטקסטים שלי'), true), cMs = mk(tr('מדידות'), true), cLn = mk(tr('קישורים (המסגרות המקווקוות)'), false);
       const body = h('div', { class: 'form' },
-        h('p', { class: 'msg' }, `עמוד ${this.pageNum} מתוך ${this.numPages} בתוכנית "${this.plan.name}".`),
-        h('label', {}, 'גודל נייר'), paper, cMk.el, cMs.el, cLn.el,
-        h('p', { class: 'hint' }, 'התוכנית מודפסת כתמונה ברזולוציה עד כ-200 DPI (בתוכניות ענק מוגבלת מעט כדי לא להכביד על המכשיר). אם המדפסת לא תומכת בגודל המקורי, בחרו בחלון ההדפסה "התאם לדף". "שמור כ-PDF" יוצר קובץ שאפשר לשתף או לפתוח באפליקציה אחרת.'));
+        h('p', { class: 'msg' }, tr('עמוד {0} מתוך {1} בתוכנית "{2}".', this.pageNum, this.numPages, this.plan.name)),
+        h('label', {}, tr('גודל נייר')), paper, cMk.el, cMs.el, cLn.el,
+        h('p', { class: 'hint' }, tr('התוכנית מודפסת כתמונה ברזולוציה עד כ-200 DPI (בתוכניות ענק מוגבלת מעט כדי לא להכביד על המכשיר). אם המדפסת לא תומכת בגודל המקורי, בחרו בחלון ההדפסה "התאם לדף". "שמור כ-PDF" יוצר קובץ שאפשר לשתף או לפתוח באפליקציה אחרת.')));
       const r = await UI.modal({
-        title: 'הדפסה / שמירה כ-PDF', body,
-        buttons: [{ text: 'ביטול', value: null }, { text: 'שמור / שתף PDF', icon: 'share', value: 'pdf' }, { text: 'הדפס', kind: 'primary', icon: 'print', value: 'print' }],
+        title: tr('הדפסה / שמירה כ-PDF'), body,
+        buttons: [{ text: tr('ביטול'), value: null }, { text: tr('שמור / שתף PDF'), icon: 'share', value: 'pdf' }, { text: tr('הדפס'), kind: 'primary', icon: 'print', value: 'print' }],
       });
       if (!r) return;
       const opts = { paper: paper.value, markups: cMk.cb.checked, measurements: cMs.cb.checked, links: cLn.cb.checked };
-      const pb = UI.progressBox('מכין את העמוד…');
+      const pb = UI.progressBox(tr('מכין את העמוד…'));
       let comp;
-      try { pb.set('מצייר את התוכנית והסימונים…', 0.4); comp = await this.renderComposite(opts); } catch (e) {
-        console.error(e); pb.close(); UI.alertBox('לא הצלחנו להכין את העמוד להדפסה: ' + (e.message || e), { title: 'שגיאה' }); return;
+      try { pb.set(tr('מצייר את התוכנית והסימונים…'), 0.4); comp = await this.renderComposite(opts); } catch (e) {
+        console.error(e); pb.close(); UI.alertBox(tr('לא הצלחנו להכין את העמוד להדפסה: ') + (e.message || e), { title: tr('שגיאה') }); return;
       }
       pb.close();
       if (r === 'print') this.sendToPrinter(comp, opts); else await this.savePagePdf(comp);
@@ -77,13 +78,13 @@ export function installPrint(V) {
         const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(root)], { type: 'image/svg+xml;charset=utf-8' }));
         try {
           const img = new Image();
-          await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('ציור הסימונים נכשל')); img.src = url; });
+          await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error(tr('ציור הסימונים נכשל'))); img.src = url; });
           ctx.drawImage(img, 0, 0, W, H);
         } finally { URL.revokeObjectURL(url); }
       }
       const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
       c.width = c.height = 0;
-      if (!blob) throw new Error('יצירת התמונה נכשלה (חסר זיכרון?)');
+      if (!blob) throw new Error(tr('יצירת התמונה נכשלה (חסר זיכרון?)'));
       return { blob, W, H, pw, ph, count: items.length };
     },
 
@@ -114,13 +115,13 @@ export function installPrint(V) {
     async savePagePdf(comp) {
       const jpeg = new Uint8Array(await comp.blob.arrayBuffer());
       const pdf = jpegToPdf(jpeg, comp.W, comp.H, comp.pw, comp.ph);
-      const name = `${safeName(this.plan.name)}_עמוד${this.pageNum}_עם_סימונים.pdf`;
+      const name = tr('{0}_עמוד{1}_עם_סימונים.pdf', safeName(this.plan.name), this.pageNum);
       const file = new File([pdf], name, { type: 'application/pdf' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
       }
       downloadBlob(pdf, name);
-      UI.toast('הקובץ נשמר (' + name + ')');
+      UI.toast(tr('הקובץ נשמר (') + name + ')');
     },
   });
 }

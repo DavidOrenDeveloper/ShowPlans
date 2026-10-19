@@ -1,4 +1,5 @@
 // העלאת תיקייה שלמה כולל כל תתי-התיקיות (בחירת תיקייה, גרירה במחשב, או קובץ ZIP), ושמירה על המבנה המקורי.
+import { t as tr } from './i18n.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
 import { readZip } from './zip.js';
@@ -104,7 +105,7 @@ export async function treeFromZip(file) {
 export async function importTree(tree, targetFolderId, { skipExisting = true } = {}) {
   const pdfs = tree.files.filter((f) => isPdf(f.path[f.path.length - 1]));
   const nonPdf = tree.files.length - pdfs.length + (tree.skipped || 0);
-  if (!pdfs.length && !tree.dirs.length) { UI.toast('לא נמצאו קבצי PDF', { type: 'error' }); return null; }
+  if (!pdfs.length && !tree.dirs.length) { UI.toast(tr('לא נמצאו קבצי PDF'), { type: 'error' }); return null; }
 
   // כל התיקיות הנדרשות (גם אלה שמופיעות רק כחלק מנתיב של קובץ)
   const dirKeys = new Map();
@@ -116,12 +117,12 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
 
   let stop = false;
   const txt = h('div', { class: 'msg' }, ''), bar = h('div', { class: 'bar-fill' });
-  const m = UI.openModal({ title: 'מעלה תיקייה…', cancelable: false, body: h('div', {}, txt, h('div', { class: 'bar' }, bar)), buttons: [{ text: 'עצור', keepOpen: true, onClick: () => { stop = true; txt.textContent = 'עוצר אחרי הקובץ הנוכחי…'; return false; } }] });
+  const m = UI.openModal({ title: tr('מעלה תיקייה…'), cancelable: false, body: h('div', {}, txt, h('div', { class: 'bar' }, bar)), buttons: [{ text: tr('עצור'), keepOpen: true, onClick: () => { stop = true; txt.textContent = tr('עוצר אחרי הקובץ הנוכחי…'); return false; } }] });
   const total = pdfs.length; // סופרים רק קבצים. תיקיות לא נספרות
   let done = 0;
   const res = { folders: 0, plans: 0, existing: 0, failed: [], nonPdf, stopped: false };
   const idOf = new Map([['', targetFolderId || null]]);
-  const tick = (label) => { txt.textContent = total ? `${done} מתוך ${total} קבצים · ${label}` : label; bar.style.width = Math.round((done / Math.max(1, total)) * 100) + '%'; };
+  const tick = (label) => { txt.textContent = total ? tr('{0} מתוך {1} קבצים · {2}', done, total, label) : label; bar.style.width = Math.round((done / Math.max(1, total)) * 100) + '%'; };
   try {
     for (const parts of dirs) {
       if (stop) break;
@@ -130,7 +131,7 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
       let f = S.childFolders(parent).find((x) => x.name === name);
       if (!f) { f = await S.createFolder(parent, name); res.folders++; }
       idOf.set(key, f.id);
-      tick('יוצר תיקייה: ' + name);
+      tick(tr('יוצר תיקייה: ') + name);
     }
     for (const it of pdfs) {
       if (stop) break;
@@ -140,16 +141,16 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
       try {
         if (skipExisting && S.plansIn(folderId).some((p) => p.originalName === fname)) res.existing++;
         else { await S.importPdf(it.lazy ? await it.lazy.get() : it.file, folderId); res.plans++; }
-      } catch (e) { console.error(e); res.failed.push({ name: it.path.join('/'), msg: e.message || String(e) }); if (/הרשאה|אחסון/.test(e.message || '')) { stop = true; } }
+      } catch (e) { console.error(e); res.failed.push({ name: it.path.join('/'), msg: e.message || String(e) }); if (/הרשאה|אחסון|permission|storage/i.test(e.message || '')) { stop = true; } }
       done++;
     }
     res.stopped = stop;
   } finally { m.close(); }
-  const bits = [`נוצרו ${res.folders} תיקיות`, `נוספו ${res.plans} תוכניות`];
-  if (res.existing) bits.push(`${res.existing} כבר היו קיימות ודולגו`);
-  if (res.nonPdf) bits.push(`${res.nonPdf} קבצים שאינם PDF דולגו`);
-  UI.toast(bits.join(' · ') + (res.stopped ? ' (נעצר)' : ''), { ms: 6000 });
-  if (res.failed.length) await UI.alertBox(res.failed.slice(0, 15).map((f) => `${f.name}: ${f.msg}`).join('\n') + (res.failed.length > 15 ? `\n…ועוד ${res.failed.length - 15}` : ''), { title: 'חלק מהקבצים לא נשמרו' });
+  const bits = [tr('נוצרו {0} תיקיות', res.folders), tr('נוספו {0} תוכניות', res.plans)];
+  if (res.existing) bits.push(tr('{0} כבר היו קיימות ודולגו', res.existing));
+  if (res.nonPdf) bits.push(tr('{0} קבצים שאינם PDF דולגו', res.nonPdf));
+  UI.toast(bits.join(' · ') + (res.stopped ? tr(' (נעצר)') : ''), { ms: 6000 });
+  if (res.failed.length) await UI.alertBox(res.failed.slice(0, 15).map((f) => `${f.name}: ${f.msg}`).join('\n') + (res.failed.length > 15 ? tr('\n…ועוד {0}', res.failed.length - 15) : ''), { title: tr('חלק מהקבצים לא נשמרו') });
   return res;
 }
 
@@ -163,29 +164,29 @@ export async function uploadFolderFlow(targetFolderId) {
     const r = await pickDirectory();
     if (!r) return null;
     if (r.noPaths) {
-      await UI.alertBox('הדפדפן במכשיר הזה לא מאפשר לבחור תיקייה שלמה (הוא החזיר קבצים בלי מבנה תיקיות). הדרך המומלצת בטלפון: לדחוס את התיקייה לקובץ ZIP ולהעלות אותו דרך "העלאת ZIP עם מבנה תיקיות". במחשב אפשר לבחור תיקייה או לגרור אותה לחלון.', { title: 'בחירת תיקייה לא נתמכת כאן' });
+      await UI.alertBox(tr('הדפדפן במכשיר הזה לא מאפשר לבחור תיקייה שלמה (הוא החזיר קבצים בלי מבנה תיקיות). הדרך המומלצת בטלפון: לדחוס את התיקייה לקובץ ZIP ולהעלות אותו דרך "העלאת ZIP עם מבנה תיקיות". במחשב אפשר לבחור תיקייה או לגרור אותה לחלון.'), { title: tr('בחירת תיקייה לא נתמכת כאן') });
       return null;
     }
     return await importTree(r.tree, targetFolderId);
-  } catch (e) { console.error(e); UI.alertBox(e.message || String(e), { title: 'העלאת התיקייה נכשלה' }); return null; }
+  } catch (e) { console.error(e); UI.alertBox(e.message || String(e), { title: tr('העלאת התיקייה נכשלה') }); return null; }
 }
 export async function uploadZipFlow(targetFolderId, pick) {
   try {
     const [file] = await pick({ accept: '.zip,application/zip', multiple: false });
     if (!file) return null;
     return await importTree(await treeFromZip(file), targetFolderId);
-  } catch (e) { console.error(e); UI.alertBox((e.message || String(e)) + '\nאם שמות התיקיות בעברית נראים משובשים, דחסו מחדש עם 7-Zip או WinRAR בקידוד UTF-8.', { title: 'קריאת ה-ZIP נכשלה' }); return null; }
+  } catch (e) { console.error(e); UI.alertBox((e.message || String(e)) + tr('\nאם שמות התיקיות בעברית נראים משובשים, דחסו מחדש עם 7-Zip או WinRAR בקידוד UTF-8.'), { title: tr('קריאת ה-ZIP נכשלה') }); return null; }
 }
 export async function handleDrop(dt, targetFolderId) {
   const roots = entriesFromDrop(dt); // סינכרוני, לפני כל await
   if (!roots.length) return null;
-  const pb = UI.progressBox('קורא את מבנה התיקיות…');
+  const pb = UI.progressBox(tr('קורא את מבנה התיקיות…'));
   let tree;
-  try { tree = await treeFromEntries(roots); } catch (e) { pb.close(); UI.alertBox('לא הצלחנו לקרוא את מה שנגרר: ' + (e.message || e)); return null; }
+  try { tree = await treeFromEntries(roots); } catch (e) { pb.close(); UI.alertBox(tr('לא הצלחנו לקרוא את מה שנגרר: ') + (e.message || e)); return null; }
   pb.close();
   // קובץ ZIP בודד שנגרר – מפרקים אותו
   if (tree.files.length === 1 && /\.zip$/i.test(tree.files[0].path[0]) && tree.files[0].path.length === 1) {
-    try { return await importTree(await treeFromZip(tree.files[0].file), targetFolderId); } catch (e) { UI.alertBox(e.message || String(e), { title: 'קריאת ה-ZIP נכשלה' }); return null; }
+    try { return await importTree(await treeFromZip(tree.files[0].file), targetFolderId); } catch (e) { UI.alertBox(e.message || String(e), { title: tr('קריאת ה-ZIP נכשלה') }); return null; }
   }
   return importTree(tree, targetFolderId);
 }

@@ -1,3 +1,4 @@
+import { t as tr } from './i18n.js';
 // כתיבה וקריאה של קבצי ZIP (ללא דחיסה – קבצי PDF כבר דחוסים). תואם ZIP סטנדרטי, שמות בקידוד UTF-8.
 
 const T = (() => {
@@ -42,7 +43,7 @@ export async function buildZip(entries, onProgress) {
     const size = bytes.length;
     const crc = crc32(bytes);
     bytes = null;
-    if (size > LIM || offset > LIM) throw new Error('הגיבוי גדול מדי (מעל 4GB). אפשר לגבות בחלקים – לייצא תיקיות נפרדות.');
+    if (size > LIM || offset > LIM) throw new Error(tr('הגיבוי גדול מדי (מעל 4GB). אפשר לגבות בחלקים – לייצא תיקיות נפרדות.'));
     const nameBytes = enc.encode(e.name);
     const lh = new DataView(new ArrayBuffer(30));
     lh.setUint32(0, 0x04034b50, true);
@@ -84,7 +85,7 @@ export async function buildZip(entries, onProgress) {
     parts.push(ch.buffer, c.nameBytes);
     cdSize += 46 + c.nameBytes.length;
   }
-  if (cdStart + cdSize > LIM) throw new Error('הגיבוי גדול מדי (מעל 4GB).');
+  if (cdStart + cdSize > LIM) throw new Error(tr('הגיבוי גדול מדי (מעל 4GB).'));
   const end = new DataView(new ArrayBuffer(22));
   end.setUint32(0, 0x06054b50, true);
   end.setUint16(8, central.length, true);
@@ -97,23 +98,23 @@ export async function buildZip(entries, onProgress) {
 
 export async function readZip(blob) {
   const size = blob.size;
-  if (size < 22) throw new Error('הקובץ אינו ZIP תקין');
+  if (size < 22) throw new Error(tr('הקובץ אינו ZIP תקין'));
   const tailLen = Math.min(size, 65557);
   const tail = new DataView(await blob.slice(size - tailLen, size).arrayBuffer());
   let eocd = -1;
   for (let i = tailLen - 22; i >= 0; i--) {
     if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error('הקובץ אינו ZIP תקין (לא נמצא סוף הארכיון)');
+  if (eocd < 0) throw new Error(tr('הקובץ אינו ZIP תקין (לא נמצא סוף הארכיון)'));
   const count = tail.getUint16(eocd + 10, true);
   const cdSize = tail.getUint32(eocd + 12, true);
   const cdOff = tail.getUint32(eocd + 16, true);
-  if (cdSize === LIM || cdOff === LIM || count === 0xffff) throw new Error('ארכיוני ZIP64 אינם נתמכים');
+  if (cdSize === LIM || cdOff === LIM || count === 0xffff) throw new Error(tr('ארכיוני ZIP64 אינם נתמכים'));
   const cd = new DataView(await blob.slice(cdOff, cdOff + cdSize).arrayBuffer());
   const entries = new Map();
   let p = 0;
   for (let i = 0; i < count; i++) {
-    if (cd.getUint32(p, true) !== 0x02014b50) throw new Error('ספריית ה-ZIP פגומה');
+    if (cd.getUint32(p, true) !== 0x02014b50) throw new Error(tr('ספריית ה-ZIP פגומה'));
     const method = cd.getUint16(p + 10, true);
     const crc = cd.getUint32(p + 16, true);
     const csize = cd.getUint32(p + 20, true);
@@ -128,19 +129,19 @@ export async function readZip(blob) {
   }
   async function dataStart(e) {
     const lh = new DataView(await blob.slice(e.offset, e.offset + 30).arrayBuffer());
-    if (lh.getUint32(0, true) !== 0x04034b50) throw new Error('כותרת קובץ פגומה ב-ZIP');
+    if (lh.getUint32(0, true) !== 0x04034b50) throw new Error(tr('כותרת קובץ פגומה ב-ZIP'));
     return e.offset + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
   }
   async function getBlob(name) {
     const e = entries.get(name);
-    if (!e) throw new Error('חסר קובץ בארכיון: ' + name);
+    if (!e) throw new Error(tr('חסר קובץ בארכיון: ') + name);
     const s = await dataStart(e);
     const raw = blob.slice(s, s + e.csize);
     if (e.method === 0) return raw;
     if (e.method === 8 && typeof DecompressionStream !== 'undefined') {
       return new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
     }
-    throw new Error('שיטת דחיסה לא נתמכת בקובץ: ' + name);
+    throw new Error(tr('שיטת דחיסה לא נתמכת בקובץ: ') + name);
   }
   async function getText(name) { return dec.decode(await (await getBlob(name)).arrayBuffer()); }
   async function checkCRC(name) {

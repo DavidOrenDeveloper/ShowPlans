@@ -1,6 +1,7 @@
 // סנכרון סימונים, מדידות, קישורים וכיולים בין המכשיר לענן (טבלת items).
 // מנוע בלי תלות ישירה בדפדפן: כל התלויות מגיעות מ-env, כדי שאפשר יהיה לבדוק אותו (ראו item-merge.js).
 // כללים: מחיקה = deleted=true (tombstone). התנגשות: העריכה החדשה לפי זמן עריכה גוברת; מחיקה גוברת על עריכה.
+import { t as tr } from './i18n.js';
 import { ITEM_KINDS, SHARED_KINDS, toRow, fromRow, decide, accessLevel } from './item-merge.js';
 
 export function createItemSync(env) {
@@ -62,7 +63,7 @@ export function createItemSync(env) {
     const need = SHARED_KINDS.includes(store) ? 3 : 2;
     if (env.isAdmin() || env.planLevel(planId) >= need) {
       // לפי ההרשאות שלנו מותר, והשרת דוחה: כנראה מדיניות השרת לא עודכנה. לא מוחקים את העבודה
-      env.log.warn('items', 'השרת דחה הוספת פריט למרות שלפי ההרשאות מותר (ייתכן שקובץ ה-SQL החדש עוד לא הורץ)', { id: rec.id, kind: store });
+      env.log.warn('items', tr('השרת דחה הוספת פריט למרות שלפי ההרשאות מותר (ייתכן שקובץ ה-SQL החדש עוד לא הורץ)'), { id: rec.id, kind: store });
       return 'blocked';
     }
     await env.db.del(store, rec.id);
@@ -130,7 +131,7 @@ export function createItemSync(env) {
     } catch (e) {
       const c = await env.db.get('meta', 'shares').catch(() => null);
       if (c) { shares.items = new Map(c.items || []); shares.authors = c.authors || []; }
-      env.log.warn('items', 'טעינת השיתופים נכשלה (משתמשים במה ששמור במכשיר)', { msg: String(e && e.message) });
+      env.log.warn('items', tr('טעינת השיתופים נכשלה (משתמשים במה ששמור במכשיר)'), { msg: String(e && e.message) });
     }
   }
   async function restoreShares() {

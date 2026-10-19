@@ -1,5 +1,6 @@
 // יומן תקלות: שומר את אירועי הסנכרון והשגיאות (עם השלב המדויק, קוד, סטטוס והקשר) ב-localStorage,
 // כדי שאפשר יהיה לראות בדיוק איפה ולמה משהו נכשל, ולהעתיק דוח מלא.
+import { t as tr, LOCALE } from './i18n.js';
 import { APP_VERSION } from './version.js';
 
 const KEY = 'showplans.diag';
@@ -17,23 +18,23 @@ export const onDiag = (fn) => { subs.add(fn); return () => subs.delete(fn); };
 
 // שמות קריאים לשלבים
 const LABELS = {
-  'push:tombs': 'דחיפת מחיקות', 'push:folders': 'דחיפת תיקיות', 'push:plans': 'דחיפת תוכניות', 'push:versions': 'דחיפת גרסאות',
-  'write:folders': 'כתיבת תיקייה לענן', 'write:plans': 'כתיבת תוכנית לענן', 'write:versions': 'כתיבת גרסה לענן',
-  upload: 'העלאה ל-Drive', 'upload:session': 'פתיחת העלאה (שרת→גוגל)', 'upload:put': 'שליחת הקובץ לגוגל', 'upload:verify': 'אימות ההעלאה',
-  adopt: 'שימוש בקובץ שכבר בענן', download: 'הורדה מהענן', 'pull:grants': 'משיכה: הרשאות', 'pull:fetch': 'משיכה: קריאת שינויים',
-  'pull:apply': 'משיכה: שמירה במכשיר', 'pull:reconcile': 'משיכה: התאמה מלאה', 'pull:purge': 'משיכה: ניקוי', pull: 'משיכה מהענן',
-  global: 'שגיאה כללית באפליקציה', net: 'רשת',
+  'push:tombs': tr('דחיפת מחיקות'), 'push:folders': tr('דחיפת תיקיות'), 'push:plans': tr('דחיפת תוכניות'), 'push:versions': tr('דחיפת גרסאות'),
+  'write:folders': tr('כתיבת תיקייה לענן'), 'write:plans': tr('כתיבת תוכנית לענן'), 'write:versions': tr('כתיבת גרסה לענן'),
+  upload: tr('העלאה ל-Drive'), 'upload:session': tr('פתיחת העלאה (שרת→גוגל)'), 'upload:put': tr('שליחת הקובץ לגוגל'), 'upload:verify': tr('אימות ההעלאה'),
+  adopt: tr('שימוש בקובץ שכבר בענן'), download: tr('הורדה מהענן'), 'pull:grants': tr('משיכה: הרשאות'), 'pull:fetch': tr('משיכה: קריאת שינויים'),
+  'pull:apply': tr('משיכה: שמירה במכשיר'), 'pull:reconcile': tr('משיכה: התאמה מלאה'), 'pull:purge': tr('משיכה: ניקוי'), pull: tr('משיכה מהענן'),
+  global: tr('שגיאה כללית באפליקציה'), net: tr('רשת'),
 };
 export function label(where) {
   if (!where) return '';
   if (LABELS[where]) return LABELS[where];
-  if (where.startsWith('fn:')) return 'פונקציית שרת ' + where.slice(3);
+  if (where.startsWith('fn:')) return tr('פונקציית שרת ') + where.slice(3);
   return where;
 }
 
 // הופך כל סוג שגיאה (Error, PostgrestError, מחרוזת) לאובייקט פשוט
 export function describe(e) {
-  if (e == null) return { message: 'שגיאה לא ידועה' };
+  if (e == null) return { message: tr('שגיאה לא ידועה') };
   if (typeof e !== 'object') return { message: String(e) };
   const o = { message: String(e.message || e.error_description || e.error || e) };
   if (e.name && e.name !== 'Error') o.name = e.name;
@@ -69,18 +70,18 @@ export function err(where, e, ctx = {}) {
 
 export function entries() { return buf.slice().reverse(); }
 export function clear() { buf = []; try { localStorage.removeItem(KEY); } catch { /* ignore */ } notify(); }
-export const fmtTime = (t) => new Date(t).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+export const fmtTime = (t) => new Date(t).toLocaleString(LOCALE, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 // דוח טקסטואלי להעתקה / שליחה
 export async function report(extra = {}) {
   let storage = '';
-  try { const s = await navigator.storage?.estimate?.(); if (s) storage = `${Math.round((s.usage || 0) / 1048576)}MB מתוך ${Math.round((s.quota || 0) / 1048576)}MB`; } catch { /* ignore */ }
+  try { const s = await navigator.storage?.estimate?.(); if (s) storage = tr('{0}MB מתוך {1}MB', Math.round((s.usage || 0) / 1048576), Math.round((s.quota || 0) / 1048576)); } catch { /* ignore */ }
   const head = [
     `ShowPlans v${APP_VERSION}`,
-    `זמן: ${new Date().toISOString()}`,
-    `אונליין: ${navigator.onLine}`,
-    `אחסון: ${storage || 'לא ידוע'}`,
-    `דפדפן: ${navigator.userAgent}`,
+    tr('זמן: {0}', new Date().toISOString()),
+    tr('אונליין: {0}', navigator.onLine),
+    tr('אחסון: {0}', storage || tr('לא ידוע')),
+    tr('דפדפן: {0}', navigator.userAgent),
     ...Object.entries(extra).map(([k, v]) => `${k}: ${v}`),
     '',
   ];
@@ -94,10 +95,10 @@ export function install() {
   if (installed) return; installed = true;
   window.addEventListener('error', (ev) => {
     if (/ResizeObserver/i.test(ev.message || '')) return;
-    log('error', 'global', ev.message || 'שגיאה', { file: String(ev.filename || '').split('/').pop(), line: ev.lineno, col: ev.colno });
+    log('error', 'global', ev.message || tr('שגיאה'), { file: String(ev.filename || '').split('/').pop(), line: ev.lineno, col: ev.colno });
   });
   window.addEventListener('unhandledrejection', (ev) => { err('global', ev.reason, { kind: 'unhandledrejection' }); });
-  window.addEventListener('offline', () => warn('net', 'החיבור לאינטרנט נותק'));
-  window.addEventListener('online', () => info('net', 'החיבור לאינטרנט חזר'));
+  window.addEventListener('offline', () => warn('net', tr('החיבור לאינטרנט נותק')));
+  window.addEventListener('online', () => info('net', tr('החיבור לאינטרנט חזר')));
 }
 install();

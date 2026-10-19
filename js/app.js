@@ -1,4 +1,5 @@
 // נקודת הכניסה: אתחול, ניתוב לפי hash, רישום Service Worker
+import { t as tr } from './i18n.js';
 import { swReady, hadController } from './pwa.js';
 import { verifyAfterBoot } from './update.js';
 import * as S from './store.js';
@@ -56,7 +57,7 @@ async function handleInbox() {
       files.push(new File([blob], name, { type: 'application/pdf' }));
     }
     history.replaceState(null, '', '#/f/');
-    const r = await UI.folderPicker({ title: `נתקבלו ${files.length} קבצים – לאיזו תיקייה לייבא?`, okText: 'ייבא לכאן' });
+    const r = await UI.folderPicker({ title: tr('נתקבלו {0} קבצים – לאיזו תיקייה לייבא?', files.length), okText: tr('ייבא לכאן') });
     if (r) await A.importFiles(files, r.id);
     for (const k of keys) await cache.delete(k);
   } catch (e) { console.warn('inbox', e); }
@@ -66,7 +67,7 @@ async function registerSW() {
   const reg = await swReady;
   if (!reg) return;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController && !window.__updating) UI.toast('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.', { ms: 8000 });
+    if (hadController && !window.__updating) UI.toast(tr('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.'), { ms: 8000 });
   });
 }
 
@@ -84,7 +85,7 @@ async function main() {
     await S.init();
   } catch (e) {
     console.error(e);
-    document.getElementById('boot').replaceChildren(h('div', { class: 'boot-err' }, 'לא ניתן לפתוח את האחסון המקומי (IndexedDB). ייתכן שהדפדפן במצב גלישה פרטית או שהאחסון חסום.', h('br'), String(e.message || e)));
+    document.getElementById('boot').replaceChildren(h('div', { class: 'boot-err' }, tr('לא ניתן לפתוח את האחסון המקומי (IndexedDB). ייתכן שהדפדפן במצב גלישה פרטית או שהאחסון חסום.'), h('br'), String(e.message || e)));
     return;
   }
   const app = document.getElementById('app');
@@ -102,7 +103,7 @@ async function main() {
 
 window.addEventListener('unhandledrejection', (e) => {
   const m = e.reason?.message || '';
-  if (/הרשאה/.test(m)) { UI.toast(m, { type: 'error', ms: 4500 }); e.preventDefault(); }
+  if (/הרשאה|permission/i.test(m)) { UI.toast(m, { type: 'error', ms: 4500 }); e.preventDefault(); }
 });
 
 main();
