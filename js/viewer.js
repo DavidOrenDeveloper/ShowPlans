@@ -1,4 +1,5 @@
 // ה-Viewer: זום עמוק וחד, גרירה, Pinch, סימונים, מדידות, קישורים, השוואה, חיפוש, גרסאות
+import { pushLayer } from './backstack.js';
 import { t as tr, CHEV_FWD, CHEV_BACK, toggleLang, langButtonLabel } from './i18n.js';
 import { dn, onNamesChange } from './names.js';
 import * as OCR from './ocr.js';
@@ -136,9 +137,11 @@ class Viewer {
       btn('list', tr('רשימת תוצאות'), () => this.openPanel('search')),
       btn('x', tr('סיום חיפוש'), () => this.clearSearch()));
     this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.panel);
-    this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': tr('יציאה ממסך מלא'), onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, tr('יציאה ממסך מלא')));
+    this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': tr('כיווץ מסך מלא'), onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, tr('כיווץ מסך מלא')));
+    // במסך מלא: חץ קטן שפותח/סוגר את כלי העריכה והאפשרויות מעל התוכנית
+    this.fsToolsBtn = h('button', { class: 'v-fs-tools', 'aria-label': tr('כלי עריכה ואפשרויות'), onclick: () => { this.el.classList.toggle('fs-tools'); this._quietUntil = performance.now() + 250; } }, icon('chevU', 20));
     this.el = h('div', { class: 'viewer' }, this.topbar, this.pickBar, this.mid,
-      this.cmpBar, this.props, this.toolbar, this.exitImm, this.exitFs);
+      this.cmpBar, this.props, this.toolbar, this.exitImm, this.exitFs, this.fsToolsBtn);
     this.root.append(this.el);
     this.el.classList.toggle('cont', !!this.cont); this.contBtn.classList.toggle('on', !!this.cont);
     this._onPop = () => {
@@ -1612,9 +1615,15 @@ class Viewer {
     // הממשק מוסתר מיד (נשאר רק כפתור יציאה), וברקע מבקשים מהדפדפן להסתיר גם את שורת הכתובת ואת סרגלי המערכת
     this._fsT0 = performance.now(); this._quietUntil = this._fsT0 + 450;
     this.el.classList.add('fs');
+    this.el.classList.remove('fs-tools');
     this.panel?.classList.add('hidden');
-    if (this.el.requestFullscreen) {
-      this.el.requestFullscreen().catch((e) => { diag.warn('fullscreen', tr('הדפדפן סירב למסך מלא מלא: ') + (e?.message || e)); });
+    // "אחורה" של אנדרואיד מכווץ את המסך המלא (ולא יוצא מהתוכנית)
+    this._fsLayer?.release();
+    this._fsLayer = pushLayer(() => { this._fsLayer = null; this.exitFullscreenMode(); });
+    // על כל המסמך (ולא רק על הצופה), כדי שתפריטים וחלונות ימשיכו להופיע; ובקשה להסתרת סרגל הניווט של המערכת
+    const root = document.documentElement;
+    if (root.requestFullscreen) {
+      root.requestFullscreen({ navigationUI: 'hide' }).catch((e) => { diag.warn('fullscreen', tr('הדפדפן סירב למסך מלא מלא: ') + (e?.message || e)); });
     } else {
       UI.toast(tr('הדפדפן במכשיר הזה לא יכול להסתיר את שורת המערכת. להסתרה מלאה אפשר להתקין את האפליקציה למסך הבית.'), { ms: 5000 });
     }
@@ -1622,17 +1631,20 @@ class Viewer {
   exitFullscreenMode() {
     // חוזרים מיד לממשק הרגיל, ורק אחר כך מבקשים מהדפדפן לצאת ממסך מלא, כדי שהלחיצה תרגיש מיידית
     this._fsT0 = performance.now(); this._quietUntil = this._fsT0 + 450;
-    this.el.classList.remove('fs');
+    this.el.classList.remove('fs', 'fs-tools');
+    const l = this._fsLayer; this._fsLayer = null; l?.release();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }
   onFsChange() {
     this._quietUntil = performance.now() + 450;
     const inFs = !!document.fullscreenElement;
-    if (!inFs) this.el?.classList.remove('fs'); // יציאה בתנועת מערכת / כפתור חזרה
+    if (!inFs && this.el?.classList.contains('fs')) { this.el.classList.remove('fs', 'fs-tools'); const l = this._fsLayer; this._fsLayer = null; l?.release(); } // יציאה בתנועת מערכת
     if (this._fsT0) { diag.info('fullscreen', inFs ? tr('נכנס למסך מלא') : tr('יצא ממסך מלא'), { ms: Math.round(performance.now() - this._fsT0) }); this._fsT0 = 0; }
   }
 
   async destroy() {
+    if (this._fsLayer) { this._fsLayer.release(); this._fsLayer = null; }
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.storeView();
     clearTimeout(this.dt);
     document.removeEventListener('keydown', this.keyFn);

@@ -7,7 +7,7 @@ import { settingsDialog } from './settings.js';
 import { hiddenDialog, viewAsDialog, viewAsBanner } from './personal-ui.js';
 import { accountBox, grantsDialog, bulkGrantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
-import { canEditHere, downloadForOffline, needsDownload, onLocalFilesChange, refreshLocalFiles } from './cloud-sync.js';
+import { canEditHere, downloadForOffline, removeFromDevice, isLocal, needsDownload, onLocalFilesChange, refreshLocalFiles } from './cloud-sync.js';
 import { pushLayer } from './backstack.js';
 import { getSort, setSort, getManual, setManual, getOpen, setOpen, FOLDER_MODES, PLAN_MODES } from './order.js';
 import * as FI from './folder-import.js';
@@ -167,7 +167,7 @@ function addMenu(anchor) {
 function mainMenu(anchor) {
   UI.menu(anchor, [
     { label: tr('מיון וסדר…'), icon: 'sliders', onClick: () => sortDialog() },
-    ...(isCloud() ? [{ label: tr('הורד הכל למכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline(null) }] : []),
+    ...(isCloud() ? [{ label: tr('הורד הכל למכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline(null) }, { label: tr('פנה מקום: הסר הורדות מהמכשיר (נשאר בענן)'), icon: 'trash', onClick: () => removeFromDevice(null) }] : []),
     { label: tr('ניהול אחסון'), icon: 'drive', onClick: () => { location.hash = '#/storage'; } },
     { label: tr('גיבוי ושחזור…'), icon: 'archive', onClick: () => B.backupDialog() },
     { divider: true },
@@ -300,6 +300,7 @@ function renderSelbar() {
     h('button', { class: 'btn sm', onclick: async () => { if (await A.moveDialog(o, st.folderId)) clearSel(); } }, icon('move', 16), tr('העבר')),
     h('button', { class: 'btn sm', onclick: () => B.downloadItems(o) }, icon('download', 16), tr('הורד')),
     isCloud() ? h('button', { class: 'btn sm', onclick: () => { downloadForOffline(o); clearSel(); } }, icon('cloud', 16), tr('למכשיר')) : null,
+    isCloud() ? h('button', { class: 'btn sm', onclick: () => { removeFromDevice(o); clearSel(); } }, icon('trash', 16), tr('הסר מהמכשיר')) : null,
     h('button', { class: 'btn sm', onclick: () => batchRename(o) }, icon('edit', 16), tr('שנה שם')),
     isAdmin() ? h('button', { class: 'btn sm', onclick: async () => { if (await bulkGrantsDialog(o)) clearSel(); } }, icon('lock', 16), tr('הרשאות')) : null,
     h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), personal() ? tr('הסתר') : tr('מחק')));
@@ -341,7 +342,7 @@ function folderMenu(id, anchor) {
     ] : []),
     { label: personal() ? tr('שנה שם (רק אצלי)') : tr('שנה שם'), icon: 'edit', onClick: () => A.renameFolderDialog(id) },
     { label: tr('העבר…'), icon: 'move', onClick: () => A.moveDialog({ folders: [id], plans: [] }, S.P.folders.get(id)?.parentId) },
-    ...(isCloud() ? [{ label: tr('הורד תיקייה למכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline({ folders: [id], plans: [] }) }] : []),
+    ...(isCloud() ? [{ label: tr('הורד תיקייה למכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline({ folders: [id], plans: [] }) }, { label: tr('הסר את התיקייה מהמכשיר (נשאר בענן)'), icon: 'trash', onClick: () => removeFromDevice({ folders: [id], plans: [] }) }] : []),
     { label: tr('הורד כ-ZIP'), icon: 'download', onClick: () => B.downloadItems({ folders: [id], plans: [] }) },
     ...(isAdmin() ? [{ label: tr('הרשאות עובדים…'), icon: 'lock', onClick: () => grantsDialog({ folderId: id }) }] : []),
     { divider: true },
@@ -357,6 +358,7 @@ function planMenu(id, anchor) {
     ...(canEditHere(p.folderId) ? [{ label: tr('שכפל'), icon: 'copy', onClick: async () => { try { await S.duplicatePlan(id); UI.toast(tr('הועתק')); } catch (e) { UI.toast(e.message, { type: 'error' }); } } }] : []),
     { label: tr('גרסאות'), icon: 'clock', onClick: () => A.versionsDialog(id) },
     ...(needsDownload(p) ? [{ label: tr('שמור במכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline({ folders: [], plans: [id] }) }] : []),
+    ...(isCloud() && isLocal(p.currentVersionId) && S.curVer(p)?.driveId ? [{ label: tr('הסר מהמכשיר (נשאר בענן)'), icon: 'trash', onClick: () => removeFromDevice({ folders: [], plans: [id] }) }] : []),
     { label: tr('הורד PDF'), icon: 'download', onClick: () => A.downloadVersion(p.currentVersionId, p.name) },
     { label: tr('פתח באמצעות / שתף'), icon: 'share', onClick: () => A.openWithDialog(p) },
     ...(isAdmin() ? [{ label: tr('הרשאות עובדים…'), icon: 'lock', onClick: () => grantsDialog({ planId: id }) }] : []),
@@ -562,16 +564,24 @@ function moveFolderOrder(f, dir) {
   setManual(pk, ids);
   S.resort();
 }
+// מרנדר מחדש ומחזיר את הפריט שנלחץ לאותו מקום על המסך (כדי שהרשימה לא "תברח" בפתיחה/סגירה)
+function rerenderAnchored(akey) {
+  const find = () => [...el.content.querySelectorAll('[data-akey]')].find((n) => n.dataset.akey === akey);
+  const before = find()?.getBoundingClientRect().top;
+  renderAll();
+  const n = find();
+  if (n && before != null) el.content.scrollTop += n.getBoundingClientRect().top - before;
+}
 function toggleInline(id) {
   st.open.has(id) ? st.open.delete(id) : st.open.add(id);
-  setOpen(st.open); renderAll();
+  setOpen(st.open); rerenderAnchored('f:' + id);
 }
 function inlineBlock(fid, depth = 0) {
   const box = h('div', { class: 'inl' + (depth ? ' nested' : '') });
   if (depth > 30) return box;
   for (const f of S.childFolders(fid)) {
     const open = st.open.has(f.id);
-    box.append(h('div', { class: 'inl-row folder', 'data-nav': '#/f/' + f.id, onclick: () => { location.hash = '#/f/' + f.id; } },
+    box.append(h('div', { class: 'inl-row folder', 'data-akey': 'f:' + f.id, 'data-nav': '#/f/' + f.id, onclick: () => { location.hash = '#/f/' + f.id; } },
       h('button', { class: 'twisty', 'aria-label': open ? tr('כווץ') : tr('הרחב'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(open ? 'chevD' : CHEV_FWD, 18)),
       icon('folder', 18), h('span', { class: 'nm', title: f.name }, dn(f.name)),
       h('small', {}, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length)),
@@ -581,7 +591,7 @@ function inlineBlock(fid, depth = 0) {
   for (const p of S.plansIn(fid)) {
     const v = S.curVer(p);
     box.append(h('div', { class: 'inl-row plan', onclick: () => openPlan(p) },
-      h('span', { class: 'twisty' }), icon('file', 18), h('span', { class: 'nm', title: p.name }, dn(p.name)), cloudBadge(p),
+      h('span', { class: 'twisty' }), icon('file', 18), h('span', { class: 'nm', title: p.name, onclick: (e) => { e.stopPropagation(); e.currentTarget.classList.toggle('open'); } }, dn(p.name)), cloudBadge(p),
       h('small', {}, interleave([v?.pageCount ? tr('{0} עמ׳', v.pageCount) : null, fmtSize(v?.size)].filter(Boolean))),
       h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more', 16))));
   }
@@ -597,6 +607,7 @@ function folderCard(f) {
   const sibs = S.childFolders(f.parentId || null);
   const idx = sibs.findIndex((x) => x.id === f.id);
   const isOpen = st.open.has(f.id);
+  card.dataset.akey = 'f:' + f.id;
   if (manual) card.classList.add('has-reord');
   card.append(
     h('button', { class: 'fc-open', 'aria-label': isOpen ? tr('סגור תיקייה') : tr('הצג את תוכן התיקייה כאן'), title: isOpen ? tr('סגור') : tr('הצג תוכן כאן'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(isOpen ? 'chevD' : CHEV_FWD, 20)),
@@ -630,7 +641,7 @@ function planCard(p, extra) {
   card.append(
     h('div', { class: 'thumb' }, v?.broken ? h('div', { class: 'thumb-warn' }, icon('alert', 28), h('small', {}, tr('לא ניתן להציג'))) : icon('file', 32), img, cloudBadge(p)),
     h('div', { class: 'meta' },
-      h('div', { class: 'name', title: p.name }, dn(p.name)), ovTags(p),
+      h('div', { class: 'name', title: p.name, onclick: (e) => { if (st.selMode || carry) return; e.stopPropagation(); e.currentTarget.classList.toggle('open'); } }, dn(p.name)), ovTags(p),
       h('div', { class: 'sub' }, interleave([v?.pageCount ? tr('{0} עמ׳', v.pageCount) : null, fmtSize(v?.size), nver > 1 ? tr('V{0} ({1} גרסאות)', v.number, nver) : null].filter(Boolean))),
       extra ? h('div', { class: 'sub path' }, extra) : null),
     h('button', { class: 'icon-btn more', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more')));
@@ -677,9 +688,9 @@ function renderFolder() {
   if (folders.length || plans.length) {
     const ds = S.descend(fid).folders;
     const allOpen = ds.length > 0 && ds.every((id) => st.open.has(id));
-    wrap.append(h('div', { class: 'tools-row' },
+    wrap.append(h('div', { class: 'tools-row', 'data-akey': 'tools' },
       h('button', { class: 'btn sm', onclick: () => sortDialog() }, icon('sliders', 16), tr('מיון וסדר')),
-      ds.length ? h('button', { class: 'btn sm', onclick: () => { ds.forEach((id) => (allOpen ? st.open.delete(id) : st.open.add(id))); setOpen(st.open); renderAll(); } }, icon(allOpen ? 'chevU' : 'chevD', 16), allOpen ? tr('סגור את כל התיקיות') : tr('פתח את כל התיקיות')) : null));
+      ds.length ? h('button', { class: 'btn sm', onclick: () => { ds.forEach((id) => (allOpen ? st.open.delete(id) : st.open.add(id))); setOpen(st.open); rerenderAnchored('tools'); } }, icon(allOpen ? 'chevU' : 'chevD', 16), allOpen ? tr('סגור את כל התיקיות') : tr('פתח את כל התיקיות')) : null));
   }
   if (folders.length) {
     wrap.append(h('h4', { class: 'sec' }, tr('תיקיות ({0})', folders.length)));

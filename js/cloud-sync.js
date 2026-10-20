@@ -505,6 +505,26 @@ export async function downloadForOffline(o) {
   else UI.toast(st2.fail ? tr('הורדו {0} קבצים, {1} נכשלו. אפשר להפעיל שוב.', st2.done, st2.fail) : tr('הורדו {0} קבצים למכשיר ✓', st2.done), { ms: 4000 });
 }
 
+// פינוי מקום: מסיר מהמכשיר את קובצי ה-PDF שכבר נמצאים גם בענן. התוכנית, הסימונים והחיפוש נשארים, והקובץ יורד שוב לפי דרישה.
+export async function removeFromDevice(o) {
+  if (!isCloud()) { UI.toast(tr('במצב מקומי הקבצים נמצאים רק במכשיר, אי אפשר להסיר אותם בלי למחוק'), { type: 'error', ms: 4500 }); return; }
+  await refreshLocalFiles();
+  const ids = new Set();
+  if (!o) S.P.plans.forEach((p) => ids.add(p.id));
+  else { (o.plans || []).forEach((id) => ids.add(id)); (o.folders || []).forEach((fid) => { S.descend(fid).plans.forEach((id) => ids.add(id)); }); }
+  const list = [];
+  for (const id of ids) {
+    const p = S.P.plans.get(id);
+    for (const v of S.versionsOf(id)) if (v.driveId && localFiles.has(v.id)) list.push({ p, v });
+  }
+  if (!list.length) { UI.toast(tr('אין קבצים שאפשר להסיר מהמכשיר (רק קבצים שנמצאים גם בענן)'), { ms: 3500 }); return; }
+  const bytes = list.reduce((s, x) => s + (x.v.size || 0), 0);
+  if (!(await UI.confirmBox(tr('להסיר {0} קבצים ({1}) מהמכשיר? התוכניות נשארות בענן, והסימונים נשמרים. כשתפתחו תוכנית היא תרד שוב (צריך קליטה).', list.length, fmtSize(bytes)), { title: tr('פינוי מקום'), okText: tr('הסר מהמכשיר') }))) return;
+  for (const x of list) { try { await db.del('files', x.v.id); localFiles.delete(x.v.id); } catch (e) { console.error(e); } }
+  localSubs.forEach((f) => { try { f(); } catch { /* ignore */ } });
+  UI.toast(tr('הוסרו {0} קבצים, התפנו כ-{1}', list.length, fmtSize(bytes)), { ms: 4000 });
+}
+
 // ---------- הרשאות בצד הממשק ----------
 function guard(kind, ids) {
   if (!isCloud() || isAdmin()) return;
