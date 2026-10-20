@@ -8,6 +8,7 @@ import { cloud, client, isCloud, isAdmin, levelOfFolder, levelOfPlan, callFn, au
 import * as diag from './diag.js';
 import { createItemSync } from './item-sync.js';
 import * as OVR from './overrides.js';
+import { fmtSize } from './util.js';
 
 const st = { pushing: false, again: false, pulling: false, timer: 0, pullTimer: 0, err: '', last: 0, started: false, fullNext: true, denied: false, offset: 0 };
 let dirtyItems = 0;
@@ -402,15 +403,34 @@ async function pullAll() {
 
 // ---------- הורדת קובץ מהענן (לפי דרישה) ----------
 const inflight = new Map();
-async function remoteFile(versionId) {
+const ctrls = new Map();
+const STALL_MS = 30000; // בלי קליטה: אם לא הגיע אף בייט כל כך הרבה זמן – עוצרים במקום להיתקע
+// אילו גרסאות כבר שמורות במכשיר (לסימון בכרטיסים ולהורדה מרוכזת)
+export const localFiles = new Set();
+const localSubs = new Set();
+export const onLocalFilesChange = (fn) => { localSubs.add(fn); return () => localSubs.delete(fn); };
+export async function refreshLocalFiles() {
+  try { const k = await db.keys('files'); localFiles.clear(); k.forEach((x) => localFiles.add(x)); } catch { /* ignore */ }
+  localSubs.forEach((f) => { try { f(); } catch { /* ignore */ } });
+}
+export const isLocal = (versionId) => localFiles.has(versionId);
+export const needsDownload = (plan) => { const v = S.curVer(plan); return !!(isCloud() && v && v.driveId && !localFiles.has(v.id)); };
+
+// quiet: בלי שבב התקדמות ובלי הודעת שגיאה (להורדה מרוכזת). מחזיר Blob או null.
+async function remoteFile(versionId, opts = {}) {
   const v = S.P.versions.get(versionId);
   if (!isCloud() || !v?.driveId) return null;
-  if (!navigator.onLine) { UI.toast(tr('אין חיבור לאינטרנט, והקובץ הזה עוד לא הורד למכשיר'), { type: 'error', ms: 4500 }); return null; }
+  if (!navigator.onLine) { if (!opts.quiet) UI.toast(tr('אין חיבור לאינטרנט, והקובץ הזה עוד לא הורד למכשיר'), { type: 'error', ms: 4500 }); return null; }
   if (inflight.has(versionId)) return inflight.get(versionId);
   const pr = (async () => {
-    const pb = UI.progressBox ? UI.progressBox(tr('מוריד את התוכנית מהענן…')) : null;
+    const ctrl = new AbortController(); ctrls.set(versionId, ctrl);
+    let reason = '';
+    const pb = !opts.quiet && UI.bgProgress ? UI.bgProgress(tr('מוריד: {0}', S.P.plans.get(v.planId)?.name || v.fileName || ''), { onCancel: () => { reason = 'user'; ctrl.abort(); } }) : null;
+    let last = Date.now();
+    const watch = setInterval(() => { if (Date.now() - last > STALL_MS) { reason = 'stall'; ctrl.abort(); } }, 2000);
     try {
-      const res = await fetch(`${fnUrl('drive-download')}?v=${encodeURIComponent(versionId)}`, { headers: await authHeaders() });
+      const res = await fetch(`${fnUrl('drive-download')}?v=${encodeURIComponent(versionId)}`, { headers: await authHeaders(), signal: ctrl.signal });
+      last = Date.now();
       if (!res.ok) {
         let j = null; try { j = await res.clone().json(); } catch { /* ignore */ }
         const e = new Error(res.status === 404 ? tr('אין הרשאה או שהקובץ לא נמצא') : tr('ההורדה נכשלה (') + res.status + ')');
@@ -423,22 +443,66 @@ async function remoteFile(versionId) {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        last = Date.now();
         chunks.push(value); got += value.length;
-        if (pb && total) pb.set(tr('מוריד… {0}MB', Math.round((got / 1048576) * 10) / 10), Math.min(0.99, got / total));
+        if (pb && total) pb.set(tr('{0}MB מתוך {1}MB', Math.round((got / 1048576) * 10) / 10, Math.round((total / 1048576) * 10) / 10), Math.min(0.99, got / total));
       }
       const blob = new Blob(chunks, { type: 'application/pdf' });
       if (v.size && blob.size !== v.size) throw new Error(tr('הקובץ שהורד לא שלם, נסו שוב'));
       await db.put('files', { id: versionId, blob });
+      localFiles.add(versionId); localSubs.forEach((f) => { try { f(); } catch { /* ignore */ } });
       S.enqueueIndex(versionId);
       return blob;
     } catch (e) {
+      if (opts.quiet) { opts.onError?.(e, reason); return null; }
+      if (reason === 'user') { UI.toast(tr('ההורדה בוטלה'), { ms: 2000 }); return null; }
+      if (reason === 'stall' || e?.name === 'AbortError') { UI.toast(tr('אין קליטה – ההורדה נעצרה. אפשר להמשיך לעבוד עם תוכניות שכבר הורדו, ולנסות שוב כשיש קליטה.'), { type: 'error', ms: 6000 }); return null; }
       tag(e, 'download', { id: versionId, file: v.fileName, size: v.size });
       UI.toast(friendly(e), { type: 'error', ms: 6000 });
       return null;
-    } finally { pb?.close(); inflight.delete(versionId); }
+    } finally { clearInterval(watch); pb?.close(); inflight.delete(versionId); ctrls.delete(versionId); }
   })();
   inflight.set(versionId, pr);
   return pr;
+}
+
+// הורדה מרוכזת למכשיר: { folders, plans } (בלי ארגומנט – כל מה שנראה לי). מדלגת על מה שכבר במכשיר.
+let bulk = null;
+export async function downloadForOffline(o) {
+  if (!isCloud()) { UI.toast(tr('במצב מקומי כל הקבצים כבר במכשיר')); return; }
+  if (bulk) { UI.toast(tr('הורדה מרוכזת כבר רצה'), { ms: 2000 }); return; }
+  await refreshLocalFiles();
+  const ids = new Set();
+  if (!o) S.P.plans.forEach((p) => ids.add(p.id));
+  else { (o.plans || []).forEach((id) => ids.add(id)); (o.folders || []).forEach((fid) => { S.descend(fid).plans.forEach((id) => ids.add(id)); }); }
+  const list = [];
+  for (const id of ids) { const p = S.P.plans.get(id); const v = p && S.curVer(p); if (v && v.driveId && !localFiles.has(v.id)) list.push({ p, v }); }
+  if (!list.length) { UI.toast(tr('הכל כבר שמור במכשיר ✓')); return; }
+  const bytes = list.reduce((s, x) => s + (x.v.size || 0), 0);
+  const est = await db.storageEstimate();
+  const room = est.quota ? est.quota - est.usage : Infinity;
+  if (bytes > room * 0.9) { await UI.alertBox(tr('אין מספיק מקום פנוי במכשיר להורדה של {0}. פנו מקום או הורידו חלק מהתיקיות.', fmtSize(bytes)), { title: tr('אין מספיק מקום') }); return; }
+  if (!(await UI.confirmBox(tr('להוריד {0} קבצים ({1}) למכשיר כדי לעבוד גם בלי קליטה? ההורדה ממשיכה ברקע, אפשר להמשיך להשתמש באפליקציה.', list.length, fmtSize(bytes)), { title: tr('הורדה למכשיר'), okText: tr('הורד') }))) return;
+  const st2 = { cancel: false, done: 0, fail: 0, row: 0 };
+  const pb = UI.bgProgress(tr('מוריד למכשיר'), { onCancel: () => { st2.cancel = true; for (const [id] of ctrls) ctrls.get(id)?.abort(); } });
+  bulk = st2;
+  let streak = 0;
+  const work = async () => {
+    for (;;) {
+      if (st2.cancel || streak >= 3) return;
+      const x = list[st2.row++]; if (!x) return;
+      let err = null;
+      const b = await remoteFile(x.v.id, { quiet: true, onError: (e) => { err = e; } });
+      if (b) { st2.done++; streak = 0; } else if (!st2.cancel) { st2.fail++; streak++; }
+      pb.set(tr('{0} מתוך {1} · {2}', st2.done + st2.fail, list.length, x.p.name), (st2.done + st2.fail) / list.length);
+      if (err && /403|401/.test(String(err.status))) streak = 3;
+    }
+  };
+  pb.set(tr('0 מתוך {0}', list.length), 0);
+  try { await Promise.all([work(), work()]); } finally { pb.close(); bulk = null; await refreshLocalFiles(); }
+  if (st2.cancel) UI.toast(tr('ההורדה הופסקה. הורדו {0} מתוך {1}', st2.done, list.length), { ms: 4000 });
+  else if (streak >= 3) UI.toast(tr('ההורדה נעצרה, כנראה אין קליטה. הורדו {0} מתוך {1}. אפשר להפעיל שוב כשיש קליטה והיא תמשיך מאותה נקודה.', st2.done, list.length), { type: 'error', ms: 7000 });
+  else UI.toast(st2.fail ? tr('הורדו {0} קבצים, {1} נכשלו. אפשר להפעיל שוב.', st2.done, st2.fail) : tr('הורדו {0} קבצים למכשיר ✓', st2.done), { ms: 4000 });
 }
 
 // ---------- הרשאות בצד הממשק ----------
@@ -483,6 +547,8 @@ export async function startSync() {
   S.hooks.change = () => schedulePush();
   S.hooks.purged = onPurged;
   S.hooks.remoteFile = remoteFile;
+  S.hooks.isLocal = (id) => localFiles.has(id);
+  refreshLocalFiles();
   S.hooks.guard = guard;
   window.addEventListener('online', () => { emitStatus(); syncClock(); schedulePull(true, 300); schedulePush(300); });
   window.addEventListener('offline', emitStatus);

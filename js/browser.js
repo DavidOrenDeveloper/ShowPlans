@@ -7,7 +7,9 @@ import { settingsDialog } from './settings.js';
 import { hiddenDialog, viewAsDialog, viewAsBanner } from './personal-ui.js';
 import { accountBox, grantsDialog, bulkGrantsDialog } from './cloud-ui.js';
 import { isAdmin, isCloud } from './cloud.js';
-import { canEditHere } from './cloud-sync.js';
+import { canEditHere, downloadForOffline, needsDownload, onLocalFilesChange, refreshLocalFiles } from './cloud-sync.js';
+import { pushLayer } from './backstack.js';
+import { getSort, setSort, getManual, setManual, getOpen, setOpen, FOLDER_MODES, PLAN_MODES } from './order.js';
 import * as FI from './folder-import.js';
 import { pickFiles } from './actions.js';
 import * as S from './store.js';
@@ -22,6 +24,7 @@ const st = {
   mode: 'folder', folderId: null, query: '', view: localStorage.getItem('view') || 'grid',
   sel: new Set(), selMode: false, chunk: 60,
   expanded: new Set(JSON.parse(localStorage.getItem('expanded') || '[]')),
+  open: getOpen(), // תיקיות שנפתחו במקום (בתצוגה החיצונית)
 };
 let el = {};
 const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window;
@@ -71,6 +74,7 @@ export function mountBrowser(root) {
   S.subscribe(() => renderAll());
   onNamesChange(() => renderAll()); // תרגום שם שהגיע מהרשת
   S.onIndexStatus((t) => { if (el.status) el.status.textContent = t; });
+  let lfT = 0; onLocalFilesChange(() => { clearTimeout(lfT); lfT = setTimeout(() => { if (st.mode !== 'storage') renderAll(); }, 900); });
   // גרירת קבצים/תיקיות מהמחשב לתוך האפליקציה (בכל מסך הניהול). גרירה פנימית של פריטים משתמשת ב-MIME משלה ולא מושפעת.
   const hasFiles = (e) => e.dataTransfer?.types?.includes('Files') && !e.dataTransfer.types.includes(MIME);
   let dragDepth = 0;
@@ -109,7 +113,26 @@ export function show({ mode = 'folder', id = null, q = '' }) {
   updateCarryBar();
 }
 
-function toggleSidebar(open) { el.shell.classList.toggle('sb-open', open); }
+let sbLayer = null;
+function toggleSidebar(open) {
+  el.shell.classList.toggle('sb-open', open);
+  if (open && !sbLayer) sbLayer = pushLayer(() => { sbLayer = null; el.shell.classList.remove('sb-open'); }); // "אחורה" סוגר את תפריט הצד
+  else if (!open && sbLayer) { const l = sbLayer; sbLayer = null; l.release(); }
+}
+
+// מצב בחירה: "אחורה" מבטל קודם את הבחירה. הרשומה נוספת רק אחרי נגיעה גמורה (דרישת Chrome: אינטראקציה של המשתמש)
+let selLayer = null, selWait = false;
+function syncSelLayer() {
+  if (st.selMode && !selLayer) {
+    const go = () => { selWait = false; if (!st.selMode || selLayer) return; selLayer = pushLayer(() => { selLayer = null; clearSel(); }); };
+    if (navigator.userActivation && !navigator.userActivation.isActive) {
+      if (selWait) return; selWait = true;
+      const once = () => setTimeout(go, 0);
+      document.addEventListener('touchend', once, { once: true, capture: true });
+      document.addEventListener('pointerup', once, { once: true, capture: true });
+    } else go();
+  } else if (!st.selMode && selLayer) { const l = selLayer; selLayer = null; l.release(); }
+}
 
 // ---------- שורת עליונה ----------
 function buildTop() {
@@ -143,6 +166,8 @@ function addMenu(anchor) {
 
 function mainMenu(anchor) {
   UI.menu(anchor, [
+    { label: tr('מיון וסדר…'), icon: 'sliders', onClick: () => sortDialog() },
+    ...(isCloud() ? [{ label: tr('הורד הכל למכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline(null) }] : []),
     { label: tr('ניהול אחסון'), icon: 'drive', onClick: () => { location.hash = '#/storage'; } },
     { label: tr('גיבוי ושחזור…'), icon: 'archive', onClick: () => B.backupDialog() },
     { divider: true },
@@ -155,6 +180,11 @@ function mainMenu(anchor) {
 
 // ---------- רינדור ----------
 function renderAll() {
+  const keepScroll = el.content.scrollTop;
+  renderAll0();
+  if (st.mode === 'folder' || st.mode === 'search') el.content.scrollTop = keepScroll;
+}
+function renderAll0() {
   el.viewBtn.replaceChildren(icon(st.view === 'grid' ? 'list' : 'grid'));
   el.viewBtn.title = st.view === 'grid' ? tr('תצוגת רשימה') : tr('תצוגת רשת');
   renderSidebar();
@@ -168,6 +198,14 @@ function renderAll() {
 
 // עץ צד
 function renderSidebar() {
+  const oldTree = el.sidebar.querySelector('.tree');
+  const keepTree = oldTree ? oldTree.scrollTop : 0, keepSb = el.sidebar.scrollTop;
+  renderSidebar0();
+  const nt = el.sidebar.querySelector('.tree');
+  if (nt) nt.scrollTop = keepTree; // פתיחה/סגירה של תיקייה בתפריט לא מקפיצה חזרה לראש הרשימה
+  el.sidebar.scrollTop = keepSb;
+}
+function renderSidebar0() {
   const tree = h('div', { class: 'tree' });
   const rootRow = h('div', { class: 'tree-row root' + (st.mode === 'folder' && !st.folderId ? ' cur' : ''), 'data-nav': '#/f/', onclick: () => { location.hash = '#/f/'; } },
     h('span', { class: 'twisty' }), icon('home', 18), h('span', { class: 'nm' }, dn(S.P.project.name)),
@@ -251,6 +289,7 @@ function toggleSel(k) {
 function renderSelbar() {
   const n = st.sel.size;
   el.selbar.classList.toggle('hidden', !st.selMode);
+  syncSelLayer();
   if (!st.selMode) return;
   const o = selObj();
   el.selbar.replaceChildren(
@@ -260,6 +299,7 @@ function renderSelbar() {
     h('button', { class: 'btn sm', onclick: selectAll }, tr('בחר הכל')),
     h('button', { class: 'btn sm', onclick: async () => { if (await A.moveDialog(o, st.folderId)) clearSel(); } }, icon('move', 16), tr('העבר')),
     h('button', { class: 'btn sm', onclick: () => B.downloadItems(o) }, icon('download', 16), tr('הורד')),
+    isCloud() ? h('button', { class: 'btn sm', onclick: () => { downloadForOffline(o); clearSel(); } }, icon('cloud', 16), tr('למכשיר')) : null,
     h('button', { class: 'btn sm', onclick: () => batchRename(o) }, icon('edit', 16), tr('שנה שם')),
     isAdmin() ? h('button', { class: 'btn sm', onclick: async () => { if (await bulkGrantsDialog(o)) clearSel(); } }, icon('lock', 16), tr('הרשאות')) : null,
     h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), personal() ? tr('הסתר') : tr('מחק')));
@@ -301,6 +341,7 @@ function folderMenu(id, anchor) {
     ] : []),
     { label: personal() ? tr('שנה שם (רק אצלי)') : tr('שנה שם'), icon: 'edit', onClick: () => A.renameFolderDialog(id) },
     { label: tr('העבר…'), icon: 'move', onClick: () => A.moveDialog({ folders: [id], plans: [] }, S.P.folders.get(id)?.parentId) },
+    ...(isCloud() ? [{ label: tr('הורד תיקייה למכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline({ folders: [id], plans: [] }) }] : []),
     { label: tr('הורד כ-ZIP'), icon: 'download', onClick: () => B.downloadItems({ folders: [id], plans: [] }) },
     ...(isAdmin() ? [{ label: tr('הרשאות עובדים…'), icon: 'lock', onClick: () => grantsDialog({ folderId: id }) }] : []),
     { divider: true },
@@ -315,6 +356,7 @@ function planMenu(id, anchor) {
     { label: tr('העבר…'), icon: 'move', onClick: () => A.moveDialog({ folders: [], plans: [id] }, p.folderId) },
     ...(canEditHere(p.folderId) ? [{ label: tr('שכפל'), icon: 'copy', onClick: async () => { try { await S.duplicatePlan(id); UI.toast(tr('הועתק')); } catch (e) { UI.toast(e.message, { type: 'error' }); } } }] : []),
     { label: tr('גרסאות'), icon: 'clock', onClick: () => A.versionsDialog(id) },
+    ...(needsDownload(p) ? [{ label: tr('שמור במכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline({ folders: [], plans: [id] }) }] : []),
     { label: tr('הורד PDF'), icon: 'download', onClick: () => A.downloadVersion(p.currentVersionId, p.name) },
     { label: tr('פתח באמצעות / שתף'), icon: 'share', onClick: () => A.openWithDialog(p) },
     ...(isAdmin() ? [{ label: tr('הרשאות עובדים…'), icon: 'lock', onClick: () => grantsDialog({ planId: id }) }] : []),
@@ -510,13 +552,59 @@ function interleave(parts) {
   return out;
 }
 
+// הזזת תיקייה למעלה/למטה בסדר הידני (נשמר במכשיר, לכל תיקיית אב בנפרד)
+function moveFolderOrder(f, dir) {
+  const pk = f.parentId || null;
+  const ids = S.childFolders(pk).map((x) => x.id);
+  const i = ids.indexOf(f.id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  setManual(pk, ids);
+  S.resort();
+}
+function toggleInline(id) {
+  st.open.has(id) ? st.open.delete(id) : st.open.add(id);
+  setOpen(st.open); renderAll();
+}
+function inlineBlock(fid, depth = 0) {
+  const box = h('div', { class: 'inl' + (depth ? ' nested' : '') });
+  if (depth > 30) return box;
+  for (const f of S.childFolders(fid)) {
+    const open = st.open.has(f.id);
+    box.append(h('div', { class: 'inl-row folder', 'data-nav': '#/f/' + f.id, onclick: () => { location.hash = '#/f/' + f.id; } },
+      h('button', { class: 'twisty', 'aria-label': open ? tr('כווץ') : tr('הרחב'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(open ? 'chevD' : CHEV_FWD, 18)),
+      icon('folder', 18), h('span', { class: 'nm', title: f.name }, dn(f.name)),
+      h('small', {}, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length)),
+      h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more', 16))));
+    if (open) box.append(inlineBlock(f.id, depth + 1));
+  }
+  for (const p of S.plansIn(fid)) {
+    const v = S.curVer(p);
+    box.append(h('div', { class: 'inl-row plan', onclick: () => openPlan(p) },
+      h('span', { class: 'twisty' }), icon('file', 18), h('span', { class: 'nm', title: p.name }, dn(p.name)), cloudBadge(p),
+      h('small', {}, interleave([v?.pageCount ? tr('{0} עמ׳', v.pageCount) : null, fmtSize(v?.size)].filter(Boolean))),
+      h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more', 16))));
+  }
+  if (!box.childNodes.length) box.append(h('div', { class: 'inl-empty' }, tr('התיקייה ריקה')));
+  return box;
+}
+
 function folderCard(f) {
   const k = key('f', f.id);
   const d = S.descend(f.id);
   const card = cardBase(k, 'folder');
+  const manual = getSort('folders').mode === 'manual';
+  const sibs = S.childFolders(f.parentId || null);
+  const idx = sibs.findIndex((x) => x.id === f.id);
+  const isOpen = st.open.has(f.id);
+  if (manual) card.classList.add('has-reord');
   card.append(
+    h('button', { class: 'fc-open', 'aria-label': isOpen ? tr('סגור תיקייה') : tr('הצג את תוכן התיקייה כאן'), title: isOpen ? tr('סגור') : tr('הצג תוכן כאן'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(isOpen ? 'chevD' : CHEV_FWD, 20)),
     h('div', { class: 'f-ic' }, icon('folder', 34)),
     h('div', { class: 'meta' }, h('div', { class: 'name', title: f.name }, dn(f.name)), ovTags(f), h('div', { class: 'sub' }, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length) + (d.plans.length !== S.plansIn(f.id).length ? tr(' ({0} בסה״כ)', d.plans.length) : ''))),
+    manual ? h('div', { class: 'reord' },
+      h('button', { 'aria-label': tr('הזז למעלה'), disabled: idx <= 0, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, -1); } }, icon('chevU', 18)),
+      h('button', { 'aria-label': tr('הזז למטה'), disabled: idx >= sibs.length - 1, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, 1); } }, icon('chevD', 18))) : null,
     h('button', { class: 'icon-btn more', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more')));
   card.dataset.nav = '#/f/' + f.id;
   card.addEventListener('click', clickGuard(card, () => { location.hash = '#/f/' + f.id; }, k));
@@ -526,6 +614,13 @@ function folderCard(f) {
   return card;
 }
 
+// פתיחת תוכנית. אם היא עוד לא הורדה ואין חיבור – לא נכנסים למסך ריק, נשארים ברשימה
+function openPlan(p, query) {
+  if (needsDownload(p) && !navigator.onLine) { UI.toast(tr('התוכנית \"{0}\" עוד לא הורדה למכשיר ואין חיבור. אפשר לפתוח תוכניות שכבר הורדו.', p.name), { type: 'error', ms: 4000 }); return; }
+  location.hash = '#/p/' + p.id + (query || '');
+}
+const cloudBadge = (p) => (needsDownload(p) ? h('span', { class: 'cloud-badge', title: tr('לא הורדה למכשיר') }, icon('cloud', 14)) : null);
+
 function planCard(p, extra) {
   const k = key('p', p.id);
   const v = S.curVer(p);
@@ -533,16 +628,16 @@ function planCard(p, extra) {
   const img = h('img', { alt: '', 'data-v': v?.id || '', draggable: false });
   const nver = S.versionsOf(p.id).length;
   card.append(
-    h('div', { class: 'thumb' }, v?.broken ? h('div', { class: 'thumb-warn' }, icon('alert', 28), h('small', {}, tr('לא ניתן להציג'))) : icon('file', 32), img),
+    h('div', { class: 'thumb' }, v?.broken ? h('div', { class: 'thumb-warn' }, icon('alert', 28), h('small', {}, tr('לא ניתן להציג'))) : icon('file', 32), img, cloudBadge(p)),
     h('div', { class: 'meta' },
       h('div', { class: 'name', title: p.name }, dn(p.name)), ovTags(p),
       h('div', { class: 'sub' }, interleave([v?.pageCount ? tr('{0} עמ׳', v.pageCount) : null, fmtSize(v?.size), nver > 1 ? tr('V{0} ({1} גרסאות)', v.number, nver) : null].filter(Boolean))),
       extra ? h('div', { class: 'sub path' }, extra) : null),
     h('button', { class: 'icon-btn more', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more')));
   if (v) io.observe(img);
-  card.addEventListener('click', clickGuard(card, () => { location.hash = '#/p/' + p.id; }, k));
+  card.addEventListener('click', clickGuard(card, () => openPlan(p), k));
   card.addEventListener('contextmenu', (e) => { e.preventDefault(); if (card._long || carry) return; planMenu(p.id, { x: e.clientX, y: e.clientY }); });
-  card.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.hash = '#/p/' + p.id; });
+  card.addEventListener('keydown', (e) => { if (e.key === 'Enter') openPlan(p); });
   return card;
 }
 
@@ -579,9 +674,16 @@ function renderFolder() {
         h('button', { class: 'btn primary', onclick: () => A.uploadInto(fid) }, icon('upload', 18), tr('העלאת PDF')),
         h('button', { class: 'btn', onclick: () => A.newFolderDialog(fid) }, icon('folderPlus', 18), tr('תיקייה חדשה')))));
   }
+  if (folders.length || plans.length) {
+    const ds = S.descend(fid).folders;
+    const allOpen = ds.length > 0 && ds.every((id) => st.open.has(id));
+    wrap.append(h('div', { class: 'tools-row' },
+      h('button', { class: 'btn sm', onclick: () => sortDialog() }, icon('sliders', 16), tr('מיון וסדר')),
+      ds.length ? h('button', { class: 'btn sm', onclick: () => { ds.forEach((id) => (allOpen ? st.open.delete(id) : st.open.add(id))); setOpen(st.open); renderAll(); } }, icon(allOpen ? 'chevU' : 'chevD', 16), allOpen ? tr('סגור את כל התיקיות') : tr('פתח את כל התיקיות')) : null));
+  }
   if (folders.length) {
     wrap.append(h('h4', { class: 'sec' }, tr('תיקיות ({0})', folders.length)));
-    wrap.append(h('div', { class: 'grid folders' }, folders.map(folderCard)));
+    wrap.append(h('div', { class: 'grid folders' }, folders.flatMap((f) => [folderCard(f), st.open.has(f.id) ? h('div', { class: 'fold-inline' }, inlineBlock(f.id)) : null])));
   }
   if (plans.length) {
     wrap.append(h('h4', { class: 'sec' }, tr('תוכניות ({0})', plans.length)));
@@ -600,6 +702,38 @@ function renderFolder() {
   el.content.replaceChildren(wrap);
 }
 
+// ---------- מיון וסדר ----------
+const DIR_LABELS = {
+  name: ['א ← ת (עולה)', 'ת ← א (יורד)'], modified: ['ישן ← חדש', 'חדש ← ישן'], created: ['ישן ← חדש', 'חדש ← ישן'],
+  size: ['קטן ← גדול', 'גדול ← קטן'], pages: ['מעט ← הרבה', 'הרבה ← מעט'], count: ['מעט ← הרבה', 'הרבה ← מעט'],
+};
+function sortDialog() {
+  const body = h('div', { class: 'stack sort-body' });
+  const m = UI.openModal({ title: tr('מיון וסדר'), body, buttons: [{ text: tr('סגור'), value: true }] });
+  const apply = (kind, patch) => {
+    const next = { ...patch };
+    if (patch.mode && !patch.dir) next.dir = patch.mode === 'name' ? 'asc' : 'desc'; // תאריכים/גודל: החדש והגדול קודם
+    setSort(kind, next); S.resort(); draw();
+    if (kind === 'folders' && patch.mode === 'manual') UI.toast(tr('סדר ידני: בכל כרטיס תיקייה יש חצים למעלה ולמטה'), { ms: 3500 });
+  };
+  const group = (title, kind, modes, note) => {
+    const cur = getSort(kind);
+    const labels = DIR_LABELS[cur.mode];
+    return h('div', { class: 'set-sec' }, h('b', {}, title),
+      h('select', { onchange: (e) => apply(kind, { mode: e.target.value }) }, ...modes.map(([v, l]) => h('option', { value: v, selected: cur.mode === v }, tr(l)))),
+      labels ? h('div', { class: 'row' }, ...['asc', 'desc'].map((d, i) => h('button', { class: 'btn sm' + (cur.dir === d ? ' primary' : ''), onclick: () => apply(kind, { dir: d }) }, tr(labels[i])))) : null,
+      note ? h('small', { class: 'hint-inline' }, note) : null);
+  };
+  function draw() {
+    body.replaceChildren(
+      group(tr('סדר התיקיות'), 'folders', FOLDER_MODES, getSort('folders').mode === 'manual' ? tr('הסדר הידני נשמר במכשיר הזה. סדרו עם החצים שעל כל תיקייה.') : ''),
+      group(tr('סדר התוכניות'), 'plans', PLAN_MODES, ''),
+      h('small', { class: 'hint-inline' }, tr('המיון נשמר במכשיר הזה ולא משפיע על עובדים אחרים.')));
+  }
+  draw();
+  return m;
+}
+
 // ---------- חיפוש ----------
 let searchToken = 0;
 function renderSearch() {
@@ -614,7 +748,7 @@ function renderSearch() {
   }
   if (plans.length) {
     wrap.append(h('h4', { class: 'sec' }, tr('תוכניות ({0})', plans.length)));
-    wrap.append(h('div', { class: 'result-list' }, plans.slice(0, 200).map((p) => h('button', { class: 'result', onclick: () => { location.hash = '#/p/' + p.id; } },
+    wrap.append(h('div', { class: 'result-list' }, plans.slice(0, 200).map((p) => h('button', { class: 'result', onclick: () => openPlan(p) },
       icon('file', 20), h('span', { class: 'col' }, h('b', {}, dn(p.name)), h('small', {}, S.planPathText(p)))))));
   }
   const textBox = h('div', {}, h('h4', { class: 'sec' }, tr('טקסט בתוך קבצי PDF')), h('p', { class: 'hint' }, q.length < 2 ? tr('הקלידו לפחות 2 תווים לחיפוש בתוך הקבצים.') : tr('מחפש…')));
@@ -635,7 +769,7 @@ function renderSearch() {
       }
       textBox.append(h('div', { class: 'result-list' }, rows.map((r) => {
         const p = S.P.plans.get(r.planId);
-        return h('button', { class: 'result', onclick: () => { location.hash = `#/p/${r.planId}?page=${r.page}&q=${encodeURIComponent(q)}`; } },
+        return h('button', { class: 'result', onclick: () => { if (p) openPlan(p, `?page=${r.page}&q=${encodeURIComponent(q)}`); } },
           icon('search', 20), h('span', { class: 'col' }, h('b', {}, tr('{0} – עמוד {1}', dn(p.name), r.page)), h('small', {}, S.planPathText(p)), h('span', { class: 'snip' }, r.snippet)));
       })));
     });

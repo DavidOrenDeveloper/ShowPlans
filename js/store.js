@@ -6,6 +6,7 @@ import { uid, natural, norm } from './util.js';
 import { openPdf, renderThumb, pageText, destroyDoc } from './pdfio.js';
 import { applyOverlay, unwrap } from './overlay.js';
 import * as OVR from './overrides.js';
+import { getSort, getManual } from './order.js';
 
 export { unwrap };
 
@@ -27,6 +28,7 @@ export const hooks = {
   now: () => Date.now(),                       // שעון מתוקן לפי השרת (מצב ענן)
   owner: () => null,                           // מזהה המשתמש הנוכחי (מצב ענן)
   personal: () => false,                       // האם כל שינוי מבנה הוא אישי (עובד במצב ענן)
+  isLocal: () => true,                         // האם קובץ הגרסה שמור במכשיר (מצב ענן)
   itemChange() {}, itemDeleted() {},           // סימונים/מדידות/כיולים/קישורים: שינוי / מחיקה לסנכרון
 };
 const stamp = (r) => { r.updatedAt = hooks.now(); r._d = 1; return r; };
@@ -74,10 +76,38 @@ function reindex() {
     if (!versBy.has(v.planId)) versBy.set(v.planId, []);
     versBy.get(v.planId).push(v);
   }
-  for (const a of kids.values()) a.sort((x, y) => natural(x.name, y.name));
-  for (const a of plansBy.values()) a.sort((x, y) => natural(x.name, y.name));
+  for (const [pk, a] of kids.entries()) sortFolders(a, pk);
+  for (const a of plansBy.values()) sortPlans(a);
   for (const a of versBy.values()) a.sort((x, y) => y.number - x.number);
 }
+// ---------- מיון (העדפות במכשיר: order.js) ----------
+const tm = (x) => Number(x.updatedAt || x.createdAt || 0);
+const cnt = (f) => (plansBy.get(f.id) || []).length;
+function sortFolders(a, parentKey) {
+  const { mode, dir } = getSort('folders');
+  const sg = dir === 'desc' ? -1 : 1;
+  if (mode === 'manual') {
+    const ord = getManual(parentKey);
+    const pos = new Map((ord || []).map((id, i) => [id, i]));
+    a.sort((x, y) => (pos.has(x.id) ? pos.get(x.id) : 1e9) - (pos.has(y.id) ? pos.get(y.id) : 1e9) || natural(x.name, y.name));
+    return;
+  }
+  const by = { name: (x, y) => natural(x.name, y.name), modified: (x, y) => tm(x) - tm(y), created: (x, y) => Number(x.createdAt || 0) - Number(y.createdAt || 0), count: (x, y) => cnt(x) - cnt(y) }[mode] || ((x, y) => natural(x.name, y.name));
+  a.sort((x, y) => sg * by(x, y) || natural(x.name, y.name));
+}
+function sortPlans(a) {
+  const { mode, dir } = getSort('plans');
+  const sg = dir === 'desc' ? -1 : 1;
+  const ver = (p) => P.versions.get(p.currentVersionId) || {};
+  const by = {
+    name: (x, y) => natural(x.name, y.name), modified: (x, y) => tm(x) - tm(y), created: (x, y) => Number(x.createdAt || 0) - Number(y.createdAt || 0),
+    size: (x, y) => (ver(x).size || 0) - (ver(y).size || 0), pages: (x, y) => (ver(x).pageCount || 0) - (ver(y).pageCount || 0),
+    local: (x, y) => (hooks.isLocal(y.currentVersionId) ? 1 : 0) - (hooks.isLocal(x.currentVersionId) ? 1 : 0),
+  }[mode] || ((x, y) => natural(x.name, y.name));
+  a.sort((x, y) => (mode === 'local' ? by(x, y) : sg * by(x, y)) || natural(x.name, y.name));
+}
+export function resort() { reindex(); subs.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); }
+
 function emit() { rebuild(); reindex(); hooks.change(); subs.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); }
 
 export async function init() {

@@ -3,6 +3,7 @@ import { t as tr, CHEV_FWD } from './i18n.js';
 import { dn, nameVariants } from './names.js';
 import { h, icon, natural, norm } from './util.js';
 import * as S from './store.js';
+import { pushLayer } from './backstack.js';
 
 let layer = null;
 function root() {
@@ -29,9 +30,13 @@ export function openModal({ title, body, buttons = [], wide = false, cancelable 
   if (head && cancelable) head.append(h('button', { class: 'icon-btn', 'aria-label': tr('סגור'), onclick: () => m.close(undefined) }, icon('x')));
   const bodyEl = h('div', { class: 'modal-body' }, body);
   const foot = buttons.length ? h('div', { class: 'modal-foot' }) : null;
+  let layerH = null;
+  let closed = false;
   const m = {
     el: box, body: bodyEl, promise,
     close(v) {
+      if (closed) return; closed = true;
+      layerH?.release();
       document.removeEventListener('keydown', onKey, true);
       back.classList.remove('show');
       setTimeout(() => back.remove(), 180);
@@ -56,6 +61,7 @@ export function openModal({ title, body, buttons = [], wide = false, cancelable 
   }
   document.addEventListener('keydown', onKey, true);
   root().appendChild(back);
+  if (cancelable) layerH = pushLayer(() => { layerH = null; m.close(undefined); }); // "אחורה" של אנדרואיד סוגר את החלון
   requestAnimationFrame(() => back.classList.add('show'));
   setTimeout(() => { const f = box.querySelector('[autofocus], input, textarea, select'); if (f && !('ontouchstart' in window)) f.focus(); }, 60);
   return m;
@@ -114,12 +120,33 @@ export function progressBox(title) {
   };
 }
 
+// ---------- התקדמות ברקע: שבב קטן שלא חוסם את המסך ----------
+// לחיצה על ה-X מבטלת (אם הועבר onCancel). לחיצה בכל מקום אחר באפליקציה ממשיכה לעבוד כרגיל.
+export function bgProgress(title, { onCancel } = {}) {
+  const txt = h('span', { class: 'bgp-t' }, title);
+  const fill = h('div', { class: 'bar-fill' });
+  const chip = h('div', { class: 'bgp', role: 'status' },
+    h('div', { class: 'bgp-main' }, h('b', {}, title), txt, h('div', { class: 'bar' }, fill)),
+    onCancel ? h('button', { class: 'icon-btn sm', 'aria-label': tr('בטל'), onclick: () => onCancel() }, icon('x', 18)) : null);
+  chip.querySelector('.bgp-t').textContent = '';
+  root().appendChild(chip);
+  document.body.classList.add('bgp-on');
+  return {
+    set(text, frac) { txt.textContent = text; if (frac != null) fill.style.width = Math.round(frac * 100) + '%'; },
+    close() { chip.remove(); if (!document.querySelector('.bgp')) document.body.classList.remove('bgp-on'); },
+  };
+}
+
 // ---------- תפריט (חלון קטן, ובמובייל – גיליון תחתון) ----------
+let closeCurMenu = null;
 export function menu(anchor, items) {
+  if (closeCurMenu) closeCurMenu();
   document.querySelectorAll('.menu-back').forEach((n) => n.remove());
   const back = h('div', { class: 'menu-back' });
   const box = h('div', { class: 'menu', role: 'menu' });
-  const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
+  let layerH = null;
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); layerH?.release(); if (closeCurMenu === close) closeCurMenu = null; };
+  closeCurMenu = close;
   function onKey(e) { if (e.key === 'Escape') close(); }
   document.addEventListener('keydown', onKey, true);
   items.filter(Boolean).forEach((it) => {
@@ -133,6 +160,7 @@ export function menu(anchor, items) {
   back.addEventListener('mousedown', (e) => { if (e.target === back) close(); });
   back.addEventListener('contextmenu', (e) => { e.preventDefault(); close(); });
   root().appendChild(back);
+  layerH = pushLayer(() => { layerH = null; close(); }); // "אחורה" סוגר את התפריט
   const narrow = window.innerWidth < 700;
   if (narrow) { box.classList.add('sheet'); return; }
   let x, y;

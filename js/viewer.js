@@ -142,6 +142,7 @@ class Viewer {
     this.root.append(this.el);
     this.el.classList.toggle('cont', !!this.cont); this.contBtn.classList.toggle('on', !!this.cont);
     this._onPop = () => {
+      if (window.__layerPop) return; // "אחורה" שנוצל לסגירת תפריט/חלון
       if (!this._sPush) return;
       this._sPush = false;
       if (this.panelMode === 'search') { this.closePanel(); this.pushSearch(); } // שלב 1: סוגר את לוח החיפוש, הסימונים נשארים

@@ -68,6 +68,7 @@ export async function run(stores, mode, fn) {
 
 export const get = (s, k) => run(s, 'readonly', (t) => rq(t.objectStore(s).get(k)));
 export const getAll = (s) => run(s, 'readonly', (t) => rq(t.objectStore(s).getAll()));
+export const keys = (s) => run(s, 'readonly', (t) => rq(t.objectStore(s).getAllKeys()));
 export const put = (s, v) => run(s, 'readwrite', (t) => rq(t.objectStore(s).put(unwrap(v))));
 export const putMany = (s, arr) => run(s, 'readwrite', async (t) => { const os = t.objectStore(s); for (const v of arr) os.put(unwrap(v)); });
 export const del = (s, k) => run(s, 'readwrite', (t) => rq(t.objectStore(s).delete(k)));
