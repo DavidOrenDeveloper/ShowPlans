@@ -496,3 +496,24 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 /* הגדרות: שמות עובדים וכפתורים מיושרים בטור אחד, בלי קשר לאורך השם */
 .set-sec .row > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .set-sec .row .btn { flex: none; width: 132px; justify-content: center; text-align: center; }
+
+/* חץ הפתיחה מעל תיבת הבחירה; במגע אין בחירה בנגיעה בכרטיס – בחירה רק בלחיצה ארוכה */
+.card.folder .fc-open { position: relative; z-index: 3; }
+@media (pointer: coarse) { .card .chk { pointer-events: none; } }
+.content { overflow-anchor: none; scroll-behavior: auto; }
+.card.folder { content-visibility: visible; }
+.card.folder { content-visibility: visible; }
+
+/* שם תוכנית: לחיצה על השם מרחיבה אותו */
+.card .meta .name.open, .inl-row .nm.open { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; -webkit-line-clamp: unset !important; display: block !important; overflow-wrap: anywhere; }
+.inl-row .nm.open { flex: 1; }
+
+/* מסך מלא: רק כפתור כיווץ וחץ קטן לפתיחת כלי עריכה */
+.v-fs-tools { display: none; position: absolute; top: calc(10px + var(--safe-t)); right: 10px; z-index: 40; width: 44px; height: 44px; align-items: center; justify-content: center; border: 0; border-radius: 99px; background: rgba(31,41,51,.78); color: #fff; padding: 0; }
+.viewer.fs .v-fs-tools { display: flex; }
+.viewer.fs.fs-tools .v-fs-tools svg { transform: rotate(180deg); }
+.viewer.fs.fs-tools .v-tools { display: flex !important; position: absolute; left: 0; right: 0; bottom: 0; z-index: 45; }
+.viewer.fs.fs-tools .v-props.has { display: flex !important; position: absolute; left: 0; right: 0; bottom: calc(60px + var(--safe-b)); z-index: 45; }
+.viewer.fs.fs-tools .v-zoom { display: flex !important; top: calc(64px + var(--safe-t)); transform: none; }
+.viewer.fs.fs-tools .v-pages { display: flex !important; bottom: calc(76px + var(--safe-b)); }
+.viewer.fs .v-mid { position: absolute; inset: 0; }
