@@ -517,3 +517,37 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 .viewer.fs.fs-tools .v-zoom { display: flex !important; top: calc(64px + var(--safe-t)); transform: none; }
 .viewer.fs.fs-tools .v-pages { display: flex !important; bottom: calc(76px + var(--safe-b)); }
 .viewer.fs .v-mid { position: absolute; inset: 0; }
+
+/* ---------- תצוגה מקדימה של תוכנית (מסך גישה לעובד) ---------- */
+.pv-root { position: fixed; inset: 0; z-index: 1; background: #3d4650; display: flex; flex-direction: column; }
+.pv-bar { display: flex; align-items: center; gap: 6px; padding: calc(4px + var(--safe-t)) 8px 4px; background: var(--ink); color: #fff; min-height: 52px; }
+.pv-bar .icon-btn { color: #fff; }
+.pv-bar .sp { flex: 1; }
+.pv-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 45%; }
+.pv-info, .pv-zl { font-size: 12px; color: #cfd6dd; white-space: nowrap; }
+.pv-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; direction: ltr; -webkit-overflow-scrolling: touch; }
+.pv-page { position: relative; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.4); flex: none; margin-inline: auto; }
+.pv-page canvas { display: block; width: 100%; height: 100%; }
+.pv-n { position: absolute; top: 4px; left: 6px; background: rgba(31,41,51,.7); color: #fff; font-size: 11px; padding: 1px 7px; border-radius: 9px; }
+.pv-status { position: absolute; inset: 60px 0 0; display: flex; align-items: center; justify-content: center; color: #fff; padding: 20px; text-align: center; pointer-events: none; }
+.plan-link { background: none; border: 0; padding: 4px 0; font: inherit; color: var(--blue, #1d4e89); text-decoration: underline; text-align: start; cursor: pointer; min-height: 32px; }
+.bgp.drag { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+.bgp.dragging { cursor: grabbing; box-shadow: 0 10px 30px rgba(0,0,0,.5); opacity: .95; }
+.bgp-grip { width: 4px; align-self: stretch; border-radius: 3px; background: rgba(255,255,255,.35); margin-inline-end: 6px; flex: none; }
+
+/* ---------- תצוגה מפוצלת ---------- */
+.split-host { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #20272e; }
+.split-area { flex: 1; min-height: 0; display: flex; gap: 3px; }
+.split-area.row { flex-direction: row; }
+.split-area.column { flex-direction: column; }
+.split-slot { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; position: relative; }
+.split-dock { display: flex; flex-direction: column; flex: none; }
+.viewer.pane { position: relative; inset: auto; z-index: auto; flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; overflow: hidden; }
+.viewer.pane .v-top { min-height: 44px; padding-top: 0; border-bottom: 3px solid transparent; }
+.viewer.pane.active-pane .v-top { border-bottom-color: var(--amber); }
+.viewer.pane .v-top .nh, .viewer.pane .only-single { display: none; }
+.viewer.pane .v-title b { font-size: 14px; }
+.viewer.pane .v-zoom { top: 8px; transform: none; padding: 2px; }
+.viewer.pane .v-zoom .icon-btn { width: 36px; height: 36px; }
+.viewer.pane .v-panel { position: absolute; left: 0; top: 0; bottom: 0; width: min(300px, 88%); box-shadow: 0 0 30px rgba(0,0,0,.4); border-inline-start: 0; }
+.split-area[data-n="3"] .v-top .icon-btn { width: 36px; height: 36px; }
