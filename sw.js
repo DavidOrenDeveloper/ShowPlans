@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.10.3';
+const VERSION = '1.10.4';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -93,10 +93,16 @@ const EXTRA = [
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // cache:'reload' – עוקף את מטמון ה-HTTP של הדפדפן/GitHub Pages, כדי שלא יישמרו במטמון קבצים ישנים (זה גרם ל"פועלת גרסה X, צפוי Y")
-    const fresh = (u) => new Request(u, { cache: 'reload' });
-    await cache.addAll(CORE.map(fresh));            // חובה: אם נכשל – ההתקנה נכשלת ומנסים שוב
-    await Promise.allSettled(EXTRA.map((u) => cache.add(fresh(u)))); // גופנים/wasm של PDF.js: best-effort
+    // כל קובץ נטען עם פרמטר ?_v=<גרסה> ועם cache:'reload': זה עוקף גם את מטמון הדפדפן וגם את המטמון של GitHub Pages / CDN,
+    // שמחזיקים לפעמים גרסה ישנה של הקובץ עד כמה דקות (וזה גרם ל"פועלת גרסה X, צפוי Y"). נשמר תחת הכתובת הרגילה.
+    const grab = async (u) => {
+      const res = await fetch(u + (u.includes('?') ? '&' : '?') + '_v=' + VERSION, { cache: 'reload' });
+      if (!res.ok) throw new Error('fetch ' + u + ' ' + res.status);
+      if (u === 'js/version.js') { const t = await res.clone().text(); if (!t.includes("'" + VERSION + "'")) throw new Error('version.js לא תואם (' + VERSION + ')'); }
+      await cache.put(new Request(u), res);
+    };
+    await Promise.all(CORE.map(grab));              // חובה: אם נכשל – ההתקנה נכשלת ומנסים שוב
+    await Promise.allSettled(EXTRA.map(grab));      // גופנים/wasm של PDF.js: best-effort
     await self.skipWaiting();
   })());
 });
