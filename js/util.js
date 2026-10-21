@@ -166,3 +166,13 @@ export function downloadBlob(blob, filename) {
   a.click();
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 60000);
 }
+
+// SHA-256 של קובץ/Blob/ArrayBuffer (מחרוזת hex), או null אם הדפדפן לא תומך
+export async function sha256(src) {
+  try {
+    const buf = src instanceof ArrayBuffer ? src : await src.arrayBuffer();
+    const d = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch { return null; }
+}
+

@@ -1,4 +1,6 @@
 // פעולות משותפות למסך הקבצים ול-Viewer
+import { canEditPlan } from './cloud-sync.js';
+import { importWithDedupe } from './dedupe.js';
 import { t as tr } from './i18n.js';
 import { dn } from './names.js';
 import * as S from './store.js';
@@ -22,15 +24,23 @@ export async function importFiles(files, folderId) {
   const pdfs = files.filter((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
   if (!pdfs.length) { UI.toast(tr('לא נבחרו קבצי PDF'), { type: 'error' }); return []; }
   const pb = UI.progressBox(tr('מייבא תוכניות…'));
-  const created = [], failed = [];
+  let res;
   try {
-    for (let i = 0; i < pdfs.length; i++) {
-      pb.set(tr('{0} מתוך {1} – {2}', i + 1, pdfs.length, pdfs[i].name), i / pdfs.length);
-      try { created.push(await S.importPdf(pdfs[i], folderId)); } catch (e) { console.error(e); failed.push({ name: pdfs[i].name, msg: e.message || String(e) }); }
-    }
+    res = await importWithDedupe(pdfs.map((f) => ({ name: f.name, folderId: folderId || null, size: f.size, getFile: async () => f })), {
+      tick: (label, n, tot) => pb.set(tr('{0} מתוך {1} – {2}', Math.min(n + 1, tot), tot, label), n / Math.max(1, tot)),
+    });
   } finally { pb.close(); }
+  if (res.cancelled) { UI.toast(tr('ההעלאה בוטלה')); return []; }
+  const created = res.created, failed = res.failed;
   const broken = created.filter((p) => S.curVer(p)?.broken).length;
-  if (created.length) UI.toast(tr('נוספו {0} תוכניות', created.length) + (files.length - pdfs.length ? tr(' ({0} קבצים שאינם PDF דולגו)', files.length - pdfs.length) : '') + tr(' · עותק נשמר באפליקציה, אפשר למחוק את המקור מהטלפון'), { ms: 5000 });
+  const bits = [];
+  if (created.length) bits.push(tr('נוספו {0} תוכניות', created.length));
+  if (res.versions) bits.push(tr('{0} עודכנו כגרסה חדשה', res.versions));
+  if (res.renamed) bits.push(tr('{0} שמות עודכנו', res.renamed));
+  if (res.existing) bits.push(tr('{0} כבר היו קיימות ודולגו', res.existing));
+  if (res.skipped) bits.push(tr('{0} דולגו לבקשתך', res.skipped));
+  if (files.length - pdfs.length) bits.push(tr('{0} קבצים שאינם PDF דולגו', files.length - pdfs.length));
+  if (bits.length) UI.toast(bits.join(' · ') + (created.length ? tr(' · עותק נשמר באפליקציה, אפשר למחוק את המקור מהטלפון') : ''), { ms: 5000 });
   if (broken) await UI.alertBox(tr('{0} קבצים נשמרו, אבל ה-Viewer הפנימי לא הצליח לפתוח אותם. אפשר להוריד אותם או לפתוח באפליקציית PDF אחרת (תפריט ⋮ ← פתח באמצעות).', broken), { title: tr('שימו לב') });
   if (failed.length) await UI.alertBox(failed.map((f) => `${f.name}: ${f.msg}`).join('\n'), { title: tr('חלק מהקבצים לא נשמרו') });
   return created;
@@ -187,6 +197,7 @@ export async function versionsDialog(planId, { onChange } = {}) {
   const plan = S.P.plans.get(planId); if (!plan) return;
   const list = h('div', { class: 'ver-list' });
   let m;
+  const canEdit = () => canEditPlan(planId); // עובד עם הרשאת צפייה/סימון רואה ופותח גרסאות קודמות, אבל לא משנה אותן
   function render() {
     list.textContent = '';
     const vs = S.versionsOf(planId);
@@ -199,10 +210,10 @@ export async function versionsDialog(planId, { onChange } = {}) {
           h('small', {}, tr('{0} עמ׳ · {1}', v.pageCount || '?', fmtSize(v.size)))),
         h('div', { class: 'ver-actions' },
           h('button', { class: 'btn sm', onclick: () => { m.close(); nav(`#/p/${planId}?v=${v.id}`); } }, tr('פתח')),
-          !isCur ? h('button', { class: 'btn sm', onclick: async () => { await S.setCurrentVersion(planId, v.id); render(); onChange?.(); } }, tr('הפוך לנוכחית')) : null,
+          !isCur && canEdit() ? h('button', { class: 'btn sm', onclick: async () => { await S.setCurrentVersion(planId, v.id); render(); onChange?.(); } }, tr('הפוך לנוכחית')) : null,
           !isCur ? h('button', { class: 'btn sm', onclick: () => { m.close(); nav(`#/p/${planId}?v=${plan.currentVersionId}&cmp=${v.id}`); } }, tr('השווה לנוכחית')) : null,
           h('button', { class: 'btn sm', onclick: () => downloadVersion(v.id, `${plan.name}_V${v.number}`) }, tr('הורד')),
-          h('button', {
+          !canEdit() ? null : h('button', {
             class: 'btn sm danger', onclick: async () => {
               const only = S.versionsOf(planId).length === 1;
               const ok = await UI.confirmBox(only ? tr('זו הגרסה היחידה – מחיקתה תמחק את כל התוכנית. להמשיך?') : tr('למחוק את גרסה V{0} ({1})? הסימונים והמדידות של הגרסה יימחקו.', v.number, fmtDate(v.date)), { danger: true, okText: tr('מחק'), title: tr('מחיקת גרסה') });
@@ -217,7 +228,7 @@ export async function versionsDialog(planId, { onChange } = {}) {
   render();
   m = UI.openModal({
     title: tr('גרסאות – ') + dn(plan.name), body: list, wide: true,
-    buttons: [{ text: tr('סגור'), value: true }, { text: tr('העלה גרסה חדשה'), kind: 'primary', icon: 'upload', keepOpen: true, onClick: async () => { const v = await addVersionDialog(planId); if (v) { render(); onChange?.(); } return false; } }],
+    buttons: [{ text: tr('סגור'), value: true }, ...(canEdit() ? [{ text: tr('העלה גרסה חדשה'), kind: 'primary', icon: 'upload', keepOpen: true, onClick: async () => { const v = await addVersionDialog(planId); if (v) { render(); onChange?.(); } return false; } }] : [])],
   });
 }
 

@@ -1,4 +1,5 @@
 // העלאת תיקייה שלמה כולל כל תתי-התיקיות (בחירת תיקייה, גרירה במחשב, או קובץ ZIP), ושמירה על המבנה המקורי.
+import { importWithDedupe } from './dedupe.js';
 import { t as tr } from './i18n.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
@@ -120,7 +121,7 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
   const m = UI.openModal({ title: tr('מעלה תיקייה…'), cancelable: false, body: h('div', {}, txt, h('div', { class: 'bar' }, bar)), buttons: [{ text: tr('עצור'), keepOpen: true, onClick: () => { stop = true; txt.textContent = tr('עוצר אחרי הקובץ הנוכחי…'); return false; } }] });
   const total = pdfs.length; // סופרים רק קבצים. תיקיות לא נספרות
   let done = 0;
-  const res = { folders: 0, plans: 0, existing: 0, failed: [], nonPdf, stopped: false };
+  const res = { folders: 0, plans: 0, versions: 0, renamed: 0, skipped: 0, existing: 0, cancelled: false, failed: [], nonPdf, stopped: false };
   const idOf = new Map([['', targetFolderId || null]]);
   const tick = (label) => { txt.textContent = total ? tr('{0} מתוך {1} קבצים · {2}', done, total, label) : label; bar.style.width = Math.round((done / Math.max(1, total)) * 100) + '%'; };
   try {
@@ -133,23 +134,25 @@ export async function importTree(tree, targetFolderId, { skipExisting = true } =
       idOf.set(key, f.id);
       tick(tr('יוצר תיקייה: ') + name);
     }
-    for (const it of pdfs) {
-      if (stop) break;
+    const items = pdfs.map((it) => {
       const fname = it.path[it.path.length - 1];
-      const folderId = idOf.get(it.path.slice(0, -1).join('/')) ?? (targetFolderId || null);
-      tick(fname);
-      try {
-        if (skipExisting && S.plansIn(folderId).some((p) => p.originalName === fname)) res.existing++;
-        else { await S.importPdf(it.lazy ? await it.lazy.get() : it.file, folderId); res.plans++; }
-      } catch (e) { console.error(e); res.failed.push({ name: it.path.join('/'), msg: e.message || String(e) }); if (/הרשאה|אחסון|permission|storage/i.test(e.message || '')) { stop = true; } }
-      done++;
-    }
+      return { name: fname, path: it.path.join('/'), folderId: idOf.get(it.path.slice(0, -1).join('/')) ?? (targetFolderId || null), size: it.lazy ? (it.size || 0) : it.file.size, getFile: async () => (it.lazy ? await it.lazy.get() : it.file) };
+    });
+    const r = await importWithDedupe(items, {
+      check: skipExisting, stopped: () => stop,
+      tick: (label, n, tot, importing) => { done = n; txt.textContent = importing ? tr('{0} מתוך {1} קבצים · {2}', n, tot, label) : label; bar.style.width = Math.round((n / Math.max(1, tot)) * 100) + '%'; },
+    });
+    Object.assign(res, { plans: r.plans, versions: r.versions, renamed: r.renamed, existing: r.existing, skipped: r.skipped, failed: r.failed, cancelled: r.cancelled });
+    if (r.stopped) stop = true;
     res.stopped = stop;
   } finally { m.close(); }
   const bits = [tr('נוצרו {0} תיקיות', res.folders), tr('נוספו {0} תוכניות', res.plans)];
+  if (res.versions) bits.push(tr('{0} עודכנו כגרסה חדשה', res.versions));
+  if (res.renamed) bits.push(tr('{0} שמות עודכנו', res.renamed));
   if (res.existing) bits.push(tr('{0} כבר היו קיימות ודולגו', res.existing));
+  if (res.skipped) bits.push(tr('{0} דולגו לבקשתך', res.skipped));
   if (res.nonPdf) bits.push(tr('{0} קבצים שאינם PDF דולגו', res.nonPdf));
-  UI.toast(bits.join(' · ') + (res.stopped ? tr(' (נעצר)') : ''), { ms: 6000 });
+  UI.toast(res.cancelled ? tr('ההעלאה בוטלה (תיקיות שנוצרו נשארו)') : bits.join(' · ') + (res.stopped ? tr(' (נעצר)') : ''), { ms: 6000 });
   if (res.failed.length) await UI.alertBox(res.failed.slice(0, 15).map((f) => `${f.name}: ${f.msg}`).join('\n') + (res.failed.length > 15 ? tr('\n…ועוד {0}', res.failed.length - 15) : ''), { title: tr('חלק מהקבצים לא נשמרו') });
   return res;
 }

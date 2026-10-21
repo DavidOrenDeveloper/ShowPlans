@@ -2,7 +2,7 @@
 import { t as tr } from './i18n.js';
 import { dn, nameVariants } from './names.js';
 import * as db from './db.js';
-import { uid, natural, norm } from './util.js';
+import { uid, natural, norm, sha256 } from './util.js';
 import { openPdf, renderThumb, pageText, destroyDoc } from './pdfio.js';
 import { applyOverlay, unwrap } from './overlay.js';
 import * as OVR from './overrides.js';
@@ -200,6 +200,11 @@ export async function renamePlan(id, name) {
   hooks.guard('plan', [id]);
   p.name = name.trim(); stamp(p); await db.put('plans', p); emit();
 }
+export async function setPlanOriginalName(id, name) {
+  const p = P.plans.get(id); if (!p) return;
+  hooks.guard('plan', [id]);
+  p.originalName = name; stamp(p); await db.put('plans', p); emit();
+}
 export async function setPlanNotes(id, notes) {
   const p = P.plans.get(id); if (!p) return;
   hooks.guard('plan', [id]);
@@ -334,6 +339,7 @@ export async function importPdf(file, folderId, { name } = {}) {
   if (hooks.personal() && isPersonalFolder(folderId)) { place = folderId; folderId = realFolder(folderId); }
   hooks.guard('folder-in', [folderId || null]);
   const buf = await file.arrayBuffer();
+  const hash = await sha256(buf.slice(0)); // טביעת אצבע לזיהוי כפילויות (לפני ש-PDF.js "גונב" את ה-buffer)
   const a = await analyze(buf);
   const now = Date.now();
   const planId = uid(), verId = uid();
@@ -345,7 +351,7 @@ export async function importPdf(file, folderId, { name } = {}) {
   const ver = {
     id: verId, planId, number: 1, date: new Date().toISOString().slice(0, 10), note: '',
     size: a.blob.size, pageCount: a.pageCount, fileName: file.name, createdAt: now,
-    indexed: a.broken, hasText: false, broken: a.broken, _d: 1, _up: 1,
+    indexed: a.broken, hasText: false, broken: a.broken, hash: hash || undefined, _d: 1, _up: 1,
   };
   try {
     await db.run(['plans', 'versions', 'files', 'thumbs'], 'readwrite', async (t) => {
@@ -366,13 +372,14 @@ export async function addVersion(planId, file, { date, note, makeCurrent = true 
   const plan = P.plans.get(planId); if (!plan) throw new Error(tr('התוכנית לא נמצאה'));
   hooks.guard('plan', [planId]);
   const buf = await file.arrayBuffer();
+  const hash = await sha256(buf.slice(0));
   const a = await analyze(buf);
   const verId = uid();
   const number = Math.max(0, ...versionsOf(planId).map((v) => v.number)) + 1;
   const ver = {
     id: verId, planId, number, date: date || new Date().toISOString().slice(0, 10), note: note || '',
     size: a.blob.size, pageCount: a.pageCount, fileName: file.name, createdAt: Date.now(),
-    indexed: a.broken, hasText: false, broken: a.broken, _d: 1, _up: 1,
+    indexed: a.broken, hasText: false, broken: a.broken, hash: hash || undefined, _d: 1, _up: 1,
   };
   if (makeCurrent) { plan.currentVersionId = verId; }
   stamp(plan);
