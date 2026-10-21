@@ -40,6 +40,69 @@ async function handleShare(request) {
   return Response.redirect(new URL('./#/inbox', self.registration.scope).href, 303);
 }
 
+
+// ---------- הורדה ברקע (Background Fetch, Chrome באנדרואיד) ----------
+// הדף מעביר לכאן הורדות כשהאפליקציה יוצאת מהחזית. הדפדפן מוריד גם כשהאפליקציה סגורה והטלפון נעול,
+// וכאן שומרים כל קובץ במסד המקומי (אותו מסד שהאפליקציה משתמשת בו) כדי שיהיה זמין כשפותחים את התוכנית.
+// מזהה הרישום: dl|<שם המסד>|<זמן>. כל בקשה: ...?v=<מזהה גרסה>
+const idbOpen = (name) => new Promise((res, rej) => { const r = indexedDB.open(name); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function saveFile(dbName, versionId, blob) {
+  const d = await idbOpen(dbName);
+  try {
+    await new Promise((res, rej) => {
+      const t = d.transaction(['files', 'meta'], 'readwrite');
+      const f = t.objectStore('files'), m = t.objectStore('meta');
+      const g = f.get(versionId);
+      g.onsuccess = () => {
+        if (!g.result) f.put({ id: versionId, blob });
+        const k = m.get('bgIndex');
+        k.onsuccess = () => { const list = (k.result && k.result.v) || []; if (!list.includes(versionId)) list.push(versionId); m.put({ key: 'bgIndex', v: list }); };
+      };
+      t.oncomplete = () => res(); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    });
+  } finally { d.close(); }
+}
+async function tellClients(msg) { for (const c of await self.clients.matchAll({ includeUncontrolled: true })) c.postMessage(msg); }
+self.addEventListener('backgroundfetchsuccess', (event) => {
+  const bf = event.registration;
+  event.waitUntil((async () => {
+    const dbName = bf.id.split('|')[1];
+    const ok = [], failed = [];
+    for (const rec of await bf.matchAll()) {
+      const vid = new URL(rec.request.url).searchParams.get('v');
+      try {
+        const res = await rec.responseReady;
+        if (!res || !res.ok) { failed.push(vid); continue; }
+        const blob = await res.blob();
+        if (!blob.size) { failed.push(vid); continue; }
+        await saveFile(dbName, vid, new Blob([blob], { type: 'application/pdf' }));
+        ok.push(vid);
+      } catch (e) { failed.push(vid); }
+    }
+    try { await event.updateUI({ title: failed.length ? 'ההורדה הסתיימה (' + failed.length + ' נכשלו)' : 'ההורדה הסתיימה ✓' }); } catch (e) { /* ignore */ }
+    await tellClients({ type: 'bg-done', ok, failed });
+  })());
+});
+self.addEventListener('backgroundfetchfail', (event) => {
+  const bf = event.registration;
+  event.waitUntil((async () => {
+    const dbName = bf.id.split('|')[1];
+    const ok = [], failed = [];
+    for (const rec of await bf.matchAll()) {
+      const vid = new URL(rec.request.url).searchParams.get('v');
+      try { const res = await rec.responseReady; if (res && res.ok) { const blob = await res.blob(); if (blob.size) { await saveFile(dbName, vid, new Blob([blob], { type: 'application/pdf' })); ok.push(vid); continue; } } } catch (e) { /* ignore */ }
+      failed.push(vid);
+    }
+    await tellClients({ type: 'bg-done', ok, failed });
+  })());
+});
+self.addEventListener('backgroundfetchabort', (event) => {
+  event.waitUntil((async () => { const ids = []; try { for (const r of await event.registration.matchAll()) ids.push(new URL(r.request.url).searchParams.get('v')); } catch (e) { /* ignore */ } await tellClients({ type: 'bg-done', ok: [], failed: ids }); })());
+});
+self.addEventListener('backgroundfetchclick', (event) => {
+  event.waitUntil(self.clients.openWindow(new URL('./', self.registration.scope).href));
+});
+
 // העמוד שואל איזו גרסה ה-Service Worker הזה מייצג (לכפתור "עדכן אפליקציה")
 self.addEventListener('message', (event) => {
   if (event.data === 'version' && event.ports && event.ports[0]) event.ports[0].postMessage(VERSION);
