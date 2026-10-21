@@ -7,7 +7,8 @@ import * as UI from './ui.js';
 import * as A from './actions.js';
 import * as db from './db.js';
 import { setPasswordHandler } from './pdfio.js';
-import { mountBrowser, show } from './browser.js';
+import { mountBrowser, show, installApp } from './browser.js';
+import { settingsDialog } from './settings.js';
 import { openViewer, closeViewer } from './viewer.js';
 import { h } from './util.js';
 import { initCloud, cloud, dbNameFor, isCloud, isAdmin } from './cloud.js';
@@ -95,6 +96,9 @@ async function main() {
   window.addEventListener('hashchange', () => { window.__navCount++; route(); });
   document.getElementById('boot')?.remove();
   await route();
+  try { // אחרי החלפת שפה (טעינה מחדש) חוזרים לחלון ההגדרות שהיה פתוח
+    if (sessionStorage.getItem('plans.reopen') === 'settings') { sessionStorage.removeItem('plans.reopen'); settingsDialog({ installApp }); }
+  } catch { /* ignore */ }
   registerSW();
   verifyAfterBoot();
   db.requestPersist();

@@ -60,7 +60,7 @@ export async function settingsDialog({ installApp }) {
       : h('span', {}, tr('מצב מקומי (בלי חשבון ענן)'));
 
     body.replaceChildren(
-      row(tr('שפה / Language'), h('button', { class: 'btn sm', onclick: toggleLang }, icon('globe', 16), langButtonLabel())),
+      row(tr('שפה / Language'), h('button', { class: 'btn sm', onclick: () => { try { sessionStorage.setItem('plans.reopen', 'settings'); } catch { /* ignore */ } toggleLang(); } }, icon('globe', 16), langButtonLabel())),
       row(tr('תרגום שמות קבצים ותיקיות'),
         h('select', { onchange: (e) => setNameMode(e.target.value) },
           ...[['full', tr('מילון בנייה + תרגום ברשת')], ['glossary', tr('מילון בנייה בלבד (בלי אינטרנט)')], ['off', tr('כבוי – שמות כפי שנכתבו')]].map(([v, l]) => h('option', { value: v, selected: getNameMode() === v }, l))),
