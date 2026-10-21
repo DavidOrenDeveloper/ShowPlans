@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.10.4';
+const VERSION = '1.11.0';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -21,6 +21,7 @@ const CORE = [
   "js/cloud.js",
   "js/config.js",
   "js/db.js",
+  "js/dedupe.js",
   "js/diag.js",
   "js/folder-import.js",
   "js/glossary.js",
