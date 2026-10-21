@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.10.2';
+const VERSION = '1.10.3';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -93,8 +93,10 @@ const EXTRA = [
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    await cache.addAll(CORE);                       // חובה: אם נכשל – ההתקנה נכשלת ומנסים שוב
-    await Promise.allSettled(EXTRA.map((u) => cache.add(u))); // גופנים/wasm של PDF.js: best-effort
+    // cache:'reload' – עוקף את מטמון ה-HTTP של הדפדפן/GitHub Pages, כדי שלא יישמרו במטמון קבצים ישנים (זה גרם ל"פועלת גרסה X, צפוי Y")
+    const fresh = (u) => new Request(u, { cache: 'reload' });
+    await cache.addAll(CORE.map(fresh));            // חובה: אם נכשל – ההתקנה נכשלת ומנסים שוב
+    await Promise.allSettled(EXTRA.map((u) => cache.add(fresh(u)))); // גופנים/wasm של PDF.js: best-effort
     await self.skipWaiting();
   })());
 });
