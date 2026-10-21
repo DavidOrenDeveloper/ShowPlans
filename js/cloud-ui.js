@@ -3,6 +3,7 @@ import { t as tr, LOCALE, CHEV_FWD, toggleLang, langButtonLabel } from './i18n.j
 import { dn } from './names.js';
 import { h, icon } from './util.js';
 import * as UI from './ui.js';
+import { previewPlan } from './plan-preview.js';
 import * as diag from './diag.js';
 import * as S from './store.js';
 import * as db from './db.js';
@@ -365,7 +366,7 @@ export async function workerAccessDialog(userId = null) {
     else { const { data, error: e } = await sb.from('grants').insert({ user_id: uid, [col]: id, level: value }).select().single(); if (e) throw e; grants.push(data); }
   }
   function levelSelect(col, id, inherited) {
-    const sel = h('select', { 'aria-label': tr('רמת גישה') }, LEVELS.map(([v, t]) => h('option', { value: v }, v === '' && inherited ? tr('ללא (יורש: {0})', LEVEL_TEXT[levelName(inherited)]) : t)));
+    const sel = h('select', { 'aria-label': tr('רמת גישה') }, LEVELS.map(([v, t]) => h('option', { value: v }, v === '' && inherited ? tr('לפי התיקייה: {0}', LEVEL_TEXT[levelName(inherited)]) : t)));
     sel.value = direct(col, id)?.level || '';
     sel.addEventListener('change', async () => {
       sel.disabled = true;
@@ -396,9 +397,9 @@ export async function workerAccessDialog(userId = null) {
       const eff = planLevel(p);
       const inheritedLvl = folderLevel(p.folderId || null);
       out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
-        h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('span', {}, dn(p.name))), h('small', {}, eff ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(eff)]) : tr('העובד לא רואה'))),
+        h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('button', { class: 'plan-link', title: tr('לחצו לצפייה בקובץ התוכנית'), onclick: () => previewPlan(p.id, { onOpenFull: () => { m.close(true); location.hash = '#/p/' + p.id; } }) }, dn(p.name))), h('small', {}, eff ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(eff)]) : tr('העובד לא רואה'))),
         h('div', { class: 'row' },
-          h('button', { class: 'btn ghost sm', title: tr('פתח את התוכנית כדי להחליט אם העובד צריך לראות אותה'), onclick: () => { m.close(true); location.hash = '#/p/' + p.id; } }, icon('eye', 16), tr('צפייה')),
+          h('button', { class: 'btn ghost sm', title: tr('צפייה בקובץ התוכנית (בלי לצאת מהמסך הזה)'), onclick: () => previewPlan(p.id, { onOpenFull: () => { m.close(true); location.hash = '#/p/' + p.id; } }) }, icon('eye', 16), tr('צפייה')),
           levelSelect('plan_id', p.id, inheritedLvl && !direct('plan_id', p.id) ? inheritedLvl : 0))));
     }
   }

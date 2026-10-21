@@ -11,6 +11,8 @@ function root() {
   return layer;
 }
 
+export const uiRoot = () => root();
+
 // ---------- הודעות ----------
 export function toast(msg, { type = '', ms = 3200 } = {}) {
   const t = h('div', { class: 'toast ' + type, role: 'status' }, msg);
@@ -120,16 +122,41 @@ export function progressBox(title) {
   };
 }
 
+// ---------- גרירה חופשית של שבב (באצבע) לכל מקום במסך; המיקום נשמר עד סגירת האפליקציה ----------
+let chipPos = null;
+function makeDraggable(chip) {
+  const place = (x, y) => {
+    const w = chip.offsetWidth, hh = chip.offsetHeight;
+    x = Math.max(4, Math.min(window.innerWidth - w - 4, x)); y = Math.max(4, Math.min(window.innerHeight - hh - 4, y));
+    chip.style.left = x + 'px'; chip.style.top = y + 'px'; chip.style.right = 'auto'; chip.style.bottom = 'auto'; chip.style.insetInlineStart = 'auto';
+    chipPos = { x, y };
+  };
+  if (chipPos) requestAnimationFrame(() => place(chipPos.x, chipPos.y));
+  chip.classList.add('drag');
+  let st = null;
+  chip.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    const r = chip.getBoundingClientRect();
+    st = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top };
+    try { chip.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    chip.classList.add('dragging');
+  });
+  chip.addEventListener('pointermove', (e) => { if (st && e.pointerId === st.id) { e.preventDefault(); place(e.clientX - st.dx, e.clientY - st.dy); } });
+  const end = (e) => { if (st && e.pointerId === st.id) { st = null; chip.classList.remove('dragging'); } };
+  chip.addEventListener('pointerup', end); chip.addEventListener('pointercancel', end);
+}
+
 // ---------- התקדמות ברקע: שבב קטן שלא חוסם את המסך ----------
 // לחיצה על ה-X מבטלת (אם הועבר onCancel). לחיצה בכל מקום אחר באפליקציה ממשיכה לעבוד כרגיל.
 export function bgProgress(title, { onCancel } = {}) {
   const txt = h('span', { class: 'bgp-t' }, title);
   const fill = h('div', { class: 'bar-fill' });
-  const chip = h('div', { class: 'bgp', role: 'status' },
+  const chip = h('div', { class: 'bgp', role: 'status', title: tr('אפשר לגרור באצבע למקום אחר') }, h('span', { class: 'bgp-grip' }),
     h('div', { class: 'bgp-main' }, h('b', {}, title), txt, h('div', { class: 'bar' }, fill)),
     onCancel ? h('button', { class: 'icon-btn sm', 'aria-label': tr('בטל'), onclick: () => onCancel() }, icon('x', 18)) : null);
   chip.querySelector('.bgp-t').textContent = '';
   root().appendChild(chip);
+  makeDraggable(chip);
   document.body.classList.add('bgp-on');
   return {
     set(text, frac) { txt.textContent = text; if (frac != null) fill.style.width = Math.round(frac * 100) + '%'; },

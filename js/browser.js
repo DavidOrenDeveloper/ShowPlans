@@ -240,6 +240,7 @@ function renderSidebar0() {
   const foot = h('div', { class: 'sb-foot' },
     accountBox(),
     h('button', { class: 'btn ghost block', onclick: () => { location.hash = '#/storage'; } }, icon('drive', 18), tr('ניהול אחסון')),
+    ...(isAdmin() ? [h('button', { class: 'btn ghost block', onclick: () => { toggleSidebar(false); viewAsDialog(); } }, icon('users', 18), tr('צפייה כעובד'))] : []),
     h('button', { class: 'btn ghost block', onclick: () => B.backupDialog() }, icon('archive', 18), tr('גיבוי ושחזור')),
     h('button', { class: 'btn ghost block lang-btn', onclick: toggleLang }, icon('globe', 18), langButtonLabel()),
     h('button', { class: 'btn ghost block', onclick: () => settingsDialog({ installApp }) }, icon('settings', 18), tr('הגדרות · גרסה {0}', APP_VERSION)),

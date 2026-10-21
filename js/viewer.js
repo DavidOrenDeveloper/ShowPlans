@@ -22,6 +22,7 @@ import { installPrint } from './viewer-print.js';
 import * as CS from './cloud-sync.js';
 import { isCloud, isAdmin } from './cloud.js';
 import * as SH from './item-share-ui.js';
+import { SplitHost } from './split.js';
 
 const PT = 96 / 72; // "100%" = גודל אמיתי ב-96 DPI
 const GAP = 24;
@@ -49,22 +50,42 @@ const TOOLS = [
 const lastView = new Map();
 
 let cur = null;
+let split = null; // תצוגה מפוצלת פעילה (SplitHost) – במקום cur
 let pickCtx = null;
 export function startPick(ctx) { pickCtx = ctx; }
 
 export async function openViewer(root, planId, opts = {}) {
+  if (split && !split.dead) { await split.routeOpen(planId, opts); return; }
   if (cur && cur.planId === planId) { await cur.handleOpts(opts); return; }
   await closeViewer();
   cur = new Viewer(root, planId, opts);
   await cur.init();
 }
 export async function closeViewer() {
+  if (split) { const s = split; split = null; await s.teardown(); }
   if (cur) { const c = cur; cur = null; await c.destroy(); }
+}
+// כניסה לתצוגה מפוצלת מתוך צופה רגיל: בוחרים תוכנית שנייה, והתוכנית הנוכחית נשארת באותה נקודת תצוגה
+async function enterSplit(v) {
+  const p = await UI.planPicker({ title: tr('איזו תוכנית לפתוח לצד התוכנית הזו?') });
+  if (!p || cur !== v) return;
+  const root = v.root, keep = { page: v.pageNum, view: v.page ? v.viewCenter() : undefined, v: v.version?.id }, pid = v.planId;
+  cur = null; await v.destroy();
+  split = new SplitHost(Viewer, root, { onExit: (st) => exitSplit(root, st || { planId: pid, opts: keep }) });
+  await split.add(pid, keep);
+  await split.add(p.id, {});
+}
+async function exitSplit(root, st) {
+  split = null;
+  if (!st) { location.hash = '#/f/'; return; }
+  try { history.replaceState(history.state, '', '#/p/' + st.planId); } catch { /* ignore */ }
+  cur = new Viewer(root, st.planId, st.opts);
+  await cur.init();
 }
 
 class Viewer {
-  constructor(root, planId, opts) {
-    this.root = root; this.planId = planId; this.opts = opts;
+  constructor(root, planId, opts, host = null) {
+    this.root = root; this.planId = planId; this.opts = opts; this.host = host; this.dead = false;
     this.scale = 1; this.tx = 0; this.ty = 0; this.W = 1; this.H = 1; this.vw = 1;
     this.dpr = Math.min(window.devicePixelRatio || 1, 3);
     this.tool = 'pan'; this.fitMode = 'page';
@@ -80,8 +101,8 @@ class Viewer {
 
   // ---------- בנייה ----------
   build() {
-    this.titleEl = h('div', { class: 'v-title', title: tr('לחצו לשינוי שם התוכנית') });
-    this.titleEl.addEventListener('click', () => this.renameDialog());
+    this.titleEl = h('div', { class: 'v-title', title: this.host ? tr('לחצו כדי להחליף תוכנית בתצוגה הזו') : tr('לחצו לשינוי שם התוכנית') });
+    this.titleEl.addEventListener('click', () => (this.host ? this.host.pickFor(this) : this.renameDialog()));
     const btn = (ic, label, fn) => h('button', { class: 'icon-btn', 'aria-label': label, title: label, onclick: fn }, icon(ic));
     this.stage = h('div', { class: 'v-stage' });
     this.layerA = new Layer();
@@ -95,23 +116,28 @@ class Viewer {
     this.stage.append(this.layerA.el, this.layerB.el, this.layerN.el, this.layerP.el, this.svg, this.loading);
 
     this.topbar = h('header', { class: 'v-top' },
-      btn('back', tr('חזרה'), () => this.goBack()),
+      this.host ? btn('x', tr('סגור תצוגה זו'), () => this.host.close(this)) : btn('back', tr('חזרה'), () => this.goBack()),
       this.titleEl,
+      this.host ? btn('folder', tr('החלף תוכנית בתצוגה הזו'), () => this.host.pickFor(this)) : null,
       btn('search', tr('חיפוש בתוכנית'), () => this.openPanel('search')),
       btn('grid', tr('עמודים'), () => this.openPanel('pages')),
       btn('layers', tr('שכבות'), () => this.layersDialog()),
       btn('compare', tr('השוואת תוכניות'), () => this.openCompare()),
       btn('clock', tr('גרסאות'), () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() })),
       btn('print', tr('הדפסה'), () => this.printDialog()),
+      this.host ? btn('split', tr('תצוגה מפוצלת'), (e) => this.host.menu(this, e.currentTarget)) : null,
       btn('more', tr('עוד'), (e) => this.moreMenu(e.currentTarget)));
     // במסכים צרים מעבירים כפתורים משניים לתפריט ⋮ כדי שיישאר מקום לשם התוכנית
     this.topbar.querySelectorAll([tr('שכבות'), tr('השוואת תוכניות'), tr('גרסאות'), tr('הדפסה')].map((x) => `[aria-label="${x}"]`).join(',')).forEach((b) => b.classList.add('nh'));
 
     this.zoomLabel = h('button', { class: 'zl', onclick: () => this.setZoom100() }, '100%');
+    const zbtn = (ic, label, dir) => { const b = btn(ic, label, () => {}); b.onclick = null; this.holdZoom(b, dir); return b; };
     this.zoomBar = h('div', { class: 'v-zoom v-float' },
-      btn('zoomIn', tr('הגדל'), () => this.zoomBy(1.6)),
+      zbtn('zoomIn', tr('הגדל (לחיצה ארוכה = הגדלה רציפה)'), 1),
       this.zoomLabel,
-      btn('zoomOut', tr('הקטן'), () => this.zoomBy(1 / 1.6)),
+      zbtn('zoomOut', tr('הקטן (לחיצה ארוכה = הקטנה רציפה)'), -1),
+      this.fsBtn = btn('expand', tr('מסך מלא'), () => this.toggleFullscreen()),
+      this.splitBtn = btn('split', tr('תצוגה מפוצלת: פתיחת 2–3 תוכניות במקביל'), () => this.splitEnter()),
       btn('maximize', tr('התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)'), () => this.cycleFit()),
       this.contBtn = btn('scroll', tr('גלילה רציפה (עמודים ברצף) / עמוד בודד'), () => this.setCont(!this.cont)));
 
@@ -144,6 +170,12 @@ class Viewer {
       this.cmpBar, this.props, this.toolbar, this.exitImm, this.exitFs, this.fsToolsBtn);
     this.root.append(this.el);
     this.el.classList.toggle('cont', !!this.cont); this.contBtn.classList.toggle('on', !!this.cont);
+    this.fsBtn.classList.add('only-single'); this.splitBtn.classList.add('only-single');
+    if (this.host) { // תצוגה בתוך פיצול: הסרגל התחתון משותף ויושב אצל המארח, ונכנסים אליו כשהתצוגה פעילה
+      this.el.classList.add('pane');
+      this.props.remove(); this.toolbar.remove();
+      this.el.addEventListener('pointerdown', () => this.host.setActive(this), true);
+    }
     this._onPop = () => {
       if (window.__layerPop) return; // "אחורה" שנוצל לסגירת תפריט/חלון
       if (!this._sPush) return;
@@ -158,6 +190,7 @@ class Viewer {
     s.addEventListener('pointermove', (e) => this.onMove(e));
     s.addEventListener('pointerup', (e) => this.onUp(e));
     s.addEventListener('pointercancel', (e) => this.onUp(e, true));
+    s.addEventListener('lostpointercapture', (e) => { if (this.ptrs.has(e.pointerId)) this.onUp(e, true); });
     s.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     s.addEventListener('contextmenu', (e) => e.preventDefault());
     s.addEventListener('dblclick', (e) => { if (this.tool === 'area' || this.tool === 'polyline') { e.preventDefault(); this.finishArea(); } });
@@ -232,7 +265,7 @@ class Viewer {
       this.showFallback(e?.name === 'PasswordException' ? tr('הקובץ מוגן בסיסמה.') : tr('ה-Viewer הפנימי לא הצליח לפתוח את הקובץ הזה.'));
       return;
     }
-    if (cur !== this) { destroyDoc(doc); return; }
+    if (this.dead) { destroyDoc(doc); return; }
     destroyDoc(this.doc);
     this.doc = doc; this.numPages = doc.numPages; this.textCache.clear();
     this.search = null;
@@ -279,6 +312,7 @@ class Viewer {
   goBack() {
     if (this.panelMode === 'search') { this.closePanel(); return; }
     if (this.search) { this.clearSearch(); return; }
+    if (this.host) { this.host.close(this); return; }
     if (pickCtx && this.opts.pick) pickCtx = null;
     if (window.__navCount > 0) history.back();
     else location.hash = '#/f/' + (this.plan.folderId || '');
@@ -374,7 +408,7 @@ class Viewer {
       const tok = this.pageToken;
       L.clear();
       const pg = await this.doc.getPage(n);
-      if (tok !== this.pageToken || cur !== this || !this.cont) return;
+      if (tok !== this.pageToken || this.dead || !this.cont) return;
       L.n = n;
       L.setPage(pg);
     }
@@ -441,6 +475,27 @@ class Viewer {
     this.plan = S.P.plans.get(this.planId) || this.plan;
     this.updateTitle();
   }
+  // לחיצה קצרה: זום בצעד; לחיצה ארוכה: זום רציף וחלק (מהיר יותר ככל שממשיכים) סביב מרכז התצוגה
+  holdZoom(b, dir) {
+    let raf = 0, t0 = 0, timer = 0, held = false, last = 0;
+    const stop = () => { clearTimeout(timer); cancelAnimationFrame(raf); raf = 0; };
+    const loop = (now) => {
+      const dt = Math.min(50, now - last); last = now;
+      const rate = 0.0010 + Math.min(0.0012, (now - t0) / 1.5e6); // לוגריתמי לאלפית שנייה
+      this.zoomAt(this.vw / 2, this.H / 2, Math.exp(dir * rate * dt));
+      raf = requestAnimationFrame(loop);
+    };
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); held = false; stop();
+      try { b.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      timer = setTimeout(() => { held = true; t0 = last = performance.now(); raf = requestAnimationFrame(loop); }, 280);
+    });
+    const up = () => { const was = held; stop(); if (!was && timer) { /* קצר */ } held = false; };
+    b.addEventListener('pointerup', (e) => { const was = held; stop(); held = false; if (!was) this.zoomBy(dir > 0 ? 1.6 : 1 / 1.6); });
+    b.addEventListener('pointercancel', up);
+    b.addEventListener('contextmenu', (e) => e.preventDefault());
+    b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.zoomBy(dir > 0 ? 1.6 : 1 / 1.6); } });
+  }
   setZoom100() { this.zoomAt(this.vw / 2, this.H / 2, PT / this.scale); }
   zoomBy(f) { this.zoomAt(this.vw / 2, this.H / 2, f); }
   zoomAt(x, y, f) {
@@ -460,7 +515,7 @@ class Viewer {
     this.storeView();
     this.loading.style.display = '';
     const page = await this.doc.getPage(n);
-    if (token !== this.pageToken || cur !== this) return;
+    if (token !== this.pageToken || this.dead) return;
     this.pageNum = n; this.page = page;
     if (this.cont) { this.layerN.clear(); this.layerP.clear(); }
     this.selected = null; this.draft = null; this.gesture = null; this.eraseSet = null;
@@ -512,6 +567,7 @@ class Viewer {
     if (e.pointerType === 'mouse' && e.button > 2) return;
     try { this.stage.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const pt = this.local(e);
+    if (e.isPrimary && this.ptrs.size) { this.ptrs.clear(); this.pinch = null; if (this.gesture) this.abortGesture(); } // אצבע ראשונה חדשה = אין נגיעות אחרות; מנקה נגיעה "תקועה" שגרמה לקפיצות
     this.ptrs.set(e.pointerId, pt);
     if (this.ptrs.size === 2) { this.abortGesture(); this.startPinch(); return; }
     if (this.ptrs.size > 2) return;
@@ -707,6 +763,7 @@ class Viewer {
   }
   onKey(e) {
     if (e.target.matches?.('input, textarea, select') || document.querySelector('.modal-back')) return;
+    if (this.host && this.host.active !== this) return; // מקשים פועלים רק על התצוגה הפעילה
     const k = e.key;
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; }
@@ -1134,7 +1191,8 @@ class Viewer {
     it.target = res.target;
     await this.addItem(it);
     this.renderProps();
-    if (res.pick) this.beginPick(it);
+    if (res.pick && !this.host) this.beginPick(it);
+    else if (res.pick) UI.toast(tr('קביעת מיקום מדויק ליעד זמינה בתצוגה רגילה (לא מפוצלת)'), { ms: 4000 });
   }
   async linkDialog(existing) {
     let plan = existing ? S.P.plans.get(existing.target.planId) : null;
@@ -1190,6 +1248,12 @@ class Viewer {
     const q = new URLSearchParams();
     q.set('page', t.page || 1);
     if (t.view) { q.set('x', t.view.cx.toFixed(2)); q.set('y', t.view.cy.toFixed(2)); q.set('z', t.view.scale.toFixed(4)); }
+    if (this.host) { // בתצוגה מפוצלת הקישור נפתח באותה תצוגה, בלי לשנות את הכתובת
+      const o = { page: t.page || 1 };
+      if (t.view) o.view = t.view;
+      if (plan.id === this.planId) this.handleOpts(o); else this.host.replace(this, plan.id, o);
+      return;
+    }
     location.hash = `#/p/${plan.id}?${q}`;
   }
 
@@ -1353,7 +1417,7 @@ class Viewer {
     this.searchList?.replaceChildren();
     const ql = q.toLowerCase();
     for (let i = 1; i <= this.numPages; i++) {
-      if (token !== this.searchToken || cur !== this) return;
+      if (token !== this.searchToken || this.dead) return;
       if (this.searchInfo) this.searchInfo.textContent = tr('מחפש… עמוד {0} מתוך {1}', i, this.numPages);
       let d;
       try { d = await this.pageTextData(i); } catch { continue; }
@@ -1426,7 +1490,7 @@ class Viewer {
     const m = UI.openModal({ title: tr('מזהה טקסט…'), body: status, cancelable: false, buttons: [{ text: tr('עצור'), value: false, onClick: () => { cancel = true; status.textContent = tr('עוצר אחרי העמוד הנוכחי…'); return false; } }] });
     try {
       const res = await OCR.ocrVersion(vid, pages, {
-        isCancelled: () => cancel || cur !== this,
+        isCancelled: () => cancel || this.dead,
         onProgress: (p) => { if (p.page) status.textContent = tr('מזהה עמוד {0} ({1} מתוך {2})…', p.page, p.done + 1, p.total); },
       });
       m.close();
@@ -1591,6 +1655,7 @@ class Viewer {
       { label: tr('הורד PDF מקורי'), icon: 'download', onClick: () => A.downloadVersion(this.version?.id, this.plan.name) },
       { label: tr('סקאלה וכיול לעמוד'), icon: 'ruler', onClick: () => this.calibrateDialog() },
       { label: tr('מסך מלא'), icon: 'maximize', onClick: () => this.toggleFullscreen() },
+      ...(this.host ? [{ label: tr('אפשרויות תצוגה מפוצלת…'), icon: 'split', onClick: () => this.host.menu(this, this.topbar.lastElementChild) }] : [{ label: tr('תצוגה מפוצלת (2–3 תוכניות במקביל)'), icon: 'split', onClick: () => this.splitEnter() }]),
       { label: tr('מצב תצוגה נקי (הסתר סרגלים)'), icon: 'eye', onClick: () => this.el.classList.add('immersive') },
       { label: tr('פרטי תוכנית'), icon: 'info', onClick: () => A.planInfoDialog(this.planId) },
       { label: langButtonLabel(), icon: 'globe', onClick: toggleLang },
@@ -1608,11 +1673,13 @@ class Viewer {
     this.redoStack = [];
     this.updateUndo();
   }
+  splitEnter() { if (!this.host) enterSplit(this); }
   toggleFullscreen() {
+    if (this.host) { UI.toast(tr('מסך מלא זמין בתצוגה רגילה. אפשר לצאת מהתצוגה המפוצלת מכפתור התצוגה המפוצלת.'), { ms: 3500 }); return; }
     if (this.el.classList.contains('fs')) this.exitFullscreenMode(); else this.enterFullscreenMode();
   }
   enterFullscreenMode() {
-    // הממשק מוסתר מיד (נשאר רק כפתור יציאה), וברקע מבקשים מהדפדפן להסתיר גם את שורת הכתובת ואת סרגלי המערכת
+    // הממשק מוסתר מיד (נשאר רק כפתור יציאה), בלי לבקש מסך מלא מהדפדפן
     this._fsT0 = performance.now(); this._quietUntil = this._fsT0 + 450;
     this.el.classList.add('fs');
     this.el.classList.remove('fs-tools');
@@ -1620,13 +1687,8 @@ class Viewer {
     // "אחורה" של אנדרואיד מכווץ את המסך המלא (ולא יוצא מהתוכנית)
     this._fsLayer?.release();
     this._fsLayer = pushLayer(() => { this._fsLayer = null; this.exitFullscreenMode(); });
-    // על כל המסמך (ולא רק על הצופה), כדי שתפריטים וחלונות ימשיכו להופיע; ובקשה להסתרת סרגל הניווט של המערכת
-    const root = document.documentElement;
-    if (root.requestFullscreen) {
-      root.requestFullscreen({ navigationUI: 'hide' }).catch((e) => { diag.warn('fullscreen', tr('הדפדפן סירב למסך מלא מלא: ') + (e?.message || e)); });
-    } else {
-      UI.toast(tr('הדפדפן במכשיר הזה לא יכול להסתיר את שורת המערכת. להסתרה מלאה אפשר להתקין את האפליקציה למסך הבית.'), { ms: 5000 });
-    }
+    // מסך מלא של האפליקציה בלבד: מסתירים את כל הסרגלים שלה. לא מבקשים מסך מלא מהדפדפן, כי אז Chrome מציג בעצמו
+    // הודעה ("גררו מלמעלה ליציאה") שנשארת על המסך זמן רב ואי אפשר לשלוט בה. באפליקציה מותקנת זה כמעט זהה.
   }
   exitFullscreenMode() {
     // חוזרים מיד לממשק הרגיל, ורק אחר כך מבקשים מהדפדפן לצאת ממסך מלא, כדי שהלחיצה תרגיש מיידית
@@ -1643,6 +1705,7 @@ class Viewer {
   }
 
   async destroy() {
+    this.dead = true;
     if (this._fsLayer) { this._fsLayer.release(); this._fsLayer = null; }
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.storeView();

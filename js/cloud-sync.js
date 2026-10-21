@@ -416,12 +416,134 @@ export async function refreshLocalFiles() {
 export const isLocal = (versionId) => localFiles.has(versionId);
 export const needsDownload = (plan) => { const v = S.curVer(plan); return !!(isCloud() && v && v.driveId && !localFiles.has(v.id)); };
 
+// ---------- המשך הורדה ברקע (גם כשיצאו מהאפליקציה / נעלו את הטלפון) ----------
+// דפדפן לא נותן לדף להמשיך לרוץ כשהוא ברקע. לכן ברגע שהאפליקציה יוצאת מהחזית וההורדות עוד לא הסתיימו,
+// מעבירים אותן ל-Background Fetch (הדפדפן עצמו מוריד, עם התראה, ה-Service Worker שומר את הקבצים במסד המקומי).
+// נתמך ב-Chrome באנדרואיד. באייפון/ספארי אין תמיכה: שם ההורדה ממשיכה בלי הפסקה כל עוד המסך דלוק (נעילת מסך),
+// וכשחוזרים לאפליקציה כל מה שלא הסתיים נמשך מחדש.
+const wanted = new Set();      // גרסאות שמישהו ביקש להוריד ועוד לא ירדו (כולל תור של הורדה מרוכזת)
+const bgActive = new Map();    // versionId -> מזהה רישום ה-Background Fetch
+const handoffIds = new Set();  // גרסאות שההורדה בדף הופסקה בכוונה כי עברו לרקע
+const bgWaiters = new Map();   // versionId -> [{ resolve, onProgress }]
+let bgChip = null;
+const bgOK = () => isCloud() && 'serviceWorker' in navigator && typeof window.BackgroundFetchManager !== 'undefined';
+
+let wl = null;
+async function wakeOn() { try { if (!wl && navigator.wakeLock && document.visibilityState === 'visible') { wl = await navigator.wakeLock.request('screen'); wl.addEventListener('release', () => { wl = null; }); } } catch { /* ignore */ } }
+function wakeOff() { try { wl?.release(); } catch { /* ignore */ } wl = null; }
+
+async function bgHandoff(ids) {
+  ids = [...new Set(ids)].filter((id) => !bgActive.has(id) && !localFiles.has(id) && S.P.versions.get(id)?.driveId);
+  if (!ids.length) return bgActive.size > 0;
+  if (!bgOK() || !navigator.onLine) return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg.backgroundFetch) return false;
+    const headers = await authHeaders();
+    const reqs = ids.map((id) => new Request(`${fnUrl('drive-download')}?v=${encodeURIComponent(id)}`, { headers }));
+    const total = ids.reduce((a, id) => a + (S.P.versions.get(id)?.size || 0), 0);
+    const bid = `dl|${db.dbName()}|${Date.now()}`;
+    const bf = await reg.backgroundFetch.fetch(bid, reqs, { title: tr('מוריד תוכניות ({0})', ids.length), icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }], downloadTotal: total });
+    ids.forEach((id) => bgActive.set(id, bid));
+    bf.addEventListener('progress', () => bgProgress(bf));
+    diag.info('bgfetch', tr('ההורדה הועברה לרקע'), { files: ids.length });
+    return true;
+  } catch (e) { diag.warn('bgfetch', tr('העברת ההורדה לרקע נכשלה (הדפדפן לא תומך או סירב): ') + (e?.message || e)); return false; }
+}
+function bgProgress(bf) {
+  const frac = bf.downloadTotal ? Math.min(0.99, bf.downloaded / bf.downloadTotal) : null;
+  const txt = tr('{0}MB · ממשיך ברקע', Math.round((bf.downloaded / 1048576) * 10) / 10);
+  for (const ws of bgWaiters.values()) for (const w of ws) w.onProgress?.(txt, frac);
+  bgChip?.set(txt, frac);
+}
+// ממתינים לקובץ שירד ברקע. מחזיר Blob, או null אם ההורדה ברקע נכשלה/בוטלה.
+function bgWaitFor(versionId, onProgress) {
+  return new Promise((resolve) => {
+    let done = false, poll = 0;
+    const fin = (b) => { if (done) return; done = true; clearInterval(poll); const a = bgWaiters.get(versionId) || []; const i = a.findIndex((w) => w.resolve === fin); if (i >= 0) a.splice(i, 1); resolve(b); };
+    if (!bgWaiters.has(versionId)) bgWaiters.set(versionId, []);
+    bgWaiters.get(versionId).push({ resolve: fin, onProgress });
+    poll = setInterval(async () => {
+      const r = await db.get('files', versionId).catch(() => null);
+      if (r) { await onBgDone([versionId], []); return; }
+      if (!bgActive.has(versionId)) fin(null);
+    }, 3000);
+  });
+}
+async function onBgDone(okIds, failIds) {
+  for (const id of [...okIds, ...failIds]) bgActive.delete(id);
+  await refreshLocalFiles();
+  for (const id of okIds) {
+    wanted.delete(id); handoffIds.delete(id);
+    try { S.enqueueIndex(id); } catch { /* ignore */ }
+    const r = await db.get('files', id).catch(() => null);
+    for (const w of [...(bgWaiters.get(id) || [])]) w.resolve(r ? r.blob : null);
+  }
+  for (const id of failIds) { handoffIds.delete(id); for (const w of [...(bgWaiters.get(id) || [])]) w.resolve(null); }
+  if (!bgActive.size && bgChip) { bgChip.close(); bgChip = null; if (okIds.length) UI.toast(tr('ההורדה ברקע הסתיימה ✓ ({0} קבצים)', okIds.length), { ms: 3500 }); }
+}
+// בהפעלה ובחזרה לחזית: בודקים מה ירד ברקע בזמן שהאפליקציה הייתה סגורה, ומתחברים להורדות שעדיין רצות
+async function bgReconcile() {
+  if (!isCloud()) return;
+  try {
+    const m = await db.get('meta', 'bgIndex');
+    if (m && m.v && m.v.length) { await db.put('meta', { key: 'bgIndex', v: [] }); for (const id of m.v) { try { S.enqueueIndex(id); } catch { /* ignore */ } } await refreshLocalFiles(); }
+  } catch { /* ignore */ }
+  if (!bgOK()) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg.backgroundFetch) return;
+    for (const bid of await reg.backgroundFetch.getIds()) {
+      if (!bid.startsWith(`dl|${db.dbName()}|`)) continue;
+      const bf = await reg.backgroundFetch.get(bid); if (!bf) continue;
+      for (const r of await bf.matchAll()) { const id = new URL(r.request.url).searchParams.get('v'); if (id && !localFiles.has(id)) bgActive.set(id, bid); }
+      if (!bgChip && bgActive.size) bgChip = UI.bgProgress(tr('הורדה ברקע ממשיכה'));
+      bf.addEventListener('progress', () => bgProgress(bf));
+      bgProgress(bf);
+    }
+  } catch (e) { diag.warn('bgfetch', String(e?.message || e)); }
+}
+async function bgAbortAll() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    for (const bid of new Set(bgActive.values())) { const bf = await reg.backgroundFetch?.get(bid); await bf?.abort(); }
+  } catch { /* ignore */ }
+  const ids = [...bgActive.keys()]; bgActive.clear();
+  for (const id of ids) for (const w of [...(bgWaiters.get(id) || [])]) w.resolve(null);
+  if (bgChip) { bgChip.close(); bgChip = null; }
+}
+async function onLeaveForeground() {
+  wakeOff();
+  const ids = [...wanted].filter((id) => !localFiles.has(id) && !bgActive.has(id));
+  if (!ids.length) return;
+  if (await bgHandoff(ids)) {
+    for (const id of ids) { if (ctrls.has(id)) { handoffIds.add(id); ctrls.get(id).abort(); } }
+  }
+}
+function initBgDownloads() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') onLeaveForeground();
+    else { if (inflight.size) wakeOn(); bgReconcile(); }
+  });
+  window.addEventListener('pagehide', () => { onLeaveForeground(); });
+  try {
+    navigator.serviceWorker?.addEventListener('message', (e) => {
+      const d = e.data;
+      if (d && d.type === 'bg-done') onBgDone(d.ok || [], d.failed || []);
+    });
+  } catch { /* ignore */ }
+  bgReconcile();
+}
+
 // quiet: בלי שבב התקדמות ובלי הודעת שגיאה (להורדה מרוכזת). מחזיר Blob או null.
 async function remoteFile(versionId, opts = {}) {
   const v = S.P.versions.get(versionId);
   if (!isCloud() || !v?.driveId) return null;
   if (!navigator.onLine) { if (!opts.quiet) UI.toast(tr('אין חיבור לאינטרנט, והקובץ הזה עוד לא הורד למכשיר'), { type: 'error', ms: 4500 }); return null; }
   if (inflight.has(versionId)) return inflight.get(versionId);
+  if (bgActive.has(versionId)) return bgWaitFor(versionId); // כבר יורד ברקע
+  if (document.visibilityState === 'hidden' && bgOK() && await bgHandoff([versionId])) return bgWaitFor(versionId);
+  wanted.add(versionId); wakeOn();
   const pr = (async () => {
     const ctrl = new AbortController(); ctrls.set(versionId, ctrl);
     let reason = '';
@@ -454,13 +576,18 @@ async function remoteFile(versionId, opts = {}) {
       S.enqueueIndex(versionId);
       return blob;
     } catch (e) {
+      if (handoffIds.has(versionId)) { // האפליקציה יצאה מהחזית: ההורדה ממשיכה ברקע ואנחנו ממתינים לה
+        const b = await bgWaitFor(versionId, (t, f) => pb?.set(t, f));
+        if (b) return b;
+        handoffIds.delete(versionId);
+      }
       if (opts.quiet) { opts.onError?.(e, reason); return null; }
       if (reason === 'user') { UI.toast(tr('ההורדה בוטלה'), { ms: 2000 }); return null; }
       if (reason === 'stall' || e?.name === 'AbortError') { UI.toast(tr('אין קליטה – ההורדה נעצרה. אפשר להמשיך לעבוד עם תוכניות שכבר הורדו, ולנסות שוב כשיש קליטה.'), { type: 'error', ms: 6000 }); return null; }
       tag(e, 'download', { id: versionId, file: v.fileName, size: v.size });
       UI.toast(friendly(e), { type: 'error', ms: 6000 });
       return null;
-    } finally { clearInterval(watch); pb?.close(); inflight.delete(versionId); ctrls.delete(versionId); }
+    } finally { clearInterval(watch); pb?.close(); inflight.delete(versionId); ctrls.delete(versionId); if (!bgActive.has(versionId)) wanted.delete(versionId); if (!inflight.size) wakeOff(); }
   })();
   inflight.set(versionId, pr);
   return pr;
@@ -483,8 +610,9 @@ export async function downloadForOffline(o) {
   const room = est.quota ? est.quota - est.usage : Infinity;
   if (bytes > room * 0.9) { await UI.alertBox(tr('אין מספיק מקום פנוי במכשיר להורדה של {0}. פנו מקום או הורידו חלק מהתיקיות.', fmtSize(bytes)), { title: tr('אין מספיק מקום') }); return; }
   if (!(await UI.confirmBox(tr('להוריד {0} קבצים ({1}) למכשיר כדי לעבוד גם בלי קליטה? ההורדה ממשיכה ברקע, אפשר להמשיך להשתמש באפליקציה.', list.length, fmtSize(bytes)), { title: tr('הורדה למכשיר'), okText: tr('הורד') }))) return;
+  list.forEach((x) => wanted.add(x.v.id));
   const st2 = { cancel: false, done: 0, fail: 0, row: 0 };
-  const pb = UI.bgProgress(tr('מוריד למכשיר'), { onCancel: () => { st2.cancel = true; for (const [id] of ctrls) ctrls.get(id)?.abort(); } });
+  const pb = UI.bgProgress(tr('מוריד למכשיר'), { onCancel: () => { st2.cancel = true; list.forEach((x) => wanted.delete(x.v.id)); bgAbortAll(); for (const [id] of ctrls) ctrls.get(id)?.abort(); } });
   bulk = st2;
   let streak = 0;
   const work = async () => {
@@ -499,7 +627,7 @@ export async function downloadForOffline(o) {
     }
   };
   pb.set(tr('0 מתוך {0}', list.length), 0);
-  try { await Promise.all([work(), work()]); } finally { pb.close(); bulk = null; await refreshLocalFiles(); }
+  try { await Promise.all([work(), work()]); } finally { pb.close(); bulk = null; await refreshLocalFiles(); list.forEach((x) => { if (!bgActive.has(x.v.id)) wanted.delete(x.v.id); }); }
   if (st2.cancel) UI.toast(tr('ההורדה הופסקה. הורדו {0} מתוך {1}', st2.done, list.length), { ms: 4000 });
   else if (streak >= 3) UI.toast(tr('ההורדה נעצרה, כנראה אין קליטה. הורדו {0} מתוך {1}. אפשר להפעיל שוב כשיש קליטה והיא תמשיך מאותה נקודה.', st2.done, list.length), { type: 'error', ms: 7000 });
   else UI.toast(st2.fail ? tr('הורדו {0} קבצים, {1} נכשלו. אפשר להפעיל שוב.', st2.done, st2.fail) : tr('הורדו {0} קבצים למכשיר ✓', st2.done), { ms: 4000 });
@@ -569,6 +697,7 @@ export async function startSync() {
   S.hooks.remoteFile = remoteFile;
   S.hooks.isLocal = (id) => localFiles.has(id);
   refreshLocalFiles();
+  initBgDownloads();
   S.hooks.guard = guard;
   window.addEventListener('online', () => { emitStatus(); syncClock(); schedulePull(true, 300); schedulePush(300); });
   window.addEventListener('offline', emitStatus);

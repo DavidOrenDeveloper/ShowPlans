@@ -65,6 +65,7 @@ export class Layer {
 
   // מיקום קנבס הבסיס לפי מצב התצוגה
   place(scale, tx, ty, dpr) {
+    this._last = [scale, tx, ty, dpr];
     const ex = tx + this.sx + this.dx * scale;
     const ey = ty + this.dy * scale;
     const k = scale * this.s;
@@ -125,8 +126,10 @@ export class Layer {
     c.style.width = W + 'px';
     c.style.height = H + 'px';
     this.dState = { k: k0, ex, ey };
+    // הקנבס החדש נצבע לפי המיקום בתחילת הרינדור; אם בינתיים גררו – ממקמים אותו מיד לפי המצב הנוכחי (מונע "קפיצה" באמצע גרירה)
     if (this.detail) this.detail.replaceWith(c); else this.el.appendChild(c);
     this.detail = c;
+    if (this._last) this.place(...this._last);
     return true;
   }
 
