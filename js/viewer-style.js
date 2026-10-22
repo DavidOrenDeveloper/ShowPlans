@@ -176,6 +176,11 @@ export function installStyle(V) {
           h('option', { value: 'm' }, tr('מטר')), h('option', { value: 'cm' }, tr('ס״מ')), h('option', { value: 'mm' }, tr('מ״מ')));
         u.value = prefs.unit;
         row.push(u, h('button', { class: 'btn sm', onclick: () => this.calibrateDialog() }, cal ? (cal.source === 'ratio' ? tr('סקאלה 1:{0}', cal.ratio) : tr('כויל ידנית')) : tr('נדרש כיול')));
+        const tIn = h('input', { type: 'text', class: 'meas-title', placeholder: tr('כותרת (צינור, תעלה…)'), 'aria-label': tr('כותרת מדידה'), value: sel && (sel.type === 'measure' || sel.type === 'area') ? sel.title || '' : this.measTitle || '', list: 'meas-titles' });
+        const known = [...new Set((this.items.measurements || []).map((x) => x.title).filter(Boolean))];
+        const dl = h('datalist', { id: 'meas-titles' }, known.map((x) => h('option', { value: x })));
+        tIn.addEventListener('change', () => { const v = tIn.value.trim(); if (sel && (sel.type === 'measure' || sel.type === 'area')) this.modifySelected((it) => { if (v) it.title = v; else delete it.title; }); else this.measTitle = v; });
+        row.push(tIn, dl);
         if (t === 'measure') row.push(h('small', { class: 'hint-inline' }, this.draft?.wait ? tr('לחצו על הנקודה השנייה') : tr('לחצו נקודה ראשונה, או גררו')));
         if (t === 'calibrate') row.push(h('small', { class: 'hint-inline' }, tr('כיול: סמנו שתי נקודות')));
         if (t === 'area') row.push(h('small', { class: 'hint-inline' }, tr('הקישו נקודות; סיום: לחצו על הנקודה הראשונה')));

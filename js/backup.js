@@ -112,7 +112,7 @@ export async function importFlow() {
     await db.putMany('markups', data.markups.map(remapItem));
     await db.putMany('measurements', data.measurements.map(remapItem));
     await db.putMany('links', data.links.map(remapItem));
-    await db.putMany('calibrations', data.calibrations.map((c) => ({ ...c, id: `${mp(maps.v, c.versionId)}:${c.page}`, versionId: mp(maps.v, c.versionId) })));
+    await db.putMany('calibrations', data.calibrations.map((c) => ({ ...c, id: `${mp(maps.v, c.versionId)}:${c.page}${c.ownerId ? ':' + c.ownerId : ''}`, versionId: mp(maps.v, c.versionId) })));
     await S.reload();
     for (const v of S.P.versions.values()) if (!v.indexed && !v.broken) S.enqueueIndex(v.id);
     pb.close();

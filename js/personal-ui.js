@@ -4,7 +4,7 @@ import { dn } from './names.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
 import * as OVR from './overrides.js';
-import { client, cloud } from './cloud.js';
+import { client, cloud, folderLevelFrom, planLevelFrom } from './cloud.js';
 import { h, icon } from './util.js';
 
 // ---------- מוסתרים אצלי ----------
@@ -23,23 +23,12 @@ export async function hiddenDialog() {
 }
 
 // ---------- צפייה כעובד (מנהל) ----------
-const RANK = { view: 1, mark: 2, edit: 3 };
-// מה העובד רואה לפי ההרשאות שלו (קירוב של מדיניות השרת: הרשאה על תיקייה חלה על כל מה שבתוכה; תיקיות-אב מוצגות לצורך ניווט)
+// מה העובד רואה לפי ההרשאות שלו (אותו כלל כמו בשרת: ההרשאה הקרובה ביותר קובעת, 'none' חוסם; תיקיות-אב מוצגות לצורך ניווט)
 export function computeAllow(grants, rawFolders, rawPlans) {
-  const lvF = new Map();
-  const folderLevel = (id) => {
-    if (lvF.has(id)) return lvF.get(id);
-    let best = 0, f = rawFolders.get(id), g = 0;
-    while (f && g++ < 200) { for (const gr of grants) if (gr.folder_id === f.id) best = Math.max(best, RANK[gr.level] || 0); f = f.parentId ? rawFolders.get(f.parentId) : null; }
-    lvF.set(id, best); return best;
-  };
   const plans = new Set(), folders = new Set();
-  for (const p of rawPlans.values()) {
-    let best = p.folderId ? folderLevel(p.folderId) : 0;
-    for (const gr of grants) if (gr.plan_id === p.id) best = Math.max(best, RANK[gr.level] || 0);
-    if (best >= 1) { plans.add(p.id); let f = p.folderId ? rawFolders.get(p.folderId) : null, g = 0; while (f && g++ < 200) { folders.add(f.id); f = f.parentId ? rawFolders.get(f.parentId) : null; } }
-  }
-  for (const f of rawFolders.values()) if (folderLevel(f.id) >= 1) { let x = f, g = 0; while (x && g++ < 200) { folders.add(x.id); x = x.parentId ? rawFolders.get(x.parentId) : null; } }
+  const up = (fid) => { let f = fid ? rawFolders.get(fid) : null, g = 0; while (f && g++ < 200) { folders.add(f.id); f = f.parentId ? rawFolders.get(f.parentId) : null; } };
+  for (const p of rawPlans.values()) if (planLevelFrom(grants, p, rawFolders) >= 1) { plans.add(p.id); up(p.folderId); }
+  for (const f of rawFolders.values()) if (folderLevelFrom(grants, f.id, rawFolders) >= 1) up(f.id);
   return { folders, plans };
 }
 

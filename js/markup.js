@@ -81,6 +81,8 @@ export function measureText(it, cal, unit) {
   return fmtLen(dist(it.pts[0], it.pts[1]) * cal.mpu, unit);
 }
 
+export function measureLabel(it, cal, unit) { const v = measureText(it, cal, unit); return it.title ? it.title + ': ' + v : v; }
+
 // ---------- טקסט ----------
 // כיוון לפי התו ה"חזק" הראשון (כמו dir=auto): שורה שמתחילה באנגלית נשארת LTR גם אם יש בה מילה בעברית, והסוגריים נשארים במקומם
 const isRTL = (s) => { const m = /[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.exec(s || ''); return !!m && /[\u0590-\u05FF\u0600-\u06FF]/.test(m[0]); };
@@ -149,7 +151,7 @@ export function drawItem(it, cx) {
       if (it.showLen && p.length >= 2) {
         const mid = p[Math.floor((p.length - 1) / 2)], nxt = p[Math.floor((p.length - 1) / 2) + 1] || mid;
         const fs = it.fontSize || it.width * 4;
-        g.append(label(measureText(it, cx.cal, cx.unit), (mid.x + nxt.x) / 2, (mid.y + nxt.y) / 2 - fs * 0.5, fs, { fill: cx.cal ? '#111' : '#b71c1c' }));
+        g.append(label(measureLabel(it, cx.cal, cx.unit), (mid.x + nxt.x) / 2, (mid.y + nxt.y) / 2 - fs * 0.5, fs, { fill: cx.cal ? '#111' : '#b71c1c' }));
       }
       break;
     }
@@ -174,14 +176,14 @@ export function drawItem(it, cx) {
       const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, tk = w * 3;
       g.append(svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...stroke }));
       [a, b].forEach((q) => g.append(svg('line', { x1: q.x - nx * tk, y1: q.y - ny * tk, x2: q.x + nx * tk, y2: q.y + ny * tk, ...stroke })));
-      g.append(label(measureText(it, cx.cal, cx.unit), (a.x + b.x) / 2 + nx * it.fontSize * 0.9, (a.y + b.y) / 2 + ny * it.fontSize * 0.9 + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? '#111' : '#b71c1c' }));
+      g.append(label(measureLabel(it, cx.cal, cx.unit), (a.x + b.x) / 2 + nx * it.fontSize * 0.9, (a.y + b.y) / 2 + ny * it.fontSize * 0.9 + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? '#111' : '#b71c1c' }));
       break;
     }
     case 'area': {
       if (p.length >= 3) g.append(svg('polygon', { points: p.map((q) => `${q.x},${q.y}`).join(' '), fill: col, 'fill-opacity': 0.18, ...stroke }));
       else g.append(svg('polyline', { points: p.map((q) => `${q.x},${q.y}`).join(' '), ...stroke }));
       p.forEach((q) => g.append(svg('circle', { cx: q.x, cy: q.y, r: w * 1.2, fill: col })));
-      if (p.length >= 3) { const bb = bbox(p); g.append(label(measureText(it, cx.cal, cx.unit), (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2 + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? '#111' : '#b71c1c' })); }
+      if (p.length >= 3) { const bb = bbox(p); g.append(label(measureLabel(it, cx.cal, cx.unit), (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2 + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? '#111' : '#b71c1c' })); }
       break;
     }
     case 'link': {

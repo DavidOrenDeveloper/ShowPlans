@@ -7,7 +7,7 @@ import { previewPlan } from './plan-preview.js';
 import * as diag from './diag.js';
 import * as S from './store.js';
 import * as db from './db.js';
-import { cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, requestPasswordReset, setNewPassword, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
+import { folderLevelFrom, planLevelFrom, cloud, client, isCloud, isAdmin, signIn, signOut, chooseLocal, requestPasswordReset, setNewPassword, callFn, localDataSummary, copyLocalIntoCurrent, switchToLogin } from './cloud.js';
 import { syncStatus, onSyncStatus, syncNow, onProgress, schedulePull } from './cloud-sync.js';
 
 // ---------- מסך כניסה ----------
@@ -294,7 +294,7 @@ export async function usersDialog() {
 }
 
 // ---------- הרשאות לתיקייה/תוכנית (מנהל) ----------
-const LEVELS = [['', tr('ללא גישה')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]];
+const LEVELS = [['', tr('ללא הרשאה ישירה')], ['none', tr('חסום (ללא גישה)')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]];
 export async function grantsDialog({ folderId = null, planId = null }) {
   const sb = client();
   const target = planId ? S.P.plans.get(planId)?.name : S.P.folders.get(folderId)?.name;
@@ -332,46 +332,50 @@ export async function grantsDialog({ folderId = null, planId = null }) {
 }
 
 // ---------- גישה לפי עובד: מה כל עובד רואה (מנהל) ----------
-// עובד לא רואה שום תיקייה או תוכנית עד שנותנים לו הרשאה. הרשאה על תיקייה חלה על כל מה שבתוכה.
-const RANK = { view: 1, mark: 2, edit: 3 };
+// עובד לא רואה שום תיקייה או תוכנית עד שנותנים לו הרשאה. הרשאה על תיקייה חלה על כל מה שבתוכה,
+// וההרשאה הקרובה ביותר קובעת: אפשר לתת גישה לתיקייה ולחסום ("חסום") תוכנית או תת-תיקייה מסוימת בתוכה.
 const LEVEL_TEXT = { view: tr('צפייה'), mark: tr('צפייה + סימונים'), edit: tr('עריכה מלאה') };
 export async function workerAccessDialog(userId = null) {
   const sb = client();
-  const body = h('div', { class: 'form' });
+  const body = h('div', { class: 'form wa' });
   const m = UI.openModal({ title: tr('גישה לתוכניות לפי עובד'), body, wide: true, buttons: [{ text: tr('סגור'), value: true }] });
   const { data: users, error } = await sb.from('profiles').select('*').eq('role', 'worker').order('display_name');
   if (error) { body.append(h('p', { class: 'msg' }, tr('שגיאה: ') + error.message)); return m.promise; }
   if (!users.length) { body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.'))); return m.promise; }
   let uid = userId && users.some((u) => u.id === userId) ? userId : users[0].id;
   let grants = [];
-  const expanded = new Set();
-  let filter = '';
+  const expanded = new Set(), selected = new Set();
+  let filter = '', visibleKeys = [];
   const who = h('select', { 'aria-label': tr('עובד') }, users.map((u) => h('option', { value: u.id }, u.display_name || u.email)));
   who.value = uid;
   const summary = h('p', { class: 'hint' });
   const search = h('input', { type: 'search', placeholder: tr('חיפוש תיקייה או תוכנית…'), 'aria-label': tr('חיפוש') });
+  const selBar = h('div', { class: 'wa-sel hidden' });
   const tree = h('div', { class: 'users' });
-  body.append(h('p', { class: 'hint' }, tr('בוחרים עובד ואז קובעים לכל תיקייה או תוכנית אם הוא רואה אותה. תיקייה שניתנה לו כוללת את כל מה שבתוכה. מה שלא סומן, העובד לא רואה בכלל.')),
-    h('label', {}, tr('עובד')), who, summary, search, tree);
+  body.append(h('p', { class: 'hint' }, tr('בוחרים עובד ואז קובעים לכל תיקייה או תוכנית אם הוא רואה אותה. הרשאה על תיקייה חלה על כל מה שבתוכה, ואפשר לחסום תוכנית ספציפית בתוכה. אפשר לסמן כמה פריטים ולשנות את כולם בבת אחת. לחיצה על שם תוכנית פותחת אותה לצפייה.')),
+    h('label', {}, tr('עובד')), who, summary, search, selBar, tree);
 
   const direct = (col, id) => grants.find((g) => g[col] === id);
-  const folderLevel = (fid) => { let best = 0, f = fid ? S.P.folders.get(fid) : null, g = 0; while (f && g++ < 200) { const d = direct('folder_id', f.id); if (d) best = Math.max(best, RANK[d.level] || 0); f = f.parentId ? S.P.folders.get(f.parentId) : null; } return best; };
-  const planLevel = (p) => Math.max(folderLevel(p.folderId || null), RANK[direct('plan_id', p.id)?.level] || 0);
+  const folderLevel = (fid) => folderLevelFrom(grants, fid, S.P.folders);
+  const planLevel = (p) => planLevelFrom(grants, p, S.P.folders);
   const levelName = (n) => ['', 'view', 'mark', 'edit'][n] || '';
+  const keyOf = (col, id) => (col === 'folder_id' ? 'f:' : 'p:') + id;
 
   async function setGrant(col, id, value) {
     const existing = direct(col, id);
     if (!value) { if (existing) { const { error: e } = await sb.from('grants').delete().eq('id', existing.id); if (e) throw e; grants.splice(grants.indexOf(existing), 1); } }
-    else if (existing) { const { error: e } = await sb.from('grants').update({ level: value }).eq('id', existing.id); if (e) throw e; existing.level = value; }
+    else if (existing) { if (existing.level !== value) { const { error: e } = await sb.from('grants').update({ level: value }).eq('id', existing.id); if (e) throw e; existing.level = value; } }
     else { const { data, error: e } = await sb.from('grants').insert({ user_id: uid, [col]: id, level: value }).select().single(); if (e) throw e; grants.push(data); }
   }
   function levelSelect(col, id, inherited) {
-    const sel = h('select', { 'aria-label': tr('רמת גישה') }, LEVELS.map(([v, t]) => h('option', { value: v }, v === '' && inherited ? tr('לפי התיקייה: {0}', LEVEL_TEXT[levelName(inherited)]) : t)));
+    const opts = LEVELS.filter(([v]) => v !== 'none' || inherited > 0 || direct(col, id)?.level === 'none')
+      .map(([v, t]) => h('option', { value: v }, v === '' ? (inherited > 0 ? tr('לפי התיקייה: {0}', LEVEL_TEXT[levelName(inherited)]) : tr('ללא גישה')) : t));
+    const sel = h('select', { 'aria-label': tr('רמת גישה') }, opts);
     sel.value = direct(col, id)?.level || '';
     sel.addEventListener('change', async () => {
       sel.disabled = true;
       try { await setGrant(col, id, sel.value); UI.toast(tr('נשמר')); paint(); }
-      catch (e) { UI.toast(tr('שגיאה: ') + e.message, { type: 'error' }); sel.value = direct(col, id)?.level || ''; sel.disabled = false; }
+      catch (e) { UI.toast(tr('שגיאה: ') + (/check constraint|grants_level/i.test(e.message || '') ? tr('חסימה דורשת להריץ את קובץ ה-SQL החדש (update-v2.sql) ב-Supabase') : e.message), { type: 'error', ms: 6000 }); sel.value = direct(col, id)?.level || ''; sel.disabled = false; }
     });
     return sel;
   }
@@ -380,44 +384,68 @@ export async function workerAccessDialog(userId = null) {
     if (matches(S.P.folders.get(fid)?.name || '')) return true;
     return S.plansIn(fid).some((p) => matches(p.name)) || S.childFolders(fid).some((c) => hasMatch(c.id));
   }
-  function folderRows(parentId, depth, out, inheritedFrom) {
+  const status = (eff, dir) => (dir?.level === 'none' ? tr('חסום לעובד') : eff ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(eff)]) : tr('העובד לא רואה'));
+  const check = (key) => h('input', { type: 'checkbox', class: 'wa-ck', 'aria-label': tr('בחירה'), checked: selected.has(key), onchange: (e) => { e.target.checked ? selected.add(key) : selected.delete(key); paintSel(); } });
+  function folderRows(parentId, depth, out) {
     for (const f of S.childFolders(parentId)) {
       if (filter && !hasMatch(f.id)) continue;
       const open = filter ? true : expanded.has(f.id);
-      const myInherited = inheritedFrom;
-      const lvlHere = Math.max(myInherited, RANK[direct('folder_id', f.id)?.level] || 0);
+      const eff = folderLevel(f.id), inh = parentId ? folderLevel(parentId) : 0, key = keyOf('folder_id', f.id);
+      visibleKeys.push(key);
       const toggle = h('button', { class: 'icon-btn sm', 'aria-label': open ? tr('סגור') : tr('פתח'), onclick: () => { open ? expanded.delete(f.id) : expanded.add(f.id); paint(); } }, icon(open ? 'chevD' : CHEV_FWD, 16));
-      out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
-        h('div', {}, h('div', { class: 'row' }, toggle, icon('folder', 18), h('b', {}, dn(f.name))), h('small', {}, lvlHere ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(lvlHere)]) : tr('העובד לא רואה'))),
-        levelSelect('folder_id', f.id, myInherited && !direct('folder_id', f.id) ? myInherited : 0)));
-      if (open) folderRows(f.id, depth + 1, out, lvlHere);
+      out.push(h('div', { class: 'grant-row' + (selected.has(key) ? ' sel' : ''), style: { marginInlineStart: depth * 16 + 'px' } },
+        h('div', {}, h('div', { class: 'row' }, check(key), toggle, icon('folder', 18), h('b', {}, dn(f.name))), h('small', {}, status(eff, direct('folder_id', f.id)))),
+        levelSelect('folder_id', f.id, inh)));
+      if (open) folderRows(f.id, depth + 1, out);
     }
     for (const p of S.plansIn(parentId)) {
       if (filter && !matches(p.name)) continue;
-      const eff = planLevel(p);
-      const inheritedLvl = folderLevel(p.folderId || null);
-      out.push(h('div', { class: 'grant-row', style: { marginInlineStart: depth * 16 + 'px' } },
-        h('div', {}, h('div', { class: 'row' }, icon('file', 18), h('button', { class: 'plan-link', title: tr('לחצו לצפייה בקובץ התוכנית'), onclick: () => previewPlan(p.id, { onOpenFull: () => { m.close(true); location.hash = '#/p/' + p.id; } }) }, dn(p.name))), h('small', {}, eff ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(eff)]) : tr('העובד לא רואה'))),
+      const eff = planLevel(p), inh = folderLevel(p.folderId || null), key = keyOf('plan_id', p.id);
+      visibleKeys.push(key);
+      const openFull = () => { m.close(true); location.hash = '#/p/' + p.id; };
+      out.push(h('div', { class: 'grant-row' + (selected.has(key) ? ' sel' : ''), style: { marginInlineStart: depth * 16 + 'px' } },
+        h('div', {}, h('div', { class: 'row' }, check(key), icon('file', 18), h('button', { class: 'plan-link', title: tr('לחצו לצפייה בקובץ התוכנית'), onclick: () => previewPlan(p.id, { onOpenFull: openFull }) }, dn(p.name))), h('small', {}, status(eff, direct('plan_id', p.id)))),
         h('div', { class: 'row' },
-          h('button', { class: 'btn ghost sm', title: tr('צפייה בקובץ התוכנית (בלי לצאת מהמסך הזה)'), onclick: () => previewPlan(p.id, { onOpenFull: () => { m.close(true); location.hash = '#/p/' + p.id; } }) }, icon('eye', 16), tr('צפייה')),
-          levelSelect('plan_id', p.id, inheritedLvl && !direct('plan_id', p.id) ? inheritedLvl : 0))));
+          h('button', { class: 'btn ghost sm', title: tr('צפייה בקובץ התוכנית (בלי לצאת מהמסך הזה)'), onclick: () => previewPlan(p.id, { onOpenFull: openFull }) }, icon('eye', 16), tr('צפייה')),
+          levelSelect('plan_id', p.id, inh))));
     }
+  }
+  function paintSel() {
+    const n = selected.size;
+    selBar.classList.toggle('hidden', !n && !visibleKeys.length);
+    const allOn = visibleKeys.length && visibleKeys.every((k) => selected.has(k));
+    const sel = h('select', { 'aria-label': tr('רמת גישה לנבחרים') }, [['', tr('הסר הרשאה ישירה (לפי התיקייה / ללא גישה)')], ['none', tr('חסום (ללא גישה)')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]].map(([v, t]) => h('option', { value: v }, t)));
+    selBar.replaceChildren(
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!allOn, onchange: (e) => { visibleKeys.forEach((k) => (e.target.checked ? selected.add(k) : selected.delete(k))); paint(); } }), tr('בחר הכל (מה שמוצג)')),
+      n ? h('div', { class: 'row wrap' }, h('b', {}, tr('{0} נבחרו', n)), sel,
+        h('button', { class: 'btn sm primary', onclick: () => applyBulk(sel.value) }, tr('החל על הנבחרים')),
+        h('button', { class: 'btn sm', onclick: () => { selected.clear(); paint(); } }, tr('נקה בחירה'))) : null);
+  }
+  async function applyBulk(value) {
+    const keys = [...selected];
+    try {
+      for (const k of keys) await setGrant(k[0] === 'f' ? 'folder_id' : 'plan_id', k.slice(2), value);
+      UI.toast(tr('עודכנו {0} פריטים', keys.length)); selected.clear(); paint();
+    } catch (e) { UI.toast(tr('שגיאה: ') + (/check constraint|grants_level/i.test(e.message || '') ? tr('חסימה דורשת להריץ את קובץ ה-SQL החדש (update-v2.sql) ב-Supabase') : e.message), { type: 'error', ms: 6000 }); paint(); }
   }
   function paint() {
     const rows = [];
-    folderRows(null, 0, rows, 0);
+    visibleKeys = [];
+    folderRows(null, 0, rows);
     tree.replaceChildren(...(rows.length ? rows : [h('p', { class: 'hint' }, filter ? tr('לא נמצאו תוצאות.') : tr('אין תיקיות או תוכניות.'))]));
     const vis = [...S.P.plans.values()].filter((p) => planLevel(p) > 0).length;
     summary.textContent = tr('העובד רואה {0} מתוך {1} תוכניות.', vis, S.P.plans.size);
+    paintSel();
   }
   async function loadUser() {
     tree.replaceChildren(h('p', { class: 'hint' }, tr('טוען…')));
+    selected.clear();
     const { data, error: e } = await sb.from('grants').select('*').eq('user_id', uid);
     if (e) { tree.replaceChildren(h('p', { class: 'msg' }, tr('שגיאה: ') + e.message)); return; }
     grants = data || [];
     for (const g of grants) { // פותחים את הענפים שיש בהם הרשאה
       let f = g.folder_id ? S.P.folders.get(g.folder_id) : (S.P.plans.get(g.plan_id) ? S.P.folders.get(S.P.plans.get(g.plan_id).folderId) : null), n = 0;
-      while (f && n++ < 200) { f = f.parentId ? S.P.folders.get(f.parentId) : null; if (f) expanded.add(f.id); }
+      while (f && n++ < 200) { expanded.add(f.id); f = f.parentId ? S.P.folders.get(f.parentId) : null; }
     }
     paint();
   }
@@ -441,7 +469,7 @@ export async function bulkGrantsDialog({ folders = [], plans = [] }) {
   if (!users.length) { body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים.'))); return m.promise; }
   const sels = new Map();
   for (const u of users) {
-    const sel = h('select', { 'aria-label': tr('רמת גישה') }, [['keep', tr('ללא שינוי')], ['', tr('ללא גישה')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]].map(([v, t]) => h('option', { value: v }, t)));
+    const sel = h('select', { 'aria-label': tr('רמת גישה') }, [['keep', tr('ללא שינוי')], ['', tr('הסר הרשאה ישירה')], ['none', tr('חסום (ללא גישה)')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]].map(([v, t]) => h('option', { value: v }, t)));
     sel.value = 'keep'; sels.set(u.id, sel);
     body.append(h('div', { class: 'grant-row' }, h('div', {}, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email)), sel));
   }

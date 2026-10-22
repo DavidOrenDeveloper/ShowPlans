@@ -446,7 +446,7 @@ export async function duplicatePlan(planId) {
       for (const m of mk) t.objectStore('markups').put({ ...fresh(m), id: uid(), versionId: nv.id, planId: np.id });
       for (const m of ms) t.objectStore('measurements').put({ ...fresh(m), id: uid(), versionId: nv.id, planId: np.id });
       for (const m of ln) t.objectStore('links').put({ ...fresh(m), id: uid(), versionId: nv.id, planId: np.id });
-      for (const c of cal) t.objectStore('calibrations').put({ ...fresh(c), id: `${nv.id}:${c.page}`, versionId: nv.id, planId: np.id });
+      for (const c of cal) t.objectStore('calibrations').put({ ...fresh(c), id: `${nv.id}:${c.page}${hooks.owner() ? ':' + hooks.owner() : ''}`, versionId: nv.id, planId: np.id });
       for (const x of tx) t.objectStore('textindex').put({ ...x, id: `${nv.id}:${x.page}`, versionId: nv.id, planId: np.id });
       t.objectStore('versions').put(nv);
       t.objectStore('plans').put(np);

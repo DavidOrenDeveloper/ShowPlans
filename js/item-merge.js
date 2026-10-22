@@ -2,7 +2,7 @@
 // בלי תלות בדפדפן, כדי שאפשר יהיה לבדוק אותה בנפרד (ראו tools/test-item-merge.mjs).
 
 export const ITEM_KINDS = ['markups', 'measurements', 'links', 'calibrations'];
-export const SHARED_KINDS = ['links', 'calibrations']; // משותפים לכל מי שרואה את התוכנית
+export const SHARED_KINDS = ['links']; // משותפים לכל מי שרואה את התוכנית
 
 // מה נשמר בעמודת data בענן: כל הרשומה ללא שדות פנימיים (_xxx) וללא ownerId (עמודה נפרדת)
 export function stripItem(rec) {
@@ -39,6 +39,7 @@ export function accessLevel(it, store, ctx) {
   const lvl = ctx.planLevel || 0;
   if (lvl < 1) return 'none';
   if (SHARED_KINDS.includes(store)) return lvl >= 3 ? 'edit' : 'view';
+  if (store === 'calibrations' && !(it.ownerId && it.ownerId === ctx.me)) return it.shared ? 'view' : 'none'; // כיול פרטי לכל משתמש; המנהל יכול לשתף
   if (it.ownerId && it.ownerId === ctx.me) return lvl >= 2 ? 'edit' : 'view';
   let best = 0;
   const rank = (l) => (l === 'edit' ? 2 : l === 'view' ? 1 : 0);

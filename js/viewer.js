@@ -13,7 +13,7 @@ import { Layer } from './layer.js';
 import { h, icon, uid, clamp, clone, fmtDate, natural } from './util.js';
 import {
   svg, LAYER_OF, RECT_TYPES, dist, drawItem, hitItem, handlesOf, boundsOf, corners, textBox,
-  paperName, mpuFromRatio, fmtLen, kindOf,
+  paperName, mpuFromRatio, fmtLen, kindOf, polyArea, pathLength,
 } from './markup.js';
 import { recognize, snapAngle } from './shape-recog.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
@@ -21,6 +21,7 @@ import { installStyle } from './viewer-style.js';
 import { installPrint } from './viewer-print.js';
 import * as CS from './cloud-sync.js';
 import { isCloud, isAdmin } from './cloud.js';
+import { exportMeasurementsXlsx } from './xlsx-export.js';
 import * as SH from './item-share-ui.js';
 import { SplitHost } from './split.js';
 
@@ -53,6 +54,7 @@ let cur = null;
 let split = null; // תצוגה מפוצלת פעילה (SplitHost) – במקום cur
 let pickCtx = null;
 export function startPick(ctx) { pickCtx = ctx; }
+if (typeof window !== 'undefined') window.__viewer = () => cur;
 
 export async function openViewer(root, planId, opts = {}) {
   if (split && !split.dead) { await split.routeOpen(planId, opts); return; }
@@ -271,7 +273,7 @@ class Viewer {
     this.search = null;
     const [mk, ms, ln, cal] = await Promise.all(['markups', 'measurements', 'links', 'calibrations'].map((s) => db.byIndex(s, 'versionId', vid)));
     this.items = { markups: mk, measurements: ms, links: ln };
-    this.calibs = new Map(cal.map((c) => [c.page, c]));
+    this.setCals(cal);
     this.history = []; this.redoStack = [];
     this.updateUndo(); this.updateTitle();
     const first = clamp(o.page || lastView.get(vid + ':last') || 1, 1, this.numPages);
@@ -863,9 +865,43 @@ class Viewer {
     const [mk, ms, ln, cal] = await Promise.all(['markups', 'measurements', 'links', 'calibrations'].map((s) => db.byIndex(s, 'versionId', ver.id)));
     if (this.version !== ver) return;
     this.items = { markups: mk, measurements: ms, links: ln };
-    this.calibs = new Map(cal.map((c) => [c.page, c]));
+    this.setCals(cal);
     if (this.selected) this.selected = [...mk, ...ms, ...ln].find((x) => x.id === this.selected.id) || null;
     this.renderItems(); this.renderProps();
+  }
+  // כיולים: לכל משתמש כיול משלו. כיול שלי > כיול ישן (לפני הפיצול) > כיול שהמנהל שיתף. מדידה של מישהו אחר מוצגת לפי הכיול שלו
+  setCals(list) {
+    this.calList = list;
+    const me = S.hooks.owner() || undefined, rank = (c) => (c.ownerId === me ? 3 : !c.ownerId ? 2 : c.shared ? 1 : 0), m = new Map();
+    for (const c of list) if (rank(c) > 0 && (!m.has(c.page) || rank(c) > rank(m.get(c.page)))) m.set(c.page, c);
+    this.calibs = m;
+  }
+  calFor(it, page = it.page) {
+    const own = it.ownerId && (this.calList || []).find((c) => c.page === page && c.ownerId === it.ownerId);
+    return own || this.calibs.get(page);
+  }
+  calId(pg) { const me = S.hooks.owner(); return me ? `${this.version.id}:${pg}:${me}` : `${this.version.id}:${pg}`; }
+  // גודל כיתוב מדידה לא תלוי ברמת הזום: בין 12 ל-30 פיקסלים על המסך
+  fixedMeasure(it) {
+    if (it.type !== 'measure' && it.type !== 'area' && !(it.type === 'polyline' && it.showLen)) return it;
+    const sc = this.scale || 1;
+    return { ...it, fontSize: clamp(it.fontSize || 15 / sc, 12 / sc, 30 / sc) };
+  }
+  async exportXlsx() {
+    const rows = [];
+    const owners = new Map();
+    try { for (const p of await (await import('./item-share-ui.js')).getPeople?.() || []) owners.set(p.id, p.display_name || p.email); } catch { /* ignore */ }
+    const mine = S.hooks.owner();
+    for (const it of [...this.items.measurements, ...this.items.markups.filter((x) => x.type === 'polyline' && x.showLen)]) {
+      if (!this.itemShown(it)) continue;
+      const cal = this.calFor(it);
+      let value = null;
+      if (cal && cal.mpu) value = it.type === 'area' ? polyArea(it.pts) * cal.mpu * cal.mpu : it.type === 'polyline' ? pathLength(it.pts, it.closed) * cal.mpu : Math.hypot(it.pts[1].x - it.pts[0].x, it.pts[1].y - it.pts[0].y) * cal.mpu;
+      rows.push({ title: it.title || '', type: it.type, page: it.page, plan: this.plan?.name || '', value, owner: it.ownerId && it.ownerId !== mine ? owners.get(it.ownerId) || '' : '' });
+    }
+    if (!rows.length) { UI.toast(tr('אין מדידות לייצוא בתוכנית הזו')); return; }
+    await exportMeasurementsXlsx(rows, tr('מדידות') + ' - ' + (this.plan?.name || ''));
+    UI.toast(tr('הקובץ נוצר: {0} מדידות', rows.length));
   }
   ctx() {
     return {
@@ -877,7 +913,7 @@ class Viewer {
     this.gItems.textContent = '';
     const cx = this.ctx();
     for (const it of this.visibleItems()) {
-      const node = drawItem(it, cx);
+      const node = drawItem(this.fixedMeasure(it), { ...cx, cal: this.calFor(it, this.pageNum) });
       if (this.eraseSet && this.eraseSet.has(it.id)) node.setAttribute('opacity', '0.22');
       this.gItems.append(node);
     }
@@ -898,7 +934,7 @@ class Viewer {
     const isPoly = d.type === 'area' || d.type === 'polyline';
     if (isPoly && d.hover) pts = [...d.pts, d.hover];
     else if (d.wait && d.hover) pts = [d.pts[0], d.hover];
-    this.gDraft.append(drawItem({ ...it, pts }, this.ctx()));
+    this.gDraft.append(drawItem(this.fixedMeasure({ ...it, pts }), this.ctx()));
     if (isPoly) d.pts.forEach((q) => this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 5 / sc, fill: '#fff', stroke: '#d81b60', 'stroke-width': 2 / sc })));
   }
   newItem(d, preview = false) {
@@ -916,9 +952,9 @@ class Viewer {
     } else if (kind === 'shape') {
       it.color = prefs.color; it.width = prefs.w / sc; it.op = prefs.op;
       if (!d.fromPen && (type === 'rect' || type === 'ellipse')) { it.fill = prefs.fill; it.fillOp = prefs.fillOp; }
-      if (type === 'polyline') { it.fontSize = 14 / sc; if (d.closed) it.closed = true; }
+      if (type === 'polyline') { it.fontSize = 14 / (380 / Math.min(this.pw, this.ph)); if (d.closed) it.closed = true; }
     }
-    if (type === 'measure' || type === 'area') { it.color = '#d81b60'; it.width = 2.5 / sc; it.fontSize = 15 / sc; }
+    if (type === 'measure' || type === 'area') { it.color = '#d81b60'; it.width = 2.5 / sc; it.fontSize = 15 / (380 / Math.min(this.pw, this.ph)); if (this.measTitle) it.title = this.measTitle; }
     if (type === 'link') { it.color = '#1d4e89'; it.width = 2 / sc; it.fontSize = 14 / sc; }
     return it;
   }
@@ -1103,26 +1139,27 @@ class Viewer {
 
   // ---------- כיול ומדידה ----------
   async needCalibration(nextTool) {
-    if (!CS.canEditPlanItems(this.planId)) { UI.toast(tr('נדרש כיול לעמוד הזה. כיול דורש הרשאת עריכה מלאה: בקשו מהמנהל'), { type: 'error', ms: 5000 }); return; }
+    if (!CS.canMarkPlan(this.planId)) { UI.toast(tr('נדרש כיול לעמוד הזה, אבל אין לך הרשאת סימון בתוכנית'), { type: 'error', ms: 5000 }); return; }
     const ok = await UI.confirmBox(tr('כדי למדוד צריך להגדיר סקאלה לעמוד הזה. האפליקציה לא מנחשת מידות – בחרו סקאלה (למשל 1:100) או כיילו לפי מרחק ידוע בתוכנית.'), { title: tr('נדרש כיול'), okText: tr('הגדר סקאלה') });
     if (ok) this.calibrateDialog(nextTool);
   }
   async calibrateDialog(nextTool) {
     if (!this.page) return;
-    if (!CS.canEditPlanItems(this.planId)) { UI.toast(tr('כיול דורש הרשאת עריכה מלאה בתוכנית'), { type: 'error' }); return; }
+    if (!CS.canMarkPlan(this.planId)) { UI.toast(tr('כיול דורש הרשאת סימון בתוכנית'), { type: 'error' }); return; }
     const cal = this.calibs.get(this.pageNum);
     const paper = paperName(this.pw, this.ph);
     const wmm = Math.round((this.pw * 25.4) / 72), hmm = Math.round((this.ph * 25.4) / 72);
     const ratio = h('input', { type: 'number', min: 1, step: 1, value: cal?.ratio || '', placeholder: '100', inputMode: 'numeric' });
     const all = h('input', { type: 'checkbox' });
+    const shareCal = h('input', { type: 'checkbox', checked: !!cal?.shared });
     const cands = h('div', { class: 'row wrap' });
     let m;
     const applyRatio = async (n) => {
       if (!(n >= 1)) { UI.toast(tr('הזן מספר גדול מ-0'), { type: 'error' }); return; }
       const pages = all.checked ? Array.from({ length: this.numPages }, (_, i) => i + 1) : [this.pageNum];
       for (const pg of pages) {
-        const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, planId: this.planId, page: pg, mpu: mpuFromRatio(n), source: 'ratio', ratio: n };
-        await S.putItem('calibrations', c); this.calibs.set(pg, c);
+        const c = { id: this.calId(pg), versionId: this.version.id, planId: this.planId, page: pg, mpu: mpuFromRatio(n), source: 'ratio', ratio: n, shared: shareCal.checked || undefined };
+        await S.putItem('calibrations', c); this.setCals([...(this.calList || []).filter((x) => x.id !== c.id), c]);
       }
       this.renderItems(); this.renderProps();
       UI.toast(tr('הוגדרה סקאלה 1:{0}', n));
@@ -1137,10 +1174,11 @@ class Viewer {
       h('div', { class: 'row' }, h('span', {}, '1 :'), ratio, h('button', { class: 'btn primary', onclick: () => applyRatio(parseFloat(ratio.value)) }, tr('החל'))),
       cands,
       h('label', { class: 'check' }, all, tr('החל על כל עמודי הקובץ')),
+      isCloud() && isAdmin() ? h('label', { class: 'check' }, shareCal, tr('שתף את הכיול עם העובדים (אחרת הכיול שלי בלבד)')) : null,
       h('h4', {}, tr('2. כיול ידני')),
       h('p', { class: 'hint' }, tr('סמנו שתי נקודות בתוכנית שהמרחק ביניהן ידוע (למשל מידה כתובה), ואז הזינו את המרחק האמיתי.')),
-      h('button', { class: 'btn', onclick: () => { m.close(); this.startCalibrateTool(all.checked, nextTool); } }, icon('ruler', 18), tr('סמן שתי נקודות')),
-      cal ? h('button', { class: 'btn danger', onclick: async () => { await S.delItem('calibrations', cal.id); this.calibs.delete(this.pageNum); this.renderItems(); this.renderProps(); m.close(); } }, tr('אפס כיול בעמוד')) : null);
+      h('button', { class: 'btn', onclick: () => { m.close(); this.calShare = shareCal.checked; this.startCalibrateTool(all.checked, nextTool); } }, icon('ruler', 18), tr('סמן שתי נקודות')),
+      cal && (!cal.ownerId || cal.ownerId === S.hooks.owner()) ? h('button', { class: 'btn danger', onclick: async () => { await S.delItem('calibrations', cal.id); this.setCals((this.calList || []).filter((c) => c.id !== cal.id)); this.renderItems(); this.renderProps(); m.close(); } }, tr('אפס כיול בעמוד')) : null);
     m = UI.openModal({ title: tr('סקאלה וכיול'), body, buttons: [{ text: tr('סגור'), value: true }] });
     try { // הצעה בלבד: סקאלה שנמצאה בטקסט העמוד – חובה לאמת מול התוכנית
       const txt = await pageText(this.page);
@@ -1175,8 +1213,8 @@ class Viewer {
     const meters = unit.value === 'm' ? d : unit.value === 'cm' ? d / 100 : d / 1000;
     const pages = this.calibAll ? Array.from({ length: this.numPages }, (_, i) => i + 1) : [this.pageNum];
     for (const pg of pages) {
-      const c = { id: `${this.version.id}:${pg}`, versionId: this.version.id, planId: this.planId, page: pg, mpu: meters / len, source: 'manual' };
-      await S.putItem('calibrations', c); this.calibs.set(pg, c);
+      const c = { id: this.calId(pg), versionId: this.version.id, planId: this.planId, page: pg, mpu: meters / len, source: 'manual', shared: this.calShare || undefined };
+      await S.putItem('calibrations', c); this.setCals([...(this.calList || []).filter((x) => x.id !== c.id), c]);
     }
     UI.toast(tr('הכיול נשמר'));
     this.renderItems();
@@ -1654,6 +1692,7 @@ class Viewer {
       { label: tr('פתח באמצעות / שתף'), icon: 'share', onClick: () => A.openWithDialog(this.plan, this.version?.id) },
       { label: tr('הורד PDF מקורי'), icon: 'download', onClick: () => A.downloadVersion(this.version?.id, this.plan.name) },
       { label: tr('סקאלה וכיול לעמוד'), icon: 'ruler', onClick: () => this.calibrateDialog() },
+      { label: tr('ייצוא מדידות לאקסל'), icon: 'download', onClick: () => this.exportXlsx() },
       { label: tr('מסך מלא'), icon: 'maximize', onClick: () => this.toggleFullscreen() },
       ...(this.host ? [{ label: tr('אפשרויות תצוגה מפוצלת…'), icon: 'split', onClick: () => this.host.menu(this, this.topbar.lastElementChild) }] : [{ label: tr('תצוגה מפוצלת (2–3 תוכניות במקביל)'), icon: 'split', onClick: () => this.splitEnter() }]),
       { label: tr('מצב תצוגה נקי (הסתר סרגלים)'), icon: 'eye', onClick: () => this.el.classList.add('immersive') },

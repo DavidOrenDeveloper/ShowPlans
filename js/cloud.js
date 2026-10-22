@@ -128,24 +128,33 @@ export async function signOut() {
 export function switchToLogin() { ls.set('mode', null); location.reload(); }
 
 // ---------- רמות הרשאה (חישוב מקומי לממשק בלבד; האכיפה האמיתית היא ב-RLS בשרת) ----------
-const RANK = { view: 1, mark: 2, edit: 3 };
+export const RANK = { none: 0, view: 1, mark: 2, edit: 3 };
+// ההרשאה הקרובה ביותר קובעת: הרשאה על התוכנית עצמה, אחרת על התיקייה שלה, אחרת על תיקיית האב וכן הלאה.
+// רמה 'none' היא חסימה מפורשת (מבטלת גישה שירשה התוכנית מתיקייה). כך אפשר לתת גישה לתיקייה ולחסום תוכנית אחת בתוכה.
+export function folderLevelFrom(grants, id, folders) {
+  let f = id ? folders.get(id) : null, g = 0;
+  while (f && g++ < 200) {
+    const gr = grants.find((x) => x.folder_id === f.id);
+    if (gr) return RANK[gr.level] || 0;
+    f = f.parentId ? folders.get(f.parentId) : null;
+  }
+  return 0;
+}
+export function planLevelFrom(grants, plan, folders) {
+  if (!plan) return 0;
+  const d = grants.find((x) => x.plan_id === plan.id);
+  if (d) return RANK[d.level] || 0;
+  return folderLevelFrom(grants, plan.folderId || null, folders);
+}
 export function levelOfFolder(id, folders) {
   if (!isCloud()) return 4;
   if (isAdmin()) return 4;
-  let best = 0, f = id ? folders.get(id) : null, g = 0;
-  while (f && g++ < 200) {
-    for (const gr of cloud.grants) if (gr.folder_id === f.id) best = Math.max(best, RANK[gr.level] || 0);
-    f = f.parentId ? folders.get(f.parentId) : null;
-  }
-  return best;
+  return folderLevelFrom(cloud.grants, id, folders);
 }
 export function levelOfPlan(id, plans, folders) {
   if (!isCloud()) return 4;
   if (isAdmin()) return 4;
-  const p = plans.get(id); if (!p) return 0;
-  let best = levelOfFolder(p.folderId || null, folders);
-  for (const gr of cloud.grants) if (gr.plan_id === id) best = Math.max(best, RANK[gr.level] || 0);
-  return best;
+  return planLevelFrom(cloud.grants, plans.get(id), folders);
 }
 
 // ---------- קריאות לפונקציות השרת ----------
