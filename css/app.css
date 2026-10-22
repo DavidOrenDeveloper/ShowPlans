@@ -551,3 +551,10 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 .viewer.pane .v-zoom .icon-btn { width: 36px; height: 36px; }
 .viewer.pane .v-panel { position: absolute; left: 0; top: 0; bottom: 0; width: min(300px, 88%); box-shadow: 0 0 30px rgba(0,0,0,.4); border-inline-start: 0; }
 .split-area[data-n="3"] .v-top .icon-btn { width: 36px; height: 36px; }
+
+/* ---------- גישה לפי עובד: בחירה מרובה ---------- */
+.wa-sel { position: sticky; top: -1px; z-index: 3; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.wa-sel.hidden { display: none; }
+.grant-row.sel { background: #eef4fb; border-color: var(--blue); }
+.wa-ck { width: 20px; height: 20px; flex: none; }
+.meas-title { width: 150px; min-width: 110px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
