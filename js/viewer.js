@@ -941,8 +941,10 @@ class Viewer {
     if (this.version !== ver) return;
     this.items = { markups: mk, measurements: ms, links: ln };
     this.setCals(cal);
+    const sig0 = this.selected ? JSON.stringify(this.selected) : '';
     if (this.selected) this.selected = [...mk, ...ms, ...ln].find((x) => x.id === this.selected.id) || null;
     this.renderItems();
+    if ((this.selected ? JSON.stringify(this.selected) : '') === sig0) return; // לא השתנה כלום (למשל אחרי שמירה של עצמנו): לא בונים מחדש את הסרגל והחלונית
     if (!(document.activeElement && document.activeElement.classList.contains('txt-inline'))) this.renderProps(); // לא מאפסים שדה טקסט שמקלידים בו
   }
   // כיולים: לכל משתמש כיול משלו. כיול שלי > כיול ישן (לפני הפיצול) > כיול שהמנהל שיתף. מדידה של מישהו אחר מוצגת לפי הכיול שלו

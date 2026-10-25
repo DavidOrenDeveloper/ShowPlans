@@ -176,6 +176,7 @@ export function installStyle(V) {
       return h('button', { class: 'btn sm' + (this.measOpen ? ' primary' : ''), onclick: () => { this.measOpen = !this.measOpen; this.renderMeasPanel(); } }, icon('sliders', 16), tr('עיצוב מדידה'));
     },
     renderMeasPanel() {
+      const keepTop = this.measPanel ? this.measPanel.scrollTop : 0;
       if (this.measPanel) { this.measPanel.remove(); this.measPanel = null; }
       const isM = this.tool === 'measure' || this.tool === 'area' || (this.selected && (this.selected.type === 'measure' || this.selected.type === 'area'));
       if (!this.measOpen || !isM) return;
@@ -206,11 +207,13 @@ export function installStyle(V) {
         sec(tr('קו המדידה'), colorRow('color'), lw),
         sec(tr('הכיתוב (המרחק)'), colorRow('tcolor'), ts));
       this.mid.append(this.measPanel);
+      this.measPanel.scrollTop = keepTop;
     },
 
     // ---------- סרגל מאפיינים ----------
     renderProps() {
       const p = this.props;
+      const keepL = p.scrollLeft;
       p.textContent = '';
       const t = this.tool, row = [];
       const { sel, kind, type } = this.styleCtx();
@@ -299,6 +302,7 @@ export function installStyle(V) {
       }
       p.classList.toggle('has', row.length > 0);
       p.append(...row);
+      p.scrollLeft = keepL;
       this.renderStylePanel();
       this.renderMeasPanel();
       this.ensureSelVisible();
@@ -306,7 +310,9 @@ export function installStyle(V) {
 
     // ---------- פאנל עיצוב מלא ----------
     renderStylePanel() {
+      const keepTop = this.stylePanel ? this.stylePanel.scrollTop : 0; // שומרים את מיקום הגלילה בחלונית כדי שלא תקפוץ לראש בכל שינוי
       if (this.stylePanel) { this.stylePanel.remove(); this.stylePanel = null; }
+      this._stKeep = keepTop;
       const { sel, kind, type } = this.styleCtx();
       if (!this.styleOpen || !['shape', 'text', 'hl'].includes(kind)) return;
       const fillable = sel ? canFill(sel) : (type === 'rect' || type === 'ellipse');
@@ -339,6 +345,7 @@ export function installStyle(V) {
           h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור'), onclick: () => { this.styleOpen = false; this.renderProps(); } }, icon('x', 18))),
         ...body);
       this.mid.append(box);
+      box.scrollTop = this._stKeep || 0;
       this.stylePanel = box;
     },
   });
