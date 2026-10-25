@@ -574,7 +574,7 @@ class Viewer {
     this.ptrs.set(e.pointerId, pt);
     // יד שנייה בזמן שהראשונה באמצע שרטוט/מדידה: היד השנייה מזיזה ומגדילה את התוכנית, והמדידה נשארת בידך הראשונה
     const g0 = this.gesture;
-    if (g0 && ASSIST_TYPES.has(g0.type) && e.pointerId !== g0.id && !this.pinch) {
+    if (g0 && ASSIST_TYPES.has(g0.type) && e.pointerId !== g0.id && !this.pinch && (this.assist || this.drawing(g0))) {
       if (!this.assist) this.assist = { pts: new Map() };
       if (this.assist.pts.size < 2) { this.assist.pts.set(e.pointerId, pt); this.assistReset(); }
       return;
@@ -628,6 +628,12 @@ class Viewer {
     const px = (c0x - p.tx0) / p.s0, py = (p.c0.y - p.ty0) / p.s0;
     this.setView(ns, cx - px * ns, c.y - py * ns);
   }
+  // האם האצבע הראשונה כבר באמצע שרטוט (זזה ממקום הנגיעה)? אם לא – אצבע שנייה היא צביטה/הזזה רגילה של התוכנית
+  drawing(g) {
+    if (g.type === 'pen') return !!(this.draft && this.draft.pts.length > 3);
+    const q = this.ptrs.get(g.id);
+    return !!g.moved || (!!q && Math.hypot(q.x - g.sx, q.y - g.sy) > 12 && (g.type === 'drag' || g.type === 'seg'));
+  }
   assistReset() {
     const a = this.assist; if (!a) return;
     const l = [...a.pts.values()];
@@ -655,7 +661,7 @@ class Viewer {
     this.onMove({ pointerId: g.id }, pt);
   }
   edgeCheck(g, pt) {
-    const W = this.stage.clientWidth, H = this.stage.clientHeight, M = 44;
+    const W = this.stage.clientWidth, H = this.stage.clientHeight, M = 56;
     const ex = pt.x < M ? -(M - pt.x) / M : pt.x > W - M ? (pt.x - (W - M)) / M : 0;
     const ey = pt.y < M ? -(M - pt.y) / M : pt.y > H - M ? (pt.y - (H - M)) / M : 0;
     if (!ex && !ey) { g.edge = null; g.edgeT = 0; return; }
@@ -667,8 +673,11 @@ class Viewer {
     this.edgeRaf = 0;
     const g = this.gesture;
     if (!g || !g.edge || this.assist || !EDGE_TYPES.has(g.type) || (g.type === 'seg' && !g.moved)) return;
-    if (performance.now() - g.edgeT >= 250) { // רק אחרי שהאצבע נשארת בקצה רבע שנייה, כדי לא לזוז בנגיעה רגילה
-      this.setView(this.scale, this.tx - g.edge.ex * 14, this.ty - g.edge.ey * 14);
+    const now = performance.now(), dt = Math.min(0.05, (now - (g.edgeLast || now)) / 1000);
+    g.edgeLast = now;
+    if (now - g.edgeT >= 300) { // רק אחרי שהאצבע נשארת בקצה, כדי לא לזוז בנגיעה רגילה; מהירות איטית שגדלה ככל שהאצבע קרובה יותר לקצה
+      const sp = (r) => Math.sign(r) * (30 + 150 * r * r) * dt;
+      this.setView(this.scale, this.tx - sp(g.edge.ex), this.ty - sp(g.edge.ey));
       this.refreshPrimary();
     }
     this.edgeRaf = requestAnimationFrame(() => this.edgeStep());

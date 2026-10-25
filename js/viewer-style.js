@@ -172,7 +172,7 @@ export function installStyle(V) {
         return h('label', { class: 'st-slider' }, h('span', {}, ''), r, out);
       };
       const sec = (title, ...kids) => h('div', { class: 'st-sec' }, h('div', { class: 'st-t' }, title), ...kids);
-      const lw = num('width', 0.5, 12, 0.5), ts = num('tsize', 6, 60, 1);
+      const lw = num('width', 0.1, 12, 0.1), ts = num('tsize', 2, 60, 0.5);
       lw.firstChild.textContent = tr('עובי קו'); ts.firstChild.textContent = tr('גודל כיתוב');
       this.measPanel = h('div', { class: 'v-style' },
         h('div', { class: 'st-head' }, h('b', {}, this.selected ? tr('עיצוב המדידה הנבחרת') : tr('עיצוב למדידה הבאה')),
