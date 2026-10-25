@@ -881,6 +881,7 @@ class Viewer {
     this.stage.dataset.tool = this.tool;
   }
   toolDown(pt, e) {
+    if (this.autoSel) { if (this.selected === this.autoSel && this.tool !== 'select') this.select(null); this.autoSel = null; }
     const p = this.toPage(pt);
     const base = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false };
     switch (this.tool) {
@@ -1037,7 +1038,10 @@ class Viewer {
   async commitNew(d) {
     if (d.type === 'calibrate') { this.calibrateFromPoints(d.pts); return; }
     if (d.type === 'link') { await this.createLink(d); return; }
-    await this.addItem(this.newItem(d));
+    const it = this.newItem(d);
+    await this.addItem(it);
+    // הפריט שנוצר נשאר נבחר: שינוי צבע/גודל חל עליו, ורק נגיעה במקום אחר מתחילה פריט חדש
+    if (this.items[it.layer].includes(it)) { this.autoSel = it; this.select(it, true); }
     this.renderDraft(); this.renderProps();
   }
   async addItem(it) {

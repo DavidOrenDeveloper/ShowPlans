@@ -165,14 +165,16 @@ export function installStyle(V) {
         return row;
       };
       const num = (k, min, max, step) => {
-        const out = h('b', { class: 'st-v' }, String(Math.round(this.measGet(k) * 10) / 10));
-        const r = h('input', { type: 'range', min, max, step, value: this.measGet(k), 'aria-label': k });
-        r.addEventListener('input', () => { out.textContent = r.value; this.measSet(k, +r.value, true); });
+        const cur = this.measGet(k);
+        const out = h('input', { type: 'number', class: 'num sz', min: 0.05, max: 200, step, value: Math.round(cur * 100) / 100, 'aria-label': k });
+        const r = h('input', { type: 'range', min, max, step, value: Math.min(max, cur), 'aria-label': k });
+        r.addEventListener('input', () => { out.value = r.value; this.measSet(k, +r.value, true); });
         r.addEventListener('change', () => { if (this.selected) this.commitEdit(); else this.measSet(k, +r.value); });
+        out.addEventListener('change', () => { const x = parseFloat(out.value); if (x >= 0.05) { r.value = Math.min(max, x); this.measSet(k, x); } });
         return h('label', { class: 'st-slider' }, h('span', {}, ''), r, out);
       };
       const sec = (title, ...kids) => h('div', { class: 'st-sec' }, h('div', { class: 'st-t' }, title), ...kids);
-      const lw = num('width', 0.1, 12, 0.1), ts = num('tsize', 2, 60, 0.5);
+      const lw = num('width', 0.05, 12, 0.05), ts = num('tsize', 0.3, 60, 0.1);
       lw.firstChild.textContent = tr('עובי קו'); ts.firstChild.textContent = tr('גודל כיתוב');
       this.measPanel = h('div', { class: 'v-style' },
         h('div', { class: 'st-head' }, h('b', {}, this.selected ? tr('עיצוב המדידה הנבחרת') : tr('עיצוב למדידה הבאה')),
