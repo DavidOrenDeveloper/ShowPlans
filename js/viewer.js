@@ -53,6 +53,7 @@ const lastView = new Map();
 let cur = null;
 let split = null; // תצוגה מפוצלת פעילה (SplitHost) – במקום cur
 let pickCtx = null;
+const ASSIST_TYPES = new Set(['seg', 'seg2', 'poly', 'drag', 'pen']), EDGE_TYPES = new Set(['seg', 'drag', 'pen']);
 export function startPick(ctx) { pickCtx = ctx; }
 if (typeof window !== 'undefined') window.__viewer = () => cur;
 
@@ -569,8 +570,15 @@ class Viewer {
     if (e.pointerType === 'mouse' && e.button > 2) return;
     try { this.stage.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const pt = this.local(e);
-    if (e.isPrimary && this.ptrs.size) { this.ptrs.clear(); this.pinch = null; if (this.gesture) this.abortGesture(); } // אצבע ראשונה חדשה = אין נגיעות אחרות; מנקה נגיעה "תקועה" שגרמה לקפיצות
+    if (e.isPrimary && this.ptrs.size) { this.ptrs.clear(); this.pinch = null; this.assist = null; if (this.gesture) this.abortGesture(); } // אצבע ראשונה חדשה = אין נגיעות אחרות; מנקה נגיעה "תקועה" שגרמה לקפיצות
     this.ptrs.set(e.pointerId, pt);
+    // יד שנייה בזמן שהראשונה באמצע שרטוט/מדידה: היד השנייה מזיזה ומגדילה את התוכנית, והמדידה נשארת בידך הראשונה
+    const g0 = this.gesture;
+    if (g0 && ASSIST_TYPES.has(g0.type) && e.pointerId !== g0.id && !this.pinch) {
+      if (!this.assist) this.assist = { pts: new Map() };
+      if (this.assist.pts.size < 2) { this.assist.pts.set(e.pointerId, pt); this.assistReset(); }
+      return;
+    }
     if (this.ptrs.size === 2) { this.abortGesture(); this.startPinch(); return; }
     if (this.ptrs.size > 2) return;
     const forcePan = e.button === 1 || e.button === 2 || this.spaceDown;
@@ -585,6 +593,7 @@ class Viewer {
   abortGesture() {
     const g = this.gesture;
     if (g && (g.type === 'move' || g.type === 'handle') && this.selected) { Object.assign(this.selected, clone(g.before)); this.renderItems(); }
+    this.assist = null;
     if (g && g.hold) clearTimeout(g.hold);
     if (g && g.type === 'erase') { this.eraseSet = null; this.renderItems(); }
     if (g && (g.type === 'drag' || g.type === 'pen' || g.type === 'seg')) this.draft = null;
@@ -619,9 +628,55 @@ class Viewer {
     const px = (c0x - p.tx0) / p.s0, py = (p.c0.y - p.ty0) / p.s0;
     this.setView(ns, cx - px * ns, c.y - py * ns);
   }
-  onMove(e) {
-    const pt = this.local(e);
+  assistReset() {
+    const a = this.assist; if (!a) return;
+    const l = [...a.pts.values()];
+    a.n = l.length;
+    a.c = { x: l.reduce((s, q) => s + q.x, 0) / l.length, y: l.reduce((s, q) => s + q.y, 0) / l.length };
+    a.d = l.length > 1 ? Math.hypot(l[0].x - l[1].x, l[0].y - l[1].y) || 1 : 0;
+  }
+  assistMove() {
+    const a = this.assist; if (!a) return;
+    const l = [...a.pts.values()];
+    if (l.length !== a.n) { this.assistReset(); return; }
+    const c = { x: l.reduce((s, q) => s + q.x, 0) / l.length, y: l.reduce((s, q) => s + q.y, 0) / l.length };
+    const d = l.length > 1 ? Math.hypot(l[0].x - l[1].x, l[0].y - l[1].y) || 1 : 0;
+    const ns = l.length > 1 && a.d ? clamp(this.scale * (d / a.d), this.minScale(), MAXS) : this.scale;
+    const px = (this.viewX(a.c.x) - this.tx) / this.scale, py = (a.c.y - this.ty) / this.scale;
+    this.setView(ns, this.viewX(c.x) - px * ns, c.y - py * ns);
+    a.c = c; a.d = d;
+    this.refreshPrimary();
+  }
+  // אחרי שהתצוגה זזתה מתחת לאצבע הראשונה (יד שנייה / גלילה בקצה): מעדכנים את הקו הנמשך לפי מיקום האצבע
+  refreshPrimary() {
+    const g = this.gesture; if (!g) return;
+    const pt = this.ptrs.get(g.id); if (!pt) return;
+    if (g.type === 'seg' && !g.moved) { g.p0 = this.toPage(pt); g.sx = pt.x; g.sy = pt.y; return; }
+    this.onMove({ pointerId: g.id }, pt);
+  }
+  edgeCheck(g, pt) {
+    const W = this.stage.clientWidth, H = this.stage.clientHeight, M = 44;
+    const ex = pt.x < M ? -(M - pt.x) / M : pt.x > W - M ? (pt.x - (W - M)) / M : 0;
+    const ey = pt.y < M ? -(M - pt.y) / M : pt.y > H - M ? (pt.y - (H - M)) / M : 0;
+    if (!ex && !ey) { g.edge = null; g.edgeT = 0; return; }
+    g.edge = { ex: clamp(ex, -1, 1), ey: clamp(ey, -1, 1) };
+    if (!g.edgeT) g.edgeT = performance.now();
+    if (!this.edgeRaf) this.edgeRaf = requestAnimationFrame(() => this.edgeStep());
+  }
+  edgeStep() {
+    this.edgeRaf = 0;
+    const g = this.gesture;
+    if (!g || !g.edge || this.assist || !EDGE_TYPES.has(g.type) || (g.type === 'seg' && !g.moved)) return;
+    if (performance.now() - g.edgeT >= 250) { // רק אחרי שהאצבע נשארת בקצה רבע שנייה, כדי לא לזוז בנגיעה רגילה
+      this.setView(this.scale, this.tx - g.edge.ex * 14, this.ty - g.edge.ey * 14);
+      this.refreshPrimary();
+    }
+    this.edgeRaf = requestAnimationFrame(() => this.edgeStep());
+  }
+  onMove(e, forced) {
+    const pt = forced || this.local(e);
     if (this.ptrs.has(e.pointerId)) this.ptrs.set(e.pointerId, pt);
+    if (this.assist && this.assist.pts.has(e.pointerId) && !forced) { this.assist.pts.set(e.pointerId, pt); this.assistMove(); return; }
     if (this.pinch && this.ptrs.size >= 2) { this.doPinch(); return; }
     const g = this.gesture;
     if (!g) {
@@ -642,20 +697,21 @@ class Viewer {
         this.layerB.place(this.scale, this.tx, this.ty, this.dpr);
         g.x = pt.x; g.y = pt.y; g.moved = true;
         break;
-      case 'drag': this.draft.pts[1] = p; this.renderDraft(); break;
+      case 'drag': this.draft.pts[1] = p; this.renderDraft(); this.edgeCheck(g, pt); break;
       case 'pen': {
         if (g.snapped) { // אחרי זיהוי: קו ישר ממשיך לעקוב אחרי האצבע (עם הצמדה ל-0/45/90°)
           if (g.snap.type === 'line') { this.draft.pts[1] = snapAngle(this.draft.pts[0], p); this.renderDraft(); }
           break;
         }
         const last = this.draft.pts[this.draft.pts.length - 1];
+        this.edgeCheck(g, pt);
         if (dist(last, p) * this.scale > 1.5) { this.draft.pts.push(p); this.renderDraft(); }
         if (Math.hypot(pt.x - g.anchor.x, pt.y - g.anchor.y) > 6) { g.anchor = { x: pt.x, y: pt.y }; this.armHold(g); }
         break;
       }
       case 'erase': this.eraseAt(g.last, p); g.last = p; break;
       case 'seg':
-        if (Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, p] }; this.renderDraft(); }
+        if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, p] }; this.renderDraft(); this.edgeCheck(g, pt); }
         break;
       case 'seg2': case 'poly': case 'text':
         if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 10) {
@@ -687,6 +743,10 @@ class Viewer {
   onUp(e, cancelled = false) {
     const pt = this.local(e);
     this.ptrs.delete(e.pointerId);
+    if (this.assist) {
+      if (this.assist.pts.delete(e.pointerId)) { if (this.assist.pts.size) this.assistReset(); else this.assist = null; return; }
+      this.assist = null; // האצבע הראשונה עזבה: ממשיכים רגיל (היד השנייה כבר לא משפיעה)
+    }
     if (this.pinch) {
       if (this.ptrs.size < 2) {
         const pm = this.pinch;
@@ -880,11 +940,13 @@ class Viewer {
     const own = it.ownerId && (this.calList || []).find((c) => c.page === page && c.ownerId === it.ownerId);
     return own || this.calibs.get(page);
   }
+  refScale() { return 380 / Math.min(this.pw, this.ph); } // קנה מידה ייחוס (פיקסלים לנקודת עמוד ברוחב מסך רגיל)
   calId(pg) { const me = S.hooks.owner(); return me ? `${this.version.id}:${pg}:${me}` : `${this.version.id}:${pg}`; }
   // גודל כיתוב מדידה לא תלוי ברמת הזום: בין 12 ל-30 פיקסלים על המסך
   fixedMeasure(it) {
     if (it.type !== 'measure' && it.type !== 'area' && !(it.type === 'polyline' && it.showLen)) return it;
     const sc = this.scale || 1;
+    if (it.tsz) return { ...it, fontSize: it.tsz / this.refScale() }; // גודל שנקבע ידנית: לא מוגבל
     return { ...it, fontSize: clamp(it.fontSize || 15 / sc, 12 / sc, 30 / sc) };
   }
   async exportXlsx() {
@@ -954,7 +1016,12 @@ class Viewer {
       if (!d.fromPen && (type === 'rect' || type === 'ellipse')) { it.fill = prefs.fill; it.fillOp = prefs.fillOp; }
       if (type === 'polyline') { it.fontSize = 14 / (380 / Math.min(this.pw, this.ph)); if (d.closed) it.closed = true; }
     }
-    if (type === 'measure' || type === 'area') { it.color = '#d81b60'; it.width = 2.5 / sc; it.fontSize = 15 / (380 / Math.min(this.pw, this.ph)); if (this.measTitle) it.title = this.measTitle; }
+    if (type === 'measure' || type === 'area') {
+      const ref = this.refScale();
+      it.color = prefs.mcolor || '#d81b60'; it.width = (prefs.mw || 2.5) / ref; it.fontSize = 15 / ref; it.tcolor = prefs.mtcolor || '#111111';
+      if (prefs.mtsize) { it.tsz = prefs.mtsize; it.fontSize = prefs.mtsize / ref; }
+      if (this.measTitle) it.title = this.measTitle;
+    }
     if (type === 'link') { it.color = '#1d4e89'; it.width = 2 / sc; it.fontSize = 14 / sc; }
     return it;
   }

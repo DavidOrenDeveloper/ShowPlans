@@ -1062,4 +1062,10 @@ export const EN = {
  "כיול דורש הרשאת סימון בתוכנית": "Calibration requires mark permission on the plan",
  "שתף את הכיול עם העובדים (אחרת הכיול שלי בלבד)": "Share this calibration with workers (otherwise mine only)",
  "ייצוא מדידות לאקסל": "Export measurements to Excel",
+ "עיצוב מדידה": "Measurement style",
+ "עיצוב המדידה הנבחרת": "Style of selected measurement",
+ "עיצוב למדידה הבאה": "Style for next measurement",
+ "קו המדידה": "Measurement line",
+ "הכיתוב (המרחק)": "Label (distance)",
+ "גודל כיתוב": "Label size",
 };

@@ -125,6 +125,63 @@ export function installStyle(V) {
     },
     togglePanel() { this.styleOpen = !this.styleOpen; this.renderProps(); },
 
+    // ---------- עיצוב מדידה: קו וכיתוב בנפרד ----------
+    measGet(k) {
+      const sel = this.selected && (this.selected.type === 'measure' || this.selected.type === 'area') ? this.selected : null, ref = this.refScale();
+      if (sel) return { color: sel.color, width: sel.width * ref, tcolor: sel.tcolor || '#111111', tsize: sel.tsz || Math.round(Math.max(12, Math.min(30, (sel.fontSize || 15 / ref) * this.scale))) }[k];
+      return { color: prefs.mcolor || '#d81b60', width: prefs.mw || 2.5, tcolor: prefs.mtcolor || '#111111', tsize: prefs.mtsize || 15 }[k];
+    },
+    measSet(k, val, live = false) {
+      const sel = this.selected && (this.selected.type === 'measure' || this.selected.type === 'area') ? this.selected : null, ref = this.refScale();
+      if (sel && !this.canEditItem(sel)) return;
+      if (sel) {
+        const mut = (it) => {
+          if (k === 'color') it.color = val;
+          else if (k === 'width') it.width = val / ref;
+          else if (k === 'tcolor') it.tcolor = val;
+          else if (k === 'tsize') { it.tsz = val; it.fontSize = val / ref; }
+        };
+        if (live) this.liveEdit(mut); else this.modifySelected(mut);
+        return;
+      }
+      prefs[{ color: 'mcolor', width: 'mw', tcolor: 'mtcolor', tsize: 'mtsize' }[k]] = val;
+      savePrefs();
+      if (!live) this.renderProps();
+    },
+    measStyleBtn() {
+      return h('button', { class: 'btn sm' + (this.measOpen ? ' primary' : ''), onclick: () => { this.measOpen = !this.measOpen; this.renderMeasPanel(); } }, icon('sliders', 16), tr('עיצוב מדידה'));
+    },
+    renderMeasPanel() {
+      if (this.measPanel) { this.measPanel.remove(); this.measPanel = null; }
+      const isM = this.tool === 'measure' || this.tool === 'area' || (this.selected && (this.selected.type === 'measure' || this.selected.type === 'area'));
+      if (!this.measOpen || !isM) return;
+      const colorRow = (k) => {
+        const cur = this.measGet(k), row = h('div', { class: 'st-row' });
+        COLORS.forEach((c) => row.append(this.swatch(c, cur === c, () => { this.measSet(k, c); this.renderMeasPanel(); })));
+        const inp = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(cur || '') ? cur : '#d81b60', 'aria-label': tr('צבע מותאם אישית') });
+        inp.addEventListener('input', () => this.measSet(k, inp.value, true));
+        inp.addEventListener('change', () => { if (this.selected) this.commitEdit(); else this.measSet(k, inp.value); });
+        row.append(h('label', { class: 'sw custom', title: tr('צבע מותאם אישית') }, inp));
+        return row;
+      };
+      const num = (k, min, max, step) => {
+        const out = h('b', { class: 'st-v' }, String(Math.round(this.measGet(k) * 10) / 10));
+        const r = h('input', { type: 'range', min, max, step, value: this.measGet(k), 'aria-label': k });
+        r.addEventListener('input', () => { out.textContent = r.value; this.measSet(k, +r.value, true); });
+        r.addEventListener('change', () => { if (this.selected) this.commitEdit(); else this.measSet(k, +r.value); });
+        return h('label', { class: 'st-slider' }, h('span', {}, ''), r, out);
+      };
+      const sec = (title, ...kids) => h('div', { class: 'st-sec' }, h('div', { class: 'st-t' }, title), ...kids);
+      const lw = num('width', 0.5, 12, 0.5), ts = num('tsize', 6, 60, 1);
+      lw.firstChild.textContent = tr('עובי קו'); ts.firstChild.textContent = tr('גודל כיתוב');
+      this.measPanel = h('div', { class: 'v-style' },
+        h('div', { class: 'st-head' }, h('b', {}, this.selected ? tr('עיצוב המדידה הנבחרת') : tr('עיצוב למדידה הבאה')),
+          h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור'), onclick: () => { this.measOpen = false; this.renderMeasPanel(); this.renderProps(); } }, icon('x', 18))),
+        sec(tr('קו המדידה'), colorRow('color'), lw),
+        sec(tr('הכיתוב (המרחק)'), colorRow('tcolor'), ts));
+      this.mid.append(this.measPanel);
+    },
+
     // ---------- סרגל מאפיינים ----------
     renderProps() {
       const p = this.props;
@@ -170,6 +227,7 @@ export function installStyle(V) {
       if (t === 'pen' && !sel) row.push(h('small', { class: 'hint-inline' }, tr('החזקה בסוף הקו מיישרת לקו ישר או לצורה')));
       if (t === 'text' && !sel) row.push(h('small', { class: 'hint-inline' }, tr('הקישו על התוכנית להוספת טקסט')));
       if (t === 'eraser') row.push(h('small', { class: 'hint-inline' }, tr('גררו על סימונים כדי למחוק אותם (אפשר לבטל)')));
+      if (t === 'measure' || t === 'area' || (sel && (sel.type === 'measure' || sel.type === 'area'))) row.push(this.measStyleBtn());
       if (t === 'measure' || t === 'area' || t === 'calibrate' || (sel && (sel.type === 'measure' || sel.type === 'area'))) {
         const cal = this.calibs.get(this.pageNum);
         const u = h('select', { 'aria-label': tr('יחידות'), onchange: () => { prefs.unit = u.value; savePrefs(); this.renderItems(); } },
@@ -210,6 +268,7 @@ export function installStyle(V) {
       p.classList.toggle('has', row.length > 0);
       p.append(...row);
       this.renderStylePanel();
+      this.renderMeasPanel();
     },
 
     // ---------- פאנל עיצוב מלא ----------
