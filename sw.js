@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.12.0';
+const VERSION = '1.12.1';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -65,8 +65,7 @@ const CORE = [
   "lib/pdfjs/pdf.worker.min.mjs",
   "lib/supabase.js",
   "manifest-en.webmanifest",
-  "manifest.webmanifest",
-  "pglast-8.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+  "manifest.webmanifest"
 ];
 const EXTRA = [
   "lib/pdfjs/iccs/CGATS001Compat-v2-micro.icc",
