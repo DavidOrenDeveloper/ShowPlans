@@ -881,7 +881,11 @@ class Viewer {
     this.stage.dataset.tool = this.tool;
   }
   toolDown(pt, e) {
-    if (this.autoSel) { if (this.selected === this.autoSel && this.tool !== 'select') this.select(null); this.autoSel = null; }
+    if (this.autoSel) {
+      const fs = this.selected === this.autoSel && this.tool !== 'select';
+      if (fs) { const it = this.selected; this.select(null); this.dropFreshText(it); }
+      this.autoSel = null;
+    }
     const p = this.toPage(pt);
     const base = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false };
     switch (this.tool) {
@@ -1018,7 +1022,7 @@ class Viewer {
     };
     const kind = kindOf(type);
     if (kind === 'text') {
-      it.color = prefs.tcolor; it.op = prefs.top; it.text = d.text || ''; it.fontSize = prefs.tsize / sc; it.width = 1 / sc;
+      it.color = prefs.tcolor; it.op = prefs.top; if (prefs.tbg) { it.bg = prefs.tbg; it.bgOp = prefs.tbgop; } it.text = d.text || ''; it.fontSize = prefs.tsize / sc; it.width = 1 / sc;
     } else if (kind === 'hl') {
       it.color = prefs.hcolor; it.fillOp = prefs.hop; it.width = 1 / sc;
     } else if (kind === 'shape') {
@@ -1125,13 +1129,25 @@ class Viewer {
 
   // ---------- טקסט ושטח ----------
   async placeText(p) {
-    const v = await UI.promptBox({ title: tr('טקסט על התוכנית'), multiline: true, placeholder: tr('הקלד הערה…'), okText: tr('הוסף') });
-    if (!v) return;
-    const it = this.newItem({ type: 'text', pts: [p], text: v });
+    // הטקסט נוצר מיד על התוכנית עם טקסט לדוגמה: מקלידים בשדה בסרגל וצבע/גודל מתעדכנים בזמן אמת על התוכנית
+    const ph = tr('טקסט');
+    const it = this.newItem({ type: 'text', pts: [p], text: ph });
     await this.addItem(it);
-    // עוברים לבחירה: אפשר מיד לשנות גודל (צביטה, ידית בפינה או מספר), צבע ושקיפות
-    this.tool = 'select'; this.updateToolUI(); this.select(it);
-    if (!prefs.tipText) { prefs.tipText = 1; savePrefs(); UI.toast(tr('לשינוי גודל: צביטה עם שתי אצבעות על הטקסט, גרירת העיגול בפינה, או מספר בסרגל'), { ms: 5000 }); }
+    if (!this.items[it.layer].includes(it)) return;
+    this.freshText = { id: it.id, ph };
+    this.autoSel = it; this.select(it);
+    const inp = this.props.querySelector('.txt-inline');
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  // טקסט שנוצר ולא נכתב בו כלום (נשאר "טקסט") נמחק בשקט כשמתחילים טקסט אחר
+  async dropFreshText(it) {
+    const f = this.freshText; this.freshText = null;
+    if (!f || !it || it.id !== f.id || (it.text !== f.ph && it.text !== '')) return;
+    this.selected = null;
+    await this.setItemState(it, null);
+    const h2 = this.history[this.history.length - 1];
+    if (h2 && h2.after && h2.after.id === it.id && !h2.before) this.history.pop();
+    this.updateUndo(); this.renderItems();
   }
   // אם נבחר פריט – משנים אותו. אחרת – מעדכנים את ברירת המחדל.
   orthoPt(p) {

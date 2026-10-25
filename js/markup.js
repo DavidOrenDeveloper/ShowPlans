@@ -159,6 +159,10 @@ export function drawItem(it, cx) {
       // כל שורה נבנית בנפרד עם הכיוון שלה (שורה בעברית מיושרת לימין התיבה, שורה באנגלית לשמאלה)
       const lines = String(it.text || '').split('\n');
       const bx = textBox(it);
+      if (it.bg) { // רקע לטקסט (כמו סימון צבע ברקע במעבד תמלילים)
+        const pd = it.fontSize * 0.2;
+        g.append(svg('rect', { x: bx.x0 - pd, y: bx.y0 - pd * 0.4, width: bx.x1 - bx.x0 + pd * 2, height: bx.y1 - bx.y0 + pd * 0.8, fill: it.bg, opacity: it.bgOp == null ? 1 : it.bgOp, rx: pd * 0.6 }));
+      }
       lines.forEach((ln, i) => {
         const rtl = isRTL(ln);
         const x = rtl ? bx.x1 : bx.x0;

@@ -1068,4 +1068,7 @@ export const EN = {
  "קו המדידה": "Measurement line",
  "הכיתוב (המרחק)": "Label (distance)",
  "גודל כיתוב": "Label size",
+ "הקלד טקסט…": "Type text\u2026",
+ "רקע לטקסט": "Text background",
+ "שקיפות רקע": "Background opacity",
 };

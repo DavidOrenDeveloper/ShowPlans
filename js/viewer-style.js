@@ -15,7 +15,7 @@ const SH_DIALOG = (v, o) => SH.shareDialog(v, o);
 const TOOL_KIND = { pen: 'shape', line: 'shape', polyline: 'shape', arrow: 'shape', rect: 'shape', ellipse: 'shape', text: 'text', highlight: 'hl' };
 const PREF_KEYS = {
   shape: { color: 'color', fill: 'fill', fillOp: 'fillOp', op: 'op', width: 'w' },
-  text: { color: 'tcolor', op: 'top' },
+  text: { color: 'tcolor', op: 'top', bg: 'tbg', bgOp: 'tbgop' },
   hl: { color: 'hcolor', fillOp: 'hop' },
 };
 const FILL_COLORS = [...COLORS.slice(0, 5), '#ffffff', '#111111'];
@@ -39,6 +39,8 @@ export function installStyle(V) {
           case 'op': return sel.op == null ? 1 : sel.op;
           case 'width': return Math.round(sel.width * this.scale * 10) / 10;
           case 'size': return sel.fontSize;
+          case 'bg': return sel.bg || null;
+          case 'bgOp': return sel.bgOp == null ? 1 : sel.bgOp;
           default: return undefined;
         }
       }
@@ -68,6 +70,8 @@ export function installStyle(V) {
             case 'op': it.op = val; break;
             case 'width': it.width = val / this.scale; break;
             case 'size': it.fontSize = val; break;
+            case 'bg': if (val) it.bg = val; else delete it.bg; break;
+            case 'bgOp': it.bgOp = val; break;
             default: break;
           }
         };
@@ -110,7 +114,7 @@ export function installStyle(V) {
     colorRow(key, { none = false, palette = COLORS } = {}) {
       const cur = this.getStyle(key);
       const row = h('div', { class: 'st-row' });
-      if (none) row.append(this.swatch(null, cur == null || cur === 'none', () => this.setStyle(key, key === 'fill' ? null : 'none'), 'none'));
+      if (none) row.append(this.swatch(null, cur == null || cur === 'none' || (key === 'bg' && !cur), () => this.setStyle(key, key === 'fill' ? null : key === 'bg' ? '' : 'none'), 'none'));
       palette.forEach((c) => row.append(this.swatch(c, cur === c, () => this.setStyle(key, c))));
       row.append(this.customColor(key));
       return row;
@@ -257,7 +261,13 @@ export function installStyle(V) {
       }
       if (t === 'calibrate') row.push(h('button', { class: 'btn sm', onclick: () => { this.tool = 'pan'; this.draft = null; this.renderDraft(); this.updateToolUI(); this.renderProps(); } }, tr('ביטול כיול')));
       if (sel) {
-        if (sel.type === 'text') row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: tr('עריכת טקסט'), multiline: true, value: sel.text, okText: tr('שמור') }); if (v) this.modifySelected((it) => { it.text = v; }); } }, icon('edit', 16), tr('ערוך')));
+        if (sel.type === 'text') {
+          const ta = h('textarea', { class: 'txt-inline', rows: 1, placeholder: tr('הקלד טקסט…'), 'aria-label': tr('טקסט') }, sel.text || '');
+          ta.value = sel.text || '';
+          ta.addEventListener('input', () => { this.liveEdit((it) => { it.text = ta.value; }); ta.style.height = 'auto'; ta.style.height = Math.min(110, ta.scrollHeight) + 'px'; });
+          ta.addEventListener('change', () => { if (this.freshText && this.freshText.id === sel.id && ta.value && ta.value !== this.freshText.ph) this.freshText = null; this.commitEdit(); });
+          row.unshift(ta);
+        }
         if (sel.type === 'polyline') row.push(h('button', { class: 'btn sm' + (sel.showLen ? ' primary' : ''), onclick: () => { if (!sel.showLen && !this.calibs.get(this.pageNum)) { UI.toast(tr('כדי להציג אורך צריך להגדיר סקאלה או כיול לעמוד')); this.calibrateDialog(); return; } this.modifySelected((it) => { it.showLen = !it.showLen; }); } }, icon('ruler', 16), tr('הצג אורך')));
         if (sel.type === 'link') {
           row.push(h('button', { class: 'btn sm', onclick: () => this.followLink(sel) }, tr('פתח')));
@@ -292,6 +302,7 @@ export function installStyle(V) {
         body.push(sec(tr('הדגשה'), this.colorRow('color'), this.slider(tr('שקיפות'), 'fillOp', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
       } else if (kind === 'text') {
         body.push(sec(tr('טקסט'), this.colorRow('color'), this.slider(tr('שקיפות טקסט'), 'op', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
+        body.push(sec(tr('רקע לטקסט'), this.colorRow('bg', { none: true, palette: ['#fff59d', '#ffffff', '#ffcc80', '#a5d6a7', '#90caf9', '#f48fb1', '#111111'] }), this.slider(tr('שקיפות רקע'), 'bgOp', { min: 0.1, max: 1, step: 0.05, fmt: pct })));
         if (sel) {
           const num = h('input', { type: 'number', class: 'num sz', min: 2, max: 2000, step: 1, value: Math.round(sel.fontSize), 'aria-label': tr('גודל טקסט') });
           const range = h('input', { type: 'range', min: 4, max: 400, step: 1, value: Math.min(400, Math.round(sel.fontSize)), 'aria-label': tr('גודל טקסט') });
