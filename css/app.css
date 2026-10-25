@@ -567,3 +567,4 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
   .picker-row .nm { white-space: normal; overflow-wrap: break-word; }
 }
 @media (max-width: 700px) { .grid.folders { grid-template-columns: 1fr; } .card.folder .meta { min-width: 90px; } }
+.txt-inline { flex: 1 1 180px; min-width: 140px; max-width: 360px; resize: none; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; line-height: 1.3; }
