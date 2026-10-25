@@ -109,7 +109,7 @@ button.twisty:hover { background: rgba(0,0,0,.08); }
 .ver-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 /* ---------- מסך הקבצים ---------- */
-.app-shell { display: grid; grid-template-columns: 300px 1fr; height: 100dvh; }
+.app-shell { display: grid; grid-template-columns: clamp(300px, 24vw, 420px) 1fr; height: 100dvh; }
 .sidebar { background: var(--ink); color: #e5e9ee; display: flex; flex-direction: column; min-height: 0; padding-top: var(--safe-t); z-index: 30; }
 .sb-head { display: flex; gap: 12px; align-items: center; padding: 16px 16px 10px; }
 .sb-head small { display: block; color: #9aa7b4; font-size: 12px; }
@@ -558,3 +558,12 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 .grant-row.sel { background: #eef4fb; border-color: var(--blue); }
 .wa-ck { width: 20px; height: 20px; flex: none; }
 .meas-title { width: 150px; min-width: 110px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+
+/* שמות תיקיות: עד 3 שורות במקום קיצור עם שלוש נקודות */
+.card.folder .meta .name:not(.open) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; white-space: normal; overflow: hidden; overflow-wrap: anywhere; }
+.grid.folders { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+@media (pointer: fine) {
+  .tree-row .nm { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow-wrap: anywhere; }
+  .picker-row .nm { white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 700px) { .grid.folders { grid-template-columns: 1fr 1fr; } }
