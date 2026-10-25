@@ -560,10 +560,10 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 .meas-title { width: 150px; min-width: 110px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 
 /* שמות תיקיות: עד 3 שורות במקום קיצור עם שלוש נקודות */
-.card.folder .meta .name:not(.open) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; white-space: normal; overflow: hidden; overflow-wrap: anywhere; }
+.card.folder .meta .name:not(.open) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; white-space: normal; overflow: hidden; overflow-wrap: break-word; word-break: normal; }
 .grid.folders { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 @media (pointer: fine) {
-  .tree-row .nm { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow-wrap: anywhere; }
-  .picker-row .nm { white-space: normal; overflow-wrap: anywhere; }
+  .tree-row .nm { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow-wrap: break-word; }
+  .picker-row .nm { white-space: normal; overflow-wrap: break-word; }
 }
-@media (max-width: 700px) { .grid.folders { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px) { .grid.folders { grid-template-columns: 1fr; } .card.folder .meta { min-width: 90px; } }
