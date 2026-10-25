@@ -26,16 +26,18 @@ export function syncStatus() {
 const emitStatus = () => subs.forEach((f) => { try { f(syncStatus()); } catch { /* ignore */ } });
 
 // ---------- התקדמות העלאה (פס ירוק עם זמן משוער) ----------
-const prog = { on: false, finished: false, total: 0, done: 0, bytes: 0, bytesDone: 0, curSent: 0, cur: '', start: 0, tick: 0, last: 0 };
+const prog = { on: false, finished: false, total: 0, done: 0, bytes: 0, bytesDone: 0, curSent: 0, cur: '', start: 0, tick: 0, last: 0, ids: new Set() };
 const progSubs = new Set();
 export const onProgress = (fn) => { progSubs.add(fn); return () => progSubs.delete(fn); };
 export function progressInfo() {
   if (!prog.on) return { on: false };
   const sent = Math.min(prog.bytes, prog.bytesDone + prog.curSent);
   const elapsed = (Date.now() - prog.start) / 1000;
+  // לפי בתים; אם אין גדלים – לפי מספר הקבצים
+  const frac = prog.bytes ? sent / prog.bytes : (prog.total ? prog.done / prog.total : 0);
   let eta = null;
-  if (!prog.finished && sent > 0 && elapsed >= 3) eta = Math.max(0, Math.round(((prog.bytes - sent) / (sent / elapsed))));
-  const pct = prog.finished ? 100 : (prog.bytes ? Math.min(99, Math.floor((sent / prog.bytes) * 100)) : 0);
+  if (!prog.finished && frac > 0 && elapsed >= 3) eta = Math.max(0, Math.round(elapsed * (1 - frac) / frac));
+  const pct = prog.finished ? 100 : Math.min(99, Math.floor(frac * 100));
   return { on: true, finished: prog.finished, total: prog.total, done: prog.done, pct, eta, cur: prog.cur, sent, bytes: prog.bytes };
 }
 function emitProgress(force = false) {
@@ -45,14 +47,20 @@ function emitProgress(force = false) {
   const info = progressInfo();
   progSubs.forEach((f) => { try { f(info); } catch { /* ignore */ } });
 }
+// ההתקדמות מצטברת: אם העלאה כבר רצה, קבצים חדשים נוספים לסך הכל (ולא מתחילים ספירה מחדש), כך שהזמן שנותר מתייחס לכל הקבצים ולא רק לנוכחי
 function startProgress(list) {
+  if (prog.on && !prog.finished) {
+    for (const v of list) if (!prog.ids.has(v.id)) { prog.ids.add(v.id); prog.total++; prog.bytes += v.size || 0; }
+    emitProgress(true); return;
+  }
   clearInterval(prog.tick);
-  Object.assign(prog, { on: true, finished: false, total: list.length, done: 0, bytes: list.reduce((a, v) => a + (v.size || 0), 0), bytesDone: 0, curSent: 0, cur: '', start: Date.now() });
+  Object.assign(prog, { on: true, finished: false, ids: new Set(list.map((v) => v.id)), total: list.length, done: 0, bytes: list.reduce((a, v) => a + (v.size || 0), 0), bytesDone: 0, curSent: 0, cur: '', start: Date.now() });
   prog.tick = setInterval(() => emitProgress(true), 1000); // לעדכון הזמן שנותר גם כשאין תנועה
   emitProgress(true);
 }
 function endProgress(ok) {
   if (!prog.on) return;
+  if (ok && st.again) return; // יש עוד סבב מיד: ממשיכים באותה התקדמות
   clearInterval(prog.tick);
   if (ok) {
     prog.finished = true; prog.done = prog.total; emitProgress(true);
@@ -228,7 +236,7 @@ async function pushPlans() {
 }
 async function pushVersions() {
   const list = [...S.P.versions.values()].filter((v) => v._d);
-  const uploads = list.filter((v) => !v.driveId && S.R.plans.get(v.planId)?._s);
+  const uploads = list.filter((v) => !v.driveId); // כולל תוכניות שעוד לא נדחפו לענן, כדי שהסך הכל יהיה ידוע מראש
   if (uploads.length) startProgress(uploads);
   for (const v of list) {
     const plan = S.R.plans.get(v.planId);

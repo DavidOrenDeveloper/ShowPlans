@@ -285,7 +285,10 @@ function clearSel(render = true) { st.sel.clear(); st.selMode = false; if (rende
 function toggleSel(k) {
   st.sel.has(k) ? st.sel.delete(k) : st.sel.add(k);
   st.selMode = st.sel.size > 0;
-  renderAll();
+  // עדכון במקום, בלי לבנות את כל הרשימה מחדש: כך המסך לא קופץ לראש הרשימה בכל בחירה
+  const on = st.sel.has(k);
+  el.content.querySelectorAll('[data-key]').forEach((n) => { if (n.dataset.key === k) n.classList.toggle('selected', on); });
+  renderSelbar();
 }
 function renderSelbar() {
   const n = st.sel.size;
@@ -309,7 +312,9 @@ function renderSelbar() {
 function selectAll() {
   S.childFolders(st.folderId).forEach((f) => st.sel.add(key('f', f.id)));
   S.plansIn(st.folderId).forEach((p) => st.sel.add(key('p', p.id)));
-  st.selMode = st.sel.size > 0; renderAll();
+  st.selMode = st.sel.size > 0;
+  el.content.querySelectorAll('[data-key]').forEach((n) => { if (st.sel.has(n.dataset.key)) n.classList.add('selected'); });
+  renderSelbar();
 }
 async function batchRename(o) {
   if (o.folders.length + o.plans.length === 1) {
@@ -616,7 +621,7 @@ function folderCard(f) {
     h('div', { class: 'meta' }, h('div', { class: 'name', title: f.name }, dn(f.name)), ovTags(f), h('div', { class: 'sub' }, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length) + (d.plans.length !== S.plansIn(f.id).length ? tr(' ({0} בסה״כ)', d.plans.length) : ''))),
     manual ? h('div', { class: 'reord' },
       h('button', { 'aria-label': tr('הזז למעלה'), disabled: idx <= 0, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, -1); } }, icon('chevU', 18)),
-      h('button', { 'aria-label': tr('הזז למטה'), disabled: idx >= sibs.length - 1, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, 1); } }, icon('chevD', 18))) : null,
+      h('button', { 'aria-label': tr('הזז למטה'), disabled: idx >= sibs.length - 1, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, 1); } }, icon('chevD', 18))) : '',
     h('button', { class: 'icon-btn more', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more')));
   card.dataset.nav = '#/f/' + f.id;
   card.addEventListener('click', clickGuard(card, () => { location.hash = '#/f/' + f.id; }, k));
