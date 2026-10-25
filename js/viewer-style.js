@@ -4,7 +4,7 @@ import { t as tr } from './i18n.js';
 import { h, icon, clone } from './util.js';
 import * as UI from './ui.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
-import { kindOf, canFill, hasFill, isNoStroke } from './markup.js';
+import { kindOf, canFill, hasFill, isNoStroke, boundsOf } from './markup.js';
 import * as SH from './item-share-ui.js';
 import { itemAccess } from './cloud-sync.js';
 
@@ -128,6 +128,26 @@ export function installStyle(V) {
       return h('label', { class: 'st-slider' }, h('span', {}, label), r, out);
     },
     togglePanel() { this.styleOpen = !this.styleOpen; this.renderProps(); },
+
+    // כשחלונית עיצוב פתוחה: מזיזים את התוכנית כך שהפריט הנבחר יישאר גלוי מעל החלונית וראוים השינויים בזמן אמת
+    ensureSelVisible() {
+      const sel = this.selected, box = this.stylePanel || this.measPanel;
+      if (!box) { if (this.bottomPad) { this.bottomPad = 0; this.setView(this.scale, this.tx, this.ty); } return; }
+      if (!sel || !this.page || !sel.pts) return;
+      requestAnimationFrame(() => {
+        if (!this.selected || this.selected.id !== sel.id || !box.isConnected) return;
+        const sr = this.stage.getBoundingClientRect(), pr = box.getBoundingClientRect();
+        const top = Math.max(60, 0), bottom = pr.top - sr.top - 10, W = this.stage.clientWidth;
+        if (bottom < 80) return;
+        this.bottomPad = this.H;
+        const b = boundsOf(this.selected), s = this.scale;
+        const x0 = this.tx + b.x0 * s, x1 = this.tx + b.x1 * s, y0 = this.ty + b.y0 * s, y1 = this.ty + b.y1 * s;
+        let dy = 0, dx = 0;
+        if (y1 > bottom || y0 < top) dy = y1 - y0 > bottom - top ? top - y0 : (top + bottom) / 2 - (y0 + y1) / 2;
+        if (x1 > W - 8 || x0 < 8) dx = x1 - x0 > W - 16 ? 8 - x0 : W / 2 - (x0 + x1) / 2;
+        if (dx || dy) this.setView(s, this.tx + dx, this.ty + dy);
+      });
+    },
 
     // ---------- עיצוב מדידה: קו וכיתוב בנפרד ----------
     measGet(k) {
@@ -281,6 +301,7 @@ export function installStyle(V) {
       p.append(...row);
       this.renderStylePanel();
       this.renderMeasPanel();
+      this.ensureSelVisible();
     },
 
     // ---------- פאנל עיצוב מלא ----------

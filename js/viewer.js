@@ -353,10 +353,11 @@ class Viewer {
     tx = pw <= this.vw ? (this.vw - pw) / 2 : clamp(tx, this.vw - pw - M, M);
     if (this.cont) { // גלילה רציפה: מותר לגלול עד סוף העמוד הסמוך
       const up = this.layerP.page ? (this.layerP.ph + GAP) * s : 0, dn = this.layerN.page ? (this.layerN.ph + GAP) * s : 0;
-      ty = clamp(ty, this.H - ph - M - dn, M + up);
+      ty = clamp(ty, this.H - ph - M - dn - (this.bottomPad || 0), M + up);
       return [tx, ty];
     }
-    ty = ph <= this.H ? (this.H - ph) / 2 : clamp(ty, this.H - ph - M, M);
+    const bp = this.bottomPad || 0; // מקום נוסף למטה כשחלונית העיצוב פתוחה, כדי שאפשר יהיה להעלות פריט מעליה
+    ty = ph <= this.H ? (bp ? clamp(ty, (this.H - ph) / 2 - bp, (this.H - ph) / 2) : (this.H - ph) / 2) : clamp(ty, this.H - ph - M - bp, M);
     return [tx, ty];
   }
   setView(scale, tx, ty, { keepFit = false } = {}) {
@@ -882,7 +883,7 @@ class Viewer {
   }
   toolDown(pt, e) {
     if (this.autoSel) {
-      const fs = this.selected === this.autoSel && this.tool !== 'select';
+      const fs = this.selected && this.selected.id === this.autoSel && this.tool !== 'select';
       if (fs) { const it = this.selected; this.select(null); this.dropFreshText(it); }
       this.autoSel = null;
     }
@@ -935,13 +936,14 @@ class Viewer {
   canShareHere() { return isCloud() && (isAdmin() || CS.canEditPlanItems(this.planId)); }
   async reloadItems() {
     const ver = this.version; if (!ver) return;
-    if (this.gesture || this.draft) { clearTimeout(this._ri); this._ri = setTimeout(() => this.reloadItems(), 800); return; }
+    if (this.gesture || this.draft || this._editBefore) { clearTimeout(this._ri); this._ri = setTimeout(() => this.reloadItems(), 800); return; }
     const [mk, ms, ln, cal] = await Promise.all(['markups', 'measurements', 'links', 'calibrations'].map((s) => db.byIndex(s, 'versionId', ver.id)));
     if (this.version !== ver) return;
     this.items = { markups: mk, measurements: ms, links: ln };
     this.setCals(cal);
     if (this.selected) this.selected = [...mk, ...ms, ...ln].find((x) => x.id === this.selected.id) || null;
-    this.renderItems(); this.renderProps();
+    this.renderItems();
+    if (!(document.activeElement && document.activeElement.classList.contains('txt-inline'))) this.renderProps(); // לא מאפסים שדה טקסט שמקלידים בו
   }
   // כיולים: לכל משתמש כיול משלו. כיול שלי > כיול ישן (לפני הפיצול) > כיול שהמנהל שיתף. מדידה של מישהו אחר מוצגת לפי הכיול שלו
   setCals(list) {
@@ -1045,7 +1047,7 @@ class Viewer {
     const it = this.newItem(d);
     await this.addItem(it);
     // הפריט שנוצר נשאר נבחר: שינוי צבע/גודל חל עליו, ורק נגיעה במקום אחר מתחילה פריט חדש
-    if (this.items[it.layer].includes(it)) { this.autoSel = it; this.select(it, true); }
+    if (this.items[it.layer].includes(it)) { this.autoSel = it.id; this.select(it, true); }
     this.renderDraft(); this.renderProps();
   }
   async addItem(it) {
@@ -1135,7 +1137,7 @@ class Viewer {
     await this.addItem(it);
     if (!this.items[it.layer].includes(it)) return;
     this.freshText = { id: it.id, ph };
-    this.autoSel = it; this.select(it);
+    this.autoSel = it.id; this.select(it);
     const inp = this.props.querySelector('.txt-inline');
     if (inp) { inp.focus(); inp.select(); }
   }
