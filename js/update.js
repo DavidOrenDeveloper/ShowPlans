@@ -76,3 +76,40 @@ export async function checkForUpdate() {
   UI.toast(tr('גרסה {0} הותקנה – טוען מחדש…', v));
   setTimeout(() => location.reload(), 900);
 }
+
+// ---------- הודעת "יש גרסה חדשה" לכל המשתמשים ----------
+let bannerEl = null;
+export function showUpdateBanner(version) {
+  if (bannerEl) { const b = bannerEl.querySelector('.ub-v'); if (b && version) b.textContent = tr('גרסה {0}', version); return; }
+  const apply = () => {
+    try { if (version) localStorage.setItem(KEY, version); } catch { /* ignore */ }
+    location.reload();
+  };
+  bannerEl = document.createElement('div');
+  bannerEl.className = 'update-banner';
+  bannerEl.setAttribute('role', 'status');
+  bannerEl.innerHTML = '<div class="ub-t"><b>' + tr('יש גרסה חדשה של האפליקציה') + '</b><small class="ub-v"></small></div>';
+  bannerEl.querySelector('.ub-v').textContent = version ? tr('גרסה {0}', version) : '';
+  const ok = document.createElement('button'); ok.className = 'ub-go'; ok.textContent = tr('עדכן עכשיו'); ok.onclick = apply;
+  const later = document.createElement('button'); later.className = 'ub-x'; later.textContent = '✕'; later.setAttribute('aria-label', tr('אחר כך'));
+  later.onclick = () => { bannerEl.classList.remove('show'); const el = bannerEl; setTimeout(() => el.remove(), 250); bannerEl = null; };
+  bannerEl.append(ok, later);
+  document.body.append(bannerEl);
+  requestAnimationFrame(() => bannerEl && bannerEl.classList.add('show'));
+}
+
+// מופעל בעליית האפליקציה: מזהה גרסה חדשה (גם כשהאפליקציה פתוחה זמן רב) ומציג הודעה עם כפתור עדכון
+export function watchForUpdates(reg, hadController) {
+  const announce = async () => {
+    if (window.__updating) return; // עדכון ידני מתבצע כרגע
+    const c = navigator.serviceWorker.controller;
+    const v = (await askWorker(c)) || null;
+    if (v && v === APP_VERSION) return; // העמוד כבר רץ על הגרסה העדכנית
+    showUpdateBanner(v);
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) announce(); });
+  const check = () => { if (navigator.onLine && document.visibilityState === 'visible') reg.update().catch(() => {}); };
+  document.addEventListener('visibilitychange', check);
+  setInterval(check, 15 * 60 * 1000);
+  if (reg.waiting && hadController) announce();
+}

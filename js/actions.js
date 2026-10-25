@@ -193,6 +193,21 @@ export async function addVersionDialog(planId) {
   finally { pb.close(); }
 }
 
+// עריכת תאריך והערה של גרסה קיימת (בלי למחוק ולהעלות מחדש)
+export async function editVersionDialog(versionId) {
+  const v = S.P.versions.get(versionId); if (!v) return false;
+  const date = h('input', { type: 'date', value: v.date || todayISO() });
+  const note = h('input', { type: 'text', value: v.note || '', placeholder: tr('לדוגמה: תיקוני יועץ חשמל') });
+  const r = await UI.modal({
+    title: tr('עריכת גרסה V{0}', v.number),
+    body: h('div', { class: 'form' }, h('label', {}, tr('תאריך הגרסה')), date, h('label', {}, tr('הערה לגרסה')), note),
+    buttons: [{ text: tr('ביטול'), value: false }, { text: tr('שמור'), kind: 'primary', value: true }],
+  });
+  if (!r) return false;
+  try { await S.updateVersion(versionId, { date: date.value || v.date || todayISO(), note: note.value.trim() }); UI.toast(tr('נשמר')); return true; }
+  catch (e) { UI.toast(e.message || tr('השמירה נכשלה'), { type: 'error' }); return false; }
+}
+
 export async function versionsDialog(planId, { onChange } = {}) {
   const plan = S.P.plans.get(planId); if (!plan) return;
   const list = h('div', { class: 'ver-list' });
@@ -213,6 +228,7 @@ export async function versionsDialog(planId, { onChange } = {}) {
           !isCur && canEdit() ? h('button', { class: 'btn sm', onclick: async () => { await S.setCurrentVersion(planId, v.id); render(); onChange?.(); } }, tr('הפוך לנוכחית')) : null,
           !isCur ? h('button', { class: 'btn sm', onclick: () => { m.close(); nav(`#/p/${planId}?v=${plan.currentVersionId}&cmp=${v.id}`); } }, tr('השווה לנוכחית')) : null,
           h('button', { class: 'btn sm', onclick: () => downloadVersion(v.id, `${plan.name}_V${v.number}`) }, tr('הורד')),
+          !canEdit() ? null : h('button', { class: 'btn sm', onclick: async () => { if (await editVersionDialog(v.id)) { render(); onChange?.(); } } }, icon('edit', 16), tr('ערוך תאריך/הערה')),
           !canEdit() ? null : h('button', {
             class: 'btn sm danger', onclick: async () => {
               const only = S.versionsOf(planId).length === 1;

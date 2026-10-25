@@ -1,7 +1,7 @@
 // נקודת הכניסה: אתחול, ניתוב לפי hash, רישום Service Worker
 import { t as tr } from './i18n.js';
 import { swReady, hadController } from './pwa.js';
-import { verifyAfterBoot } from './update.js';
+import { verifyAfterBoot, watchForUpdates } from './update.js';
 import * as S from './store.js';
 import * as UI from './ui.js';
 import * as A from './actions.js';
@@ -67,9 +67,7 @@ async function handleInbox() {
 async function registerSW() {
   const reg = await swReady;
   if (!reg) return;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController && !window.__updating) UI.toast(tr('האפליקציה עודכנה. רעננו את הדף כדי לעבוד עם הגרסה החדשה.'), { ms: 8000 });
-  });
+  watchForUpdates(reg, hadController);
 }
 
 async function main() {

@@ -22,6 +22,7 @@ import { installPrint } from './viewer-print.js';
 import * as CS from './cloud-sync.js';
 import { isCloud, isAdmin } from './cloud.js';
 import { exportMeasurementsXlsx } from './xlsx-export.js';
+import { renderChangesCanvas } from './diffview.js';
 import * as SH from './item-share-ui.js';
 import { SplitHost } from './split.js';
 
@@ -380,6 +381,7 @@ class Viewer {
     this.svg.setAttribute('viewBox', `${-tx / scale} ${-ty / scale} ${vw / scale} ${H / scale}`);
     this.layerA.place(scale, tx, ty, dpr);
     if (this.cmp) this.layerB.place(scale, tx, ty, dpr);
+    if (this.chCanvas) this.chCanvas.style.display = 'none'; // בזמן הזזה/זום מציגים את התוכנית הרגילה, ההדגשה מתעדכנת אחרי שהתנועה נעצרת
     if (this.cont) { this.layerN.place(scale, tx, ty, dpr); this.layerP.place(scale, tx, ty, dpr); }
     if (this.selected || this.draft) { this.renderSel(); this.renderDraft(); }
   }
@@ -391,12 +393,37 @@ class Viewer {
     if (!this.page) return;
     const { scale, tx, ty, W, H, dpr } = this;
     this.layerA.renderDetail(scale, tx, ty, W, H, dpr);
-    if (this.cmp) this.layerB.renderDetail(scale, tx, ty, W, H, dpr);
+    if (this.cmp && this.cmp.mode === 'changes') this.renderChanges();
+    else if (this.cmp) this.layerB.renderDetail(scale, tx, ty, W, H, dpr);
     if (this.cont) {
       const nTop = ty + (this.ph + GAP) * scale, pBot = ty - GAP * scale;
       if (this.layerN.page && nTop < H) this.layerN.renderDetail(scale, tx, ty, W, H, dpr); else this.layerN.removeDetail();
       if (this.layerP.page && pBot > 0) this.layerP.renderDetail(scale, tx, ty, W, H, dpr); else this.layerP.removeDetail();
     }
+  }
+  // הדגשת שינויים (שכבה מחושבת מעל התוכנית)
+  async renderChanges() {
+    const c = this.cmp;
+    if (!c || c.mode !== 'changes' || !this.layerA.page || !this.layerB.page) return;
+    const gen = ++this.chGen || (this.chGen = 1);
+    this._chCancel?.();
+    const { scale, tx, ty, W, H, dpr } = this;
+    let d = Math.min(dpr || 1, 2); while (W * H * d * d > 4.5e6) d *= 0.9;
+    const mk = (L) => ({ page: L.page, k: scale * L.s * d, ox: (tx + L.sx + L.dx * scale) * d, oy: (ty + L.dy * scale) * d });
+    if (this.chBusy) this.chBusy.textContent = tr('מחשב הבדלים…');
+    let cv = null;
+    try { cv = await renderChangesCanvas({ A: mk(this.layerA), B: mk(this.layerB), w: Math.round(W * d), h: Math.round(H * d), emphasis: this.cmpSet.emph, tol: this.cmpSet.tol * d, colA: this.cmpSet.colA, colB: this.cmpSet.colB, onCancel: (f) => { this._chCancel = f; } }); } catch (e) { console.error(e); }
+    if (this.chBusy) this.chBusy.textContent = '';
+    if (!cv || gen !== this.chGen || !this.cmp || this.cmp.mode !== 'changes') return;
+    if (this.scale !== scale || this.tx !== tx || this.ty !== ty) return; // התוכנית זזה בינתיים: חישוב חדש כבר בדרך
+    cv.className = 'cmp-changes';
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    if (this.chCanvas) this.chCanvas.replaceWith(cv); else this.stage.insertBefore(cv, this.svg);
+    this.chCanvas = cv;
+  }
+  hideChanges() {
+    this.chGen = (this.chGen || 0) + 1; this._chCancel?.();
+    if (this.chCanvas) { this.chCanvas.remove(); this.chCanvas = null; }
   }
   // ---------- גלילה רציפה ----------
   placeNeighbors() {
@@ -1661,8 +1688,32 @@ class Viewer {
     if (other) verSel.value = other.id;
     planSel.onchange = () => fillVers();
     const pageIn = h('input', { type: 'number', min: 1, value: this.pageNum, inputMode: 'numeric', class: 'num' });
-    const modeSel = h('select', {}, h('option', { value: 'diff' }, tr('הבדלים (צבעים)')), h('option', { value: 'overlay' }, tr('שקיפות')), h('option', { value: 'split' }, tr('זו לצד זו')));
-    const op = h('input', { type: 'range', min: 0, max: 100, value: 50 });
+    this.cmpSet = this.cmpSet || { emph: 0.6, tol: 1.5, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff' };
+    const modeSel = h('select', {}, h('option', { value: 'changes' }, tr('הדגשת שינויים')), h('option', { value: 'diff' }, tr('הבדלים (צבעים)')), h('option', { value: 'overlay' }, tr('שקיפות')), h('option', { value: 'split' }, tr('זו לצד זו')));
+    const op = h('input', { type: 'range', min: 0, max: 100, value: Math.round(this.cmpSet.emph * 100) });
+    const opLabel = h('span', {}, tr('עוצמת ההדגשה'));
+    const tolIn = h('input', { type: 'range', min: 0, max: 8, step: 0.5, value: this.cmpSet.tol, 'aria-label': tr('רגישות') });
+    const tolBox = h('span', { class: 'cmp-tol' }, h('span', {}, tr('התעלמות מהזזות קטנות')), tolIn);
+    const busy = h('small', { class: 'cmp-busy' });
+    // צבעים להבדלים: אפשר לבחור כרצון (למשל כשהקירות בתוכנית כחולים)
+    const colorIn = (key, label) => {
+      const inp = h('input', { type: 'color', value: this.cmpSet[key === 'colA' ? 'colA' : 'colB'], 'aria-label': label });
+      inp.oninput = () => { this.cmpSet[key] = inp.value; prefs[key === 'colA' ? 'cmpA' : 'cmpB'] = inp.value; savePrefs(); if (this.cmp && this.cmp.mode === 'changes') later(); };
+      inp.onchange = () => { if (this.cmp && this.cmp.mode === 'diff') this.setCompareMode('diff', this.cmp.opacity); };
+      return h('label', { class: 'cmp-col' }, h('span', {}, label), inp);
+    };
+    const colBox = h('span', { class: 'cmp-colors' }, colorIn('colA', tr('צבע: רק בפתוחה')), colorIn('colB', tr('צבע: רק בהשוואה')));
+    this.chBusy = busy;
+    const syncControls = () => {
+      const m = modeSel.value;
+      opLabel.textContent = m === 'changes' ? tr('עוצמת ההדגשה') : m === 'diff' ? tr('עוצמת התוכנית להשוואה') : tr('שקיפות');
+      tolBox.style.display = m === 'changes' ? '' : 'none';
+      colBox.style.display = m === 'changes' || m === 'diff' ? '' : 'none';
+      op.disabled = m === 'split';
+    };
+    let chT = 0;
+    const later = () => { clearTimeout(chT); chT = setTimeout(() => this.renderChanges(), 160); };
+    tolIn.oninput = () => { this.cmpSet.tol = +tolIn.value; if (this.cmp && this.cmp.mode === 'changes') later(); };
     const legend = h('div', { class: 'cmp-legend' });
     const apply = async () => {
       const vid = verSel.value;
@@ -1671,8 +1722,20 @@ class Viewer {
       try { await this.startCompare(vid, parseInt(pageIn.value, 10) || 1, modeSel.value, op.value / 100); } catch (e) { console.error(e); UI.toast(tr('לא ניתן לטעון את התוכנית להשוואה'), { type: 'error' }); legend.textContent = ''; return; }
       this.updateCmpLegend(legend);
     };
-    modeSel.onchange = () => { if (this.cmp) { this.setCompareMode(modeSel.value, op.value / 100); this.updateCmpLegend(legend); } };
-    op.oninput = () => { if (this.cmp) { this.cmp.opacity = op.value / 100; if (this.cmp.mode === 'overlay') this.layerB.el.style.opacity = op.value / 100; } };
+    modeSel.onchange = () => {
+      const m = modeSel.value;
+      op.value = m === 'changes' ? Math.round(this.cmpSet.emph * 100) : m === 'overlay' ? 50 : 100;
+      syncControls();
+      if (this.cmp) { this.setCompareMode(m, op.value / 100); this.updateCmpLegend(legend); }
+    };
+    op.oninput = () => {
+      if (!this.cmp) return;
+      const val = op.value / 100;
+      this.cmp.opacity = val;
+      if (this.cmp.mode === 'changes') { this.cmpSet.emph = val; later(); }
+      else if (this.cmp.mode === 'overlay' || this.cmp.mode === 'diff') this.layerB.el.style.opacity = val;
+    };
+    syncControls();
     const nudge = (dx, dy) => { if (!this.cmp) return; const st = 1.5 / this.scale; this.layerB.dx += dx * st; this.layerB.dy += dy * st; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(200); };
     const nb = (ic, fn, label) => h('button', { class: 'icon-btn sm', 'aria-label': label, onclick: fn }, icon(ic, 18));
     const alignBtn = h('button', { class: 'btn sm', onclick: () => { this.alignDrag = !this.alignDrag; alignBtn.classList.toggle('primary', this.alignDrag); if (this.alignDrag) UI.toast(tr('בכלי ההזזה: גררו את המסך כדי להזיז את התוכנית להשוואה')); } }, tr('גרור ליישור'));
@@ -1680,7 +1743,7 @@ class Viewer {
     this.cmpBar.replaceChildren(
       h('div', { class: 'cmp-row' }, h('b', {}, tr('השוואה עם:')), planSel, verSel, h('span', {}, tr('עמוד')), pageIn, modeSel,
         h('button', { class: 'btn sm primary', onclick: apply }, tr('השווה')), h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור השוואה'), onclick: () => this.closeCompare() }, icon('x', 18))),
-      h('div', { class: 'cmp-row' }, h('span', {}, tr('שקיפות')), op, h('span', { class: 'sp' }), h('span', {}, tr('יישור:')),
+      h('div', { class: 'cmp-row' }, opLabel, op, tolBox, colBox, busy, h('span', { class: 'sp' }), h('span', {}, tr('יישור:')),
         nb('chevU', () => nudge(0, -1), tr('למעלה')), nb('chevD', () => nudge(0, 1), tr('למטה')), nb('chevR', () => nudge(1, 0), tr('ימינה')), nb('chevL', () => nudge(-1, 0), tr('שמאלה')),
         h('button', { class: 'btn sm', onclick: () => sc(1.002) }, tr('הגדל')), h('button', { class: 'btn sm', onclick: () => sc(1 / 1.002) }, tr('הקטן')),
         alignBtn,
@@ -1694,7 +1757,7 @@ class Viewer {
   updateCmpLegend(el) {
     const mode = this.cmp?.mode;
     el.replaceChildren(h('small', {},
-      mode === 'diff' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · שחור = זהה. ') : mode === 'overlay' ? tr('התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ') : tr('שתי התוכניות זו לצד זו עם זום והזזה משותפים. '),
+      mode === 'changes' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · אפור = זהה (מוחלש ככל שמגדילים את עוצמת ההדגשה). "התעלמות מהזזות קטנות" מסנן הבדלים שנובעים מאי-יישור. ') : mode === 'diff' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · שחור = זהה. ') : mode === 'overlay' ? tr('התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ') : tr('שתי התוכניות זו לצד זו עם זום והזזה משותפים. '),
       tr('זו השוואה חזותית בלבד – לא זיהוי אוטומטי של שינויים, והיא אמינה רק כשהתוכניות מיושרות.'),
       this.cmp?.sizeNote ? ' ' + this.cmp.sizeNote : ''));
   }
@@ -1721,13 +1784,15 @@ class Viewer {
     const c = this.cmp; c.mode = mode; c.opacity = opacity;
     this.split = mode === 'split';
     const diff = mode === 'diff';
-    this.layerA.tint = diff ? '#e53935' : null;
-    this.layerB.tint = diff ? '#1e63ff' : null;
+    const changes = mode === 'changes';
+    if (changes) { this.cmpSet = this.cmpSet || { emph: 0.6, tol: 1.5, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff' }; this.cmpSet.emph = opacity; } else this.hideChanges();
+    this.layerA.tint = diff ? this.cmpSet.colA : null;
+    this.layerB.tint = diff ? this.cmpSet.colB : null;
     const B = this.layerB.el;
-    B.style.display = '';
+    B.style.display = changes ? 'none' : '';
     B.style.isolation = 'isolate';
     B.style.mixBlendMode = diff ? 'multiply' : 'normal';
-    B.style.opacity = mode === 'overlay' ? opacity : 1;
+    B.style.opacity = mode === 'overlay' || diff ? opacity : 1;
     this.measure();
     this.layerA.renderBase(); this.layerB.renderBase();
     this.layerA.removeDetail(); this.layerB.removeDetail();
@@ -1736,6 +1801,7 @@ class Viewer {
   }
   closeCompare() {
     this.cmp = null; this.split = false; this.alignDrag = false; this.cmpUI = null;
+    this.hideChanges();
     this.layerA.tint = null;
     this.layerB.el.style.display = 'none'; this.layerB.removeDetail();
     destroyDoc(this.cmpDoc); this.cmpDoc = null;
