@@ -538,8 +538,8 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 /* ---------- תצוגה מפוצלת ---------- */
 .split-host { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #20272e; }
 .split-area { flex: 1; min-height: 0; display: flex; gap: 3px; }
-.split-area.row { flex-direction: row; }
-.split-area.column { flex-direction: column; }
+.split-area.dir-row { flex-direction: row; align-items: stretch; }
+.split-area.dir-column { flex-direction: column; align-items: stretch; }
 .split-slot { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; position: relative; }
 .split-dock { display: flex; flex-direction: column; flex: none; }
 .viewer.pane { position: relative; inset: auto; z-index: auto; flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; overflow: hidden; }
@@ -583,3 +583,23 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 .cmp-colors { display: inline-flex; gap: 10px; flex-wrap: wrap; }
 .cmp-col { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
 .cmp-col input[type=color] { width: 32px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; min-height: 0; }
+
+/* בורר תוכניות: עץ תיקיות, היקף חיפוש */
+.scope-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.scope-row .scope-sel { width: auto; flex: 1; min-width: 160px; max-width: 420px; min-height: 38px; }
+.picker-folder { display: flex; gap: 8px; align-items: center; width: 100%; padding: 8px 12px; background: #f3f5f7; border: 0; border-bottom: 1px solid var(--line); text-align: start; min-height: 42px; font-weight: 700; }
+.picker-folder .nm { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.picker-folder small { color: var(--muted); font-weight: 400; }
+.picker-plan .col b { white-space: normal; overflow-wrap: anywhere; }
+
+/* הרחבת שם קטוע בלחיצה על ה-"…" */
+.ell-hot { cursor: zoom-in; }
+.nm-less { color: var(--blue, #1d4e89); font-size: 12px; font-weight: 400; cursor: pointer; white-space: nowrap; }
+.tree-row .nm.open, .inl-row .nm.open { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; display: block !important; -webkit-line-clamp: unset !important; line-clamp: unset !important; overflow-wrap: anywhere; }
+.tree-row .nm-less { color: var(--amber); }
+
+/* מחשב: שורת המאפיינים עוברת לשורות במקום גלילה אופקית נסתרת, כדי שכל הכפתורים (למשל "עיצוב מדידה") יהיו זמינים */
+@media (min-width: 900px) and (pointer: fine) {
+  .v-props.has { height: auto; min-height: 58px; flex-wrap: wrap; overflow-x: visible; row-gap: 6px; }
+}
+.v-props input.meas-title { width: 200px; flex: none; }
