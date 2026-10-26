@@ -17,7 +17,7 @@ import * as UI from './ui.js';
 import * as A from './actions.js';
 import * as B from './backup.js';
 import * as db from './db.js';
-import { h, icon, fmtSize, fmtDate, debounce, natural } from './util.js';
+import { h, icon, fmtSize, fmtDate, debounce, natural, expandOnEllipsis } from './util.js';
 
 const MIME = 'application/x-planapp-items';
 const st = {
@@ -100,6 +100,7 @@ export function mountBrowser(root) {
 
 export function show({ mode = 'folder', id = null, q = '' }) {
   st.mode = mode; st.chunk = 60;
+  if (mode === 'search' && !st.scope) st.scope = '';
   if (mode === 'folder') {
     st.folderId = id && S.P.folders.has(id) ? id : null;
     S.folderPath(st.folderId).forEach((f) => { if (f.parentId) st.expanded.add(f.parentId); });
@@ -228,7 +229,7 @@ function renderSidebar0() {
         oncontextmenu: (e) => { e.preventDefault(); folderMenu(f.id, { x: e.clientX, y: e.clientY }); },
       },
       kidsN ? h('button', { class: 'twisty', 'aria-label': open ? tr('כווץ') : tr('הרחב'), onclick: (e) => { e.stopPropagation(); open ? st.expanded.delete(f.id) : st.expanded.add(f.id); saveExpanded(); renderSidebar(); } }, icon(open ? 'chevD' : CHEV_FWD, 16)) : h('span', { class: 'twisty' }),
-      icon('folder', 18), h('span', { class: 'nm' + (f._hidden ? ' dim' : ''), title: f.name }, dn(f.name)),
+      icon('folder', 18), (() => { const nm = h('span', { class: 'nm' + (f._hidden ? ' dim' : ''), title: f.name }, dn(f.name)); expandOnEllipsis(nm, tr('כווץ')); return nm; })(),
       h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more', 16)));
       row.addEventListener('dragstart', (e) => startDrag(e, [key('f', f.id)]));
       makeDropTarget(row, f.id);
@@ -589,7 +590,7 @@ function inlineBlock(fid, depth = 0) {
     const open = st.open.has(f.id);
     box.append(h('div', { class: 'inl-row folder', 'data-akey': 'f:' + f.id, 'data-nav': '#/f/' + f.id, onclick: () => { location.hash = '#/f/' + f.id; } },
       h('button', { class: 'twisty', 'aria-label': open ? tr('כווץ') : tr('הרחב'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(open ? 'chevD' : CHEV_FWD, 18)),
-      icon('folder', 18), h('span', { class: 'nm', title: f.name }, dn(f.name)),
+      icon('folder', 18), (() => { const nm = h('span', { class: 'nm', title: f.name }, dn(f.name)); expandOnEllipsis(nm, tr('כווץ')); return nm; })(),
       h('small', {}, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length)),
       h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more', 16))));
     if (open) box.append(inlineBlock(f.id, depth + 1));
@@ -618,7 +619,7 @@ function folderCard(f) {
   card.append(
     h('button', { class: 'fc-open', 'aria-label': isOpen ? tr('סגור תיקייה') : tr('הצג את תוכן התיקייה כאן'), title: isOpen ? tr('סגור') : tr('הצג תוכן כאן'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(isOpen ? 'chevD' : CHEV_FWD, 20)),
     h('div', { class: 'f-ic' }, icon('folder', 34)),
-    h('div', { class: 'meta' }, h('div', { class: 'name', title: f.name }, dn(f.name)), ovTags(f), h('div', { class: 'sub' }, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length) + (d.plans.length !== S.plansIn(f.id).length ? tr(' ({0} בסה״כ)', d.plans.length) : ''))),
+    h('div', { class: 'meta' }, (() => { const nm = h('div', { class: 'name', title: f.name }, dn(f.name)); expandOnEllipsis(nm, tr('כווץ')); return nm; })(), ovTags(f), h('div', { class: 'sub' }, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length) + (d.plans.length !== S.plansIn(f.id).length ? tr(' ({0} בסה״כ)', d.plans.length) : ''))),
     manual ? h('div', { class: 'reord' },
       h('button', { 'aria-label': tr('הזז למעלה'), disabled: idx <= 0, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, -1); } }, icon('chevU', 18)),
       h('button', { 'aria-label': tr('הזז למטה'), disabled: idx >= sibs.length - 1, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, 1); } }, icon('chevD', 18))) : '',
@@ -757,7 +758,10 @@ function renderSearch() {
   const q = st.query;
   const wrap = h('div', { class: 'page' });
   wrap.append(h('div', { class: 'title-row' }, h('h1', {}, tr('חיפוש: {0}', q))));
-  const { folders, plans } = S.searchNames(q);
+  if (st.scope && !S.P.folders.has(st.scope)) st.scope = '';
+  const scope = S.scopeSet(st.scope);
+  wrap.append(h('div', { class: 'scope-row' }, h('span', {}, tr('חיפוש ב:')), UI.folderScopeSelect(st.scope, (v) => { st.scope = v; renderSearch(); })));
+  const { folders, plans } = S.searchNames(q, scope);
   if (folders.length) {
     wrap.append(h('h4', { class: 'sec' }, tr('תיקיות ({0})', folders.length)));
     wrap.append(h('div', { class: 'result-list' }, folders.slice(0, 100).map((f) => h('button', { class: 'result', onclick: () => { location.hash = '#/f/' + f.id; } },
@@ -775,7 +779,7 @@ function renderSearch() {
   el.content.replaceChildren(wrap);
   if (q.length >= 2) {
     const token = ++searchToken;
-    S.searchText(q, 150, () => token !== searchToken).then((rows) => {
+    S.searchText(q, 150, () => token !== searchToken, scope).then((rows) => {
       if (token !== searchToken) return;
       textBox.replaceChildren(h('h4', { class: 'sec' }, tr('טקסט בתוך קבצי PDF ({0}{1})', rows.length, rows.length >= 150 ? '+' : '')));
       if (!rows.length) {

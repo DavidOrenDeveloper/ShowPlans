@@ -239,22 +239,60 @@ export function folderPicker({ title = tr('בחר תיקייה'), exclude = new 
 }
 
 // ---------- בורר תוכנית ----------
+// רשימת בחירת תיקייה להיקף חיפוש (עץ התיקיות לפי הסדר שלהן באפליקציה)
+export function folderScopeSelect(value = '', onChange) {
+  const sel = h('select', { 'aria-label': tr('היקף חיפוש'), class: 'scope-sel' }, h('option', { value: '' }, tr('כל הפרויקט')));
+  const walk = (pid, depth) => {
+    for (const f of S.childFolders(pid)) {
+      sel.append(h('option', { value: f.id }, '\u00a0\u00a0'.repeat(depth) + (depth ? '› ' : '') + dn(f.name)));
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  sel.value = S.P.folders.has(value) ? value : '';
+  if (onChange) sel.addEventListener('change', () => onChange(sel.value));
+  return sel;
+}
+
+// בורר תוכנית: עץ תיקיות באותו סדר כמו באפליקציה, חיפוש ואפשרות לצמצם לתיקייה מסוימת
 export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new Set() } = {}) {
   const q = h('input', { type: 'search', placeholder: tr('חיפוש תוכנית…') });
   const list = h('div', { class: 'picker-list tall' });
+  const open = new Set();
   let m;
-  const all = [...S.P.plans.values()].filter((p) => !excludeIds.has(p.id))
-    .map((p) => ({ p, path: S.planPathText(p) })).sort((a, b) => natural(a.path + a.p.name, b.path + b.p.name));
+  const scopeSel = folderScopeSelect('', () => render());
+  const LIMIT = 400;
   function render() {
     list.textContent = '';
-    const n = norm(q.value);
-    const shown = all.filter((x) => !n || nameVariants(x.p.name).some((v) => norm(v).includes(n)) || norm(x.path).includes(n)).slice(0, 200);
-    if (!shown.length) list.append(h('p', { class: 'empty-sm' }, tr('לא נמצאו תוכניות')));
-    shown.forEach(({ p, path }) => list.append(h('button', { class: 'picker-plan', type: 'button', onclick: () => m.close(p) },
-      icon('file', 18), h('span', { class: 'col' }, h('b', {}, dn(p.name)), h('small', {}, path)))));
+    const n = norm(q.value), scope = S.scopeSet(scopeSel.value), filtering = !!n || !!scope;
+    const match = (p) => !excludeIds.has(p.id) && (!scope || scope.has(p.folderId))
+      && (!n || nameVariants(p.name).some((v) => norm(v).includes(n)) || norm(S.planPathText(p)).includes(n));
+    const build = (pid) => {
+      const folders = S.childFolders(pid).map((f) => ({ f, ...build(f.id) })).filter((k) => k.count > 0);
+      const plans = S.plansIn(pid).filter(match);
+      return { folders, plans, count: plans.length + folders.reduce((a, k) => a + k.count, 0) };
+    };
+    const root = build(null);
+    if (!root.count) { list.append(h('p', { class: 'empty-sm' }, tr('לא נמצאו תוכניות'))); return; }
+    let shown = 0;
+    const draw = (node, depth) => {
+      for (const k of node.folders) {
+        const isOpen = filtering || open.has(k.f.id);
+        list.append(h('button', { class: 'picker-folder', type: 'button', style: { paddingInlineStart: 10 + depth * 16 + 'px' }, onclick: () => { if (filtering) return; open.has(k.f.id) ? open.delete(k.f.id) : open.add(k.f.id); render(); } },
+          icon(isOpen ? 'chevD' : CHEV_FWD, 16), icon('folder', 18), h('span', { class: 'nm' }, dn(k.f.name)), h('small', {}, String(k.count))));
+        if (isOpen) draw(k, depth + 1);
+      }
+      for (const p of node.plans) {
+        if (shown++ >= LIMIT) return;
+        list.append(h('button', { class: 'picker-plan', type: 'button', style: { paddingInlineStart: 10 + depth * 16 + 'px' }, onclick: () => m.close(p) },
+          icon('file', 18), h('span', { class: 'col' }, h('b', {}, dn(p.name)), filtering ? h('small', {}, S.planPathText(p)) : null)));
+      }
+    };
+    draw(root, 0);
+    if (shown > LIMIT) list.append(h('p', { class: 'empty-sm' }, tr('מוצגות {0} תוצאות ראשונות. צמצמו בחיפוש או בתיקייה.', LIMIT)));
   }
   q.addEventListener('input', render);
   render();
-  m = openModal({ title, body: h('div', {}, q, list), buttons: [{ text: tr('ביטול'), value: null }] });
+  m = openModal({ title, body: h('div', {}, q, h('div', { class: 'scope-row' }, h('span', {}, tr('חיפוש ב:')), scopeSel), list), buttons: [{ text: tr('ביטול'), value: null }] });
   return m.promise.then((v) => v || null);
 }

@@ -180,7 +180,8 @@ export function drawItem(it, cx) {
       const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, tk = w * 3;
       g.append(svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...stroke }));
       [a, b].forEach((q) => g.append(svg('line', { x1: q.x - nx * tk, y1: q.y - ny * tk, x2: q.x + nx * tk, y2: q.y + ny * tk, ...stroke })));
-      g.append(label(measureLabel(it, cx.cal, cx.unit), (a.x + b.x) / 2 + nx * it.fontSize * 0.9, (a.y + b.y) / 2 + ny * it.fontSize * 0.9 + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? (it.tcolor || '#111') : '#b71c1c' }));
+      const txt = measureLabel(it, cx.cal, cx.unit), off = tk + it.fontSize * 0.45 + Math.abs(nx) * String(txt).length * it.fontSize * 0.28; // מרחק קבוע מהקו (לא בורח כשמגדילים)
+      g.append(label(txt, (a.x + b.x) / 2 + nx * off, (a.y + b.y) / 2 + ny * off + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? (it.tcolor || '#111') : '#b71c1c' }));
       break;
     }
     case 'area': {

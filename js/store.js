@@ -480,16 +480,21 @@ export async function thumbURL(versionId) {
 }
 
 // ---------- חיפוש ----------
-export function searchNames(q) {
+// היקף חיפוש: תיקייה נבחרת + כל מה שבתוכה (ריק = כל הפרויקט)
+export function scopeSet(folderId) {
+  if (!folderId || !P.folders.has(folderId)) return null;
+  return new Set([folderId, ...descend(folderId).folders]);
+}
+export function searchNames(q, scope = null) {
   const n = norm(q);
   if (!n) return { folders: [], plans: [] };
   return {
-    folders: [...P.folders.values()].filter((f) => nameVariants(f.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
-    plans: [...P.plans.values()].filter((p) => nameVariants(p.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
+    folders: [...P.folders.values()].filter((f) => (!scope || scope.has(f.id)) && nameVariants(f.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
+    plans: [...P.plans.values()].filter((p) => (!scope || scope.has(p.folderId)) && nameVariants(p.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
   };
 }
 
-export async function searchText(q, limit = 150, isStale = () => false) {
+export async function searchText(q, limit = 150, isStale = () => false, scope = null) {
   const n = norm(q);
   const out = [];
   if (n.length < 2) return out;
@@ -499,6 +504,7 @@ export async function searchText(q, limit = 150, isStale = () => false) {
     if (!v) return true;
     const plan = P.plans.get(v.planId);
     if (!plan || plan.currentVersionId !== v.id) return true; // מחפשים רק בגרסה הנוכחית
+    if (scope && !scope.has(plan.folderId)) return true;
     const t = row.text.toLowerCase();
     const i = t.indexOf(n);
     if (i < 0) return true;

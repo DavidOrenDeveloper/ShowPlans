@@ -16,6 +16,8 @@ import {
   paperName, mpuFromRatio, fmtLen, kindOf, polyArea, pathLength,
 } from './markup.js';
 import { recognize, snapAngle } from './shape-recog.js';
+const LINE_TOOLS = new Set(['line', 'arrow', 'measure', 'calibrate']);
+const snap45 = (a, p) => { const dx = p.x - a.x, dy = p.y - a.y, len = Math.hypot(dx, dy), r = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4); return { x: a.x + Math.cos(r) * len, y: a.y + Math.sin(r) * len }; };
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
 import { installStyle } from './viewer-style.js';
 import { installPrint } from './viewer-print.js';
@@ -199,7 +201,7 @@ class Viewer {
     s.addEventListener('contextmenu', (e) => e.preventDefault());
     s.addEventListener('dblclick', (e) => { if (this.tool === 'area' || this.tool === 'polyline') { e.preventDefault(); this.finishArea(); } });
     this.keyFn = (e) => this.onKey(e);
-    this.keyUpFn = (e) => { if (e.code === 'Space') this.spaceDown = false; };
+    this.keyUpFn = (e) => { if (e.code === 'Space') this.spaceDown = false; if (e.key === 'Shift') this.shiftDown = false; };
     document.addEventListener('keydown', this.keyFn);
     document.addEventListener('keyup', this.keyUpFn);
     this.ro = new ResizeObserver(() => this.onResize());
@@ -588,6 +590,11 @@ class Viewer {
   onWheel(e) {
     e.preventDefault();
     if (!this.page) return;
+    if (e.shiftKey && !e.ctrlKey) { // Shift + גלגלת: הזזה ימינה ושמאלה (כמו ב-Foxit)
+      const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 16 : 1);
+      this.setView(this.scale, this.tx - d, this.ty);
+      return;
+    }
     const pt = this.local(e);
     const k = e.ctrlKey ? 0.012 : 0.0018;
     const f = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * k);
@@ -711,6 +718,7 @@ class Viewer {
     this.edgeRaf = requestAnimationFrame(() => this.edgeStep());
   }
   onMove(e, forced) {
+    if (!forced && typeof e.shiftKey === 'boolean') this.shiftDown = e.shiftKey;
     const pt = forced || this.local(e);
     if (this.ptrs.has(e.pointerId)) this.ptrs.set(e.pointerId, pt);
     if (this.assist && this.assist.pts.has(e.pointerId) && !forced) { this.assist.pts.set(e.pointerId, pt); this.assistMove(); return; }
@@ -723,6 +731,7 @@ class Viewer {
     if (g.id !== e.pointerId) return;
     const p = this.toPage(pt);
     const dx = pt.x - g.x, dy = pt.y - g.y;
+    const ps = (a) => (this.shiftDown && a ? snap45(a, p) : p); // Shift: קו ישר בקפיצות של 45°
     switch (g.type) {
       case 'pan':
         if (Math.hypot(pt.x - g.sx, pt.y - g.sy) > 6) g.moved = true;
@@ -734,7 +743,7 @@ class Viewer {
         this.layerB.place(this.scale, this.tx, this.ty, this.dpr);
         g.x = pt.x; g.y = pt.y; g.moved = true;
         break;
-      case 'drag': this.draft.pts[1] = p; this.renderDraft(); this.edgeCheck(g, pt); break;
+      case 'drag': this.draft.pts[1] = LINE_TOOLS.has(this.draft.type) ? ps(this.draft.pts[0]) : p; this.renderDraft(); this.edgeCheck(g, pt); break;
       case 'pen': {
         if (g.snapped) { // אחרי זיהוי: קו ישר ממשיך לעקוב אחרי האצבע (עם הצמדה ל-0/45/90°)
           if (g.snap.type === 'line') { this.draft.pts[1] = snapAngle(this.draft.pts[0], p); this.renderDraft(); }
@@ -748,14 +757,14 @@ class Viewer {
       }
       case 'erase': this.eraseAt(g.last, p); g.last = p; break;
       case 'seg':
-        if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, p] }; this.renderDraft(); this.edgeCheck(g, pt); }
+        if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, ps(g.p0)] }; this.renderDraft(); this.edgeCheck(g, pt); }
         break;
       case 'seg2': case 'poly': case 'text':
         if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 10) {
           if (!g.moved) { g.moved = true; g.x = g.sx; g.y = g.sy; }
           this.setView(this.scale, this.tx + (pt.x - g.x), this.ty + (pt.y - g.y));
           g.x = pt.x; g.y = pt.y;
-        } else if (g.type === 'seg2') { this.draft.pts[1] = p; this.renderDraft(); }
+        } else if (g.type === 'seg2') { this.draft.pts[1] = ps(this.draft.pts[0]); this.renderDraft(); }
         break;
       case 'move': {
         const ddx = p.x - g.p0.x, ddy = p.y - g.p0.y;
@@ -794,10 +803,11 @@ class Viewer {
       return;
     }
     const g = this.gesture;
+    if (typeof e.shiftKey === 'boolean') this.shiftDown = e.shiftKey;
     if (!g || g.id !== e.pointerId) return;
     this.gesture = null;
     if (cancelled) { this.gesture = g; this.abortGesture(); return; }
-    const p = this.toPage(pt);
+    let p = this.toPage(pt);
     switch (g.type) {
       case 'pan':
         if (!g.moved && performance.now() - g.t0 < 600) this.onTap(pt);
@@ -806,6 +816,7 @@ class Viewer {
       case 'align': this.scheduleDetail(30); break;
       case 'drag': {
         const d = this.draft; this.draft = null;
+        if (d && this.shiftDown && LINE_TOOLS.has(d.type)) d.pts[1] = snap45(d.pts[0], p);
         if (d && dist(d.pts[0], d.pts[1]) * this.scale >= 8) this.commitNew(d); else this.renderDraft();
         break;
       }
@@ -817,12 +828,13 @@ class Viewer {
       }
       case 'erase': this.commitErase(); break;
       case 'seg':
-        if (g.moved) { const d = this.draft; this.draft = null; if (d && dist(d.pts[0], d.pts[1]) * this.scale >= 8) this.commitNew(d); else this.renderDraft(); }
+        if (g.moved) { const d = this.draft; this.draft = null; if (d && this.shiftDown) d.pts[1] = snap45(d.pts[0], p); if (d && dist(d.pts[0], d.pts[1]) * this.scale >= 8) this.commitNew(d); else this.renderDraft(); }
         else { this.draft = { type: this.tool, pts: [g.p0, g.p0], wait: true, hover: g.p0 }; this.renderDraft(); this.renderProps(); }
         break;
       case 'seg2':
         if (!g.moved) {
           const d = this.draft;
+          if (this.shiftDown) p = snap45(d.pts[0], p);
           if (dist(d.pts[0], p) * this.scale < 4) return;
           this.draft = null; d.pts = [d.pts[0], p]; delete d.wait; delete d.hover; this.commitNew(d);
         }
@@ -864,9 +876,10 @@ class Viewer {
     if (e.target.matches?.('input, textarea, select') || document.querySelector('.modal-back')) return;
     if (this.host && this.host.active !== this) return; // מקשים פועלים רק על התצוגה הפעילה
     const k = e.key;
+    if (k === 'Shift') this.shiftDown = true;
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; }
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'y') { e.preventDefault(); this.redo(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || k.toLowerCase() === 'z')) { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; } // לפי המקש הפיזי: עובד גם במקלדת בעברית
+    if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || k.toLowerCase() === 'y')) { e.preventDefault(); this.redo(); return; }
     if (k === 'Escape') {
       if (this.draft) this.cancelDraft();
       else if (this.selected) this.select(null);
@@ -1183,7 +1196,7 @@ class Viewer {
   // אם נבחר פריט – משנים אותו. אחרת – מעדכנים את ברירת המחדל.
   orthoPt(p) {
     const d = this.draft;
-    if (!d || d.type !== 'polyline' || !prefs.ortho || !d.pts.length) return p;
+    if (!d || (d.type !== 'polyline' && d.type !== 'area') || !(prefs.ortho && d.type === 'polyline') && !this.shiftDown || !d.pts.length) return p;
     const last = d.pts[d.pts.length - 1];
     const ang = Math.atan2(p.y - last.y, p.x - last.x), step = Math.PI / 4, a2 = Math.round(ang / step) * step, len = Math.hypot(p.x - last.x, p.y - last.y);
     return { x: last.x + Math.cos(a2) * len, y: last.y + Math.sin(a2) * len };
@@ -1200,6 +1213,7 @@ class Viewer {
     } else {
       if (last && dist(last, p) * this.scale < 4) return;
       if (d.pts.length >= 3 && dist(d.pts[0], p) * this.scale < 14) { this.finishArea(); return; }
+      p = this.orthoPt(p);
     }
     if (last && dist(last, p) * this.scale < 4) return;
     d.pts.push(p);

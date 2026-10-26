@@ -15,7 +15,7 @@ export class SplitHost {
     this.slots = []; this.active = null; this.dead = false;
     let dir = null; try { dir = localStorage.getItem(DIR_KEY); } catch { /* ignore */ }
     this.dir = dir === 'row' || dir === 'column' ? dir : (window.innerWidth > window.innerHeight ? 'row' : 'column');
-    this.area = h('div', { class: 'split-area ' + this.dir });
+    this.area = h('div', { class: 'split-area dir-' + this.dir });
     this.dock = h('div', { class: 'split-dock' });
     this.el = h('div', { class: 'split-host' }, this.area, this.dock);
     root.append(this.el);
@@ -85,7 +85,7 @@ export class SplitHost {
   toggleDir() {
     this.dir = this.dir === 'row' ? 'column' : 'row';
     try { localStorage.setItem(DIR_KEY, this.dir); } catch { /* ignore */ }
-    this.area.className = 'split-area ' + this.dir;
+    this.area.className = 'split-area dir-' + this.dir;
   }
 
   // יציאה לתצוגה רגילה עם התוכנית של התצוגה (keepV, ברירת מחדל: הפעילה)

@@ -176,3 +176,23 @@ export async function sha256(src) {
   } catch { return null; }
 }
 
+
+// שם קטוע ב"…": לחיצה על הסוף (ה"…" והמילה שלפניו) מרחיבה את השם במקום לפתוח את התיקייה. בשם מורחב: "כווץ" מחזיר.
+export function expandOnEllipsis(el, lessText = 'כווץ') {
+  const trunc = () => !el.classList.contains('open') && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+  const hot = (e) => {
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el), lh = parseFloat(cs.lineHeight) || 20;
+    const nearEnd = cs.direction === 'rtl' ? e.clientX - r.left < 72 : r.right - e.clientX < 72;
+    return nearEnd && r.bottom - e.clientY < lh + 8;
+  };
+  el.addEventListener('click', (e) => {
+    if (e.target.closest?.('.nm-less')) { e.stopPropagation(); e.preventDefault(); el.classList.remove('open'); el.querySelector('.nm-less')?.remove(); return; }
+    if (trunc() && hot(e)) {
+      e.stopPropagation(); e.preventDefault();
+      el.classList.add('open');
+      el.append(h('span', { class: 'nm-less', role: 'button', tabindex: 0 }, ' ' + lessText + ' ▲'));
+    }
+  }, true);
+  el.addEventListener('mousemove', (e) => { el.classList.toggle('ell-hot', trunc() && hot(e)); });
+  el.addEventListener('mouseleave', () => el.classList.remove('ell-hot'));
+}

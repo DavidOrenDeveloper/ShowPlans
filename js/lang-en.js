@@ -1086,4 +1086,8 @@ export const EN = {
  "אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · אפור = זהה (מוחלש ככל שמגדילים את עוצמת ההדגשה). \"התעלמות מהזזות קטנות\" מסנן הבדלים שנובעים מאי-יישור. ": "Red = only in the open plan · Blue = only in the compared plan · Gray = identical (fades as you raise the highlight strength). \"Ignore small shifts\" filters differences caused by misalignment. ",
  "צבע: רק בפתוחה": "Color: only in open",
  "צבע: רק בהשוואה": "Color: only in compared",
+ "היקף חיפוש": "Search scope",
+ "כל הפרויקט": "Whole project",
+ "חיפוש ב:": "Search in:",
+ "מוצגות {0} תוצאות ראשונות. צמצמו בחיפוש או בתיקייה.": "Showing the first {0} results. Narrow by search or folder.",
 };
