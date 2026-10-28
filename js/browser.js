@@ -98,7 +98,15 @@ export function mountBrowser(root) {
   renderAll();
 }
 
+// זוכר מיקום גלילה לכל תיקייה/חיפוש: בחזרה אחורה (או לתיקייה שמעל) חוזרים בדיוק למקום שהיינו בו, ולא לראש הרשימה
+const scrollMem = new Map();
+let navBackUntil = 0;
+window.addEventListener('popstate', () => { navBackUntil = performance.now() + 800; });
+const viewKey = (mode, id, q) => mode + ':' + (mode === 'folder' ? id || '' : mode === 'search' ? q || '' : '');
+
 export function show({ mode = 'folder', id = null, q = '' }) {
+  const prevKey = viewKey(st.mode, st.folderId, st.query), prevFolder = st.mode === 'folder' ? st.folderId : null;
+  if (el.content) scrollMem.set(prevKey, { top: el.content.scrollTop, chunk: st.chunk });
   st.mode = mode; st.chunk = 60;
   if (mode === 'search' && !st.scope) st.scope = '';
   if (mode === 'folder') {
@@ -107,10 +115,13 @@ export function show({ mode = 'folder', id = null, q = '' }) {
   }
   if (mode === 'search') { st.query = q; if (el.q) el.q.value = q; }
   else if (el.q && mode !== 'search') el.q.value = '';
-  clearSel(false);
-  toggleSidebar(false);
+  toggleSidebar(false); // הבחירה נשמרת במעבר בין תיקיות (אפשר לסמן בכמה תיקיות ואז לתת הרשאה/להעביר ביחד)
+  const saved = scrollMem.get(viewKey(mode, st.folderId, st.query));
+  const goingBack = performance.now() < navBackUntil || (mode === 'folder' && prevFolder && st.folderId !== prevFolder && (!st.folderId || S.isDescendant(prevFolder, st.folderId)));
+  if (saved && goingBack) st.chunk = Math.max(60, saved.chunk);
   renderAll();
-  el.content.scrollTop = 0;
+  el.content.scrollTop = saved && goingBack ? saved.top : 0;
+  if (saved && goingBack) requestAnimationFrame(() => { if (el.content && st.mode === mode) el.content.scrollTop = saved.top; });
   updateCarryBar();
 }
 
@@ -124,6 +135,8 @@ function toggleSidebar(open) {
 // מצב בחירה: "אחורה" מבטל קודם את הבחירה. הרשומה נוספת רק אחרי נגיעה גמורה (דרישת Chrome: אינטראקציה של המשתמש)
 let selLayer = null, selWait = false;
 function syncSelLayer() {
+  if (selLayer) { const l = selLayer; selLayer = null; l.release(); } // "אחורה" יוצא מהתיקייה והבחירה נשמרת (ביטול: כפתור ה-X בסרגל)
+  return;
   if (st.selMode && !selLayer) {
     const go = () => { selWait = false; if (!st.selMode || selLayer) return; selLayer = pushLayer(() => { selLayer = null; clearSel(); }); };
     if (navigator.userActivation && !navigator.userActivation.isActive) {
@@ -297,7 +310,7 @@ function renderSelbar() {
   syncSelLayer();
   if (!st.selMode) return;
   const o = selObj();
-  el.selbar.replaceChildren(
+  el.selbar.replaceChildren(...[
     h('button', { class: 'icon-btn', 'aria-label': tr('בטל בחירה'), onclick: () => clearSel() }, icon('x')),
     h('b', {}, tr('{0} נבחרו', n)),
     h('span', { class: 'sp' }),
@@ -308,7 +321,7 @@ function renderSelbar() {
     isCloud() ? h('button', { class: 'btn sm', onclick: () => { removeFromDevice(o); clearSel(); } }, icon('trash', 16), tr('הסר מהמכשיר')) : null,
     h('button', { class: 'btn sm', onclick: () => batchRename(o) }, icon('edit', 16), tr('שנה שם')),
     isAdmin() ? h('button', { class: 'btn sm', onclick: async () => { if (await bulkGrantsDialog(o)) clearSel(); } }, icon('lock', 16), tr('הרשאות')) : null,
-    h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), personal() ? tr('הסתר') : tr('מחק')));
+    h('button', { class: 'btn sm danger', onclick: async () => { if (await A.deleteDialog(o)) clearSel(); } }, icon('trash', 16), personal() ? tr('הסתר') : tr('מחק'))].filter(Boolean));
 }
 function selectAll() {
   S.childFolders(st.folderId).forEach((f) => st.sel.add(key('f', f.id)));
@@ -583,21 +596,27 @@ function toggleInline(id) {
   st.open.has(id) ? st.open.delete(id) : st.open.add(id);
   setOpen(st.open); rerenderAnchored('f:' + id);
 }
+// תיבת סימון בשורות של תיקיות שנפתחו במקום: מאפשרת לבחור גם מתוכן תיקייה פתוחה בלי להיכנס אליה
+const inlChk = (k) => h('button', { class: 'ichk', 'aria-label': tr('בחירה'), onclick: (e) => { e.stopPropagation(); toggleSel(k); } }, icon('check', 14));
 function inlineBlock(fid, depth = 0) {
   const box = h('div', { class: 'inl' + (depth ? ' nested' : '') });
   if (depth > 30) return box;
   for (const f of S.childFolders(fid)) {
     const open = st.open.has(f.id);
-    box.append(h('div', { class: 'inl-row folder', 'data-akey': 'f:' + f.id, 'data-nav': '#/f/' + f.id, onclick: () => { location.hash = '#/f/' + f.id; } },
+    const fk = key('f', f.id);
+    box.append(h('div', { class: 'inl-row folder' + (st.sel.has(fk) ? ' selected' : ''), 'data-key': fk, 'data-akey': 'f:' + f.id, 'data-nav': '#/f/' + f.id, onclick: (e) => { if (st.selMode || e.ctrlKey || e.metaKey || e.shiftKey) toggleSel(fk); else location.hash = '#/f/' + f.id; } },
+      inlChk(fk),
       h('button', { class: 'twisty', 'aria-label': open ? tr('כווץ') : tr('הרחב'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(open ? 'chevD' : CHEV_FWD, 18)),
-      icon('folder', 18), (() => { const nm = h('span', { class: 'nm', title: f.name }, dn(f.name)); expandOnEllipsis(nm, tr('כווץ')); return nm; })(),
+      h('span', { class: 'inl-ic', onclick: (e) => { if (st.selMode) { e.stopPropagation(); location.hash = '#/f/' + f.id; } } }, icon('folder', 18)), (() => { const nm = h('span', { class: 'nm', title: f.name }, dn(f.name)); expandOnEllipsis(nm, tr('כווץ')); return nm; })(),
       h('small', {}, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length)),
       h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); folderMenu(f.id, e.currentTarget); } }, icon('more', 16))));
     if (open) box.append(inlineBlock(f.id, depth + 1));
   }
   for (const p of S.plansIn(fid)) {
     const v = S.curVer(p);
-    box.append(h('div', { class: 'inl-row plan', onclick: () => openPlan(p) },
+    const pk = key('p', p.id);
+    box.append(h('div', { class: 'inl-row plan' + (st.sel.has(pk) ? ' selected' : ''), 'data-key': pk, onclick: (e) => { if (st.selMode || e.ctrlKey || e.metaKey || e.shiftKey) toggleSel(pk); else openPlan(p); } },
+      inlChk(pk),
       h('span', { class: 'twisty' }), icon('file', 18), h('span', { class: 'nm', title: p.name, onclick: (e) => { e.stopPropagation(); e.currentTarget.classList.toggle('open'); } }, dn(p.name)), cloudBadge(p),
       h('small', {}, interleave([v?.pageCount ? tr('{0} עמ׳', v.pageCount) : null, fmtSize(v?.size)].filter(Boolean))),
       h('button', { class: 'icon-btn sm', 'aria-label': tr('עוד'), onclick: (e) => { e.stopPropagation(); planMenu(p.id, e.currentTarget); } }, icon('more', 16))));
@@ -618,7 +637,7 @@ function folderCard(f) {
   if (manual) card.classList.add('has-reord');
   card.append(
     h('button', { class: 'fc-open', 'aria-label': isOpen ? tr('סגור תיקייה') : tr('הצג את תוכן התיקייה כאן'), title: isOpen ? tr('סגור') : tr('הצג תוכן כאן'), onclick: (e) => { e.stopPropagation(); toggleInline(f.id); } }, icon(isOpen ? 'chevD' : CHEV_FWD, 20)),
-    h('div', { class: 'f-ic' }, icon('folder', 34)),
+    h('div', { class: 'f-ic', title: tr('פתח תיקייה'), onclick: (e) => { if (st.selMode) { e.stopPropagation(); e.preventDefault(); location.hash = '#/f/' + f.id; } } }, icon('folder', 34)), // במצב בחירה: לחיצה על אייקון התיקייה נכנסת אליה (לחיצה על שאר הכרטיס מסמנת)
     h('div', { class: 'meta' }, (() => { const nm = h('div', { class: 'name', title: f.name }, dn(f.name)); expandOnEllipsis(nm, tr('כווץ')); return nm; })(), ovTags(f), h('div', { class: 'sub' }, tr('{0} תוכניות · {1} תיקיות', S.plansIn(f.id).length, S.childFolders(f.id).length) + (d.plans.length !== S.plansIn(f.id).length ? tr(' ({0} בסה״כ)', d.plans.length) : ''))),
     manual ? h('div', { class: 'reord' },
       h('button', { 'aria-label': tr('הזז למעלה'), disabled: idx <= 0, onclick: (e) => { e.stopPropagation(); moveFolderOrder(f, -1); } }, icon('chevU', 18)),
