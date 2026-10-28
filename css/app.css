@@ -603,3 +603,10 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
   .v-props.has { height: auto; min-height: 58px; flex-wrap: wrap; overflow-x: visible; row-gap: 6px; }
 }
 .v-props input.meas-title { width: 200px; flex: none; }
+
+/* בחירה בשורות של תיקיות שנפתחו במקום */
+.inl-row .ichk { flex: none; width: 24px; height: 24px; border-radius: 7px; border: 2px solid #9aa7b4; background: #fff; color: transparent; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.inl-row.selected .ichk { background: var(--amber); border-color: var(--amber-d); color: #1b1300; }
+.inl-row.selected { background: rgba(245,166,35,.18); box-shadow: inset 0 0 0 2px rgba(245,166,35,.55); border-radius: 8px; }
+
+.inl-ic { display: inline-flex; flex: none; }
