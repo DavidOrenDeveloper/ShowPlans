@@ -78,8 +78,11 @@ function reindex() {
   }
   for (const [pk, a] of kids.entries()) sortFolders(a, pk);
   for (const a of plansBy.values()) sortPlans(a);
-  for (const a of versBy.values()) a.sort((x, y) => y.number - x.number);
+  const byUpload = versionSortMode() === 'upload';
+  for (const a of versBy.values()) a.sort((x, y) => (byUpload ? 0 : String(y.date || '').localeCompare(String(x.date || ''))) || y.number - x.number); // ברירת מחדל: לפי תאריך הגרסה שנרשם (החדשה ראשונה)
 }
+export function versionSortMode() { try { return localStorage.getItem('plans.verSort') === 'upload' ? 'upload' : 'date'; } catch { return 'date'; } }
+export function setVersionSortMode(m) { try { localStorage.setItem('plans.verSort', m === 'upload' ? 'upload' : 'date'); } catch { /* ignore */ } resort(); }
 // ---------- מיון (העדפות במכשיר: order.js) ----------
 const tm = (x) => Number(x.updatedAt || x.createdAt || 0);
 const cnt = (f) => (plansBy.get(f.id) || []).length;

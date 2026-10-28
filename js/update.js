@@ -27,9 +27,12 @@ export function verifyAfterBoot() {
 }
 
 export async function checkForUpdate() {
+  window.__updating = true; // בזמן עדכון ידני לא מציגים את ההודעה האוטומטית; מתאפס תמיד בסיום (בעבר נשאר דלוק ומנע את ההודעה)
+  try { await checkForUpdate0(); } finally { window.__updating = false; }
+}
+async function checkForUpdate0() {
   if (!('serviceWorker' in navigator)) { UI.toast(tr('הדפדפן לא תומך בעדכון אוטומטי. טענו מחדש את הדף.'), { type: 'error' }); return; }
   if (!navigator.onLine) { UI.toast(tr('אין חיבור לאינטרנט – אי אפשר לבדוק עדכון עכשיו.'), { type: 'error' }); return; }
-  window.__updating = true;
   const reg = (await navigator.serviceWorker.getRegistration()) || (await swReady);
   if (!reg) {
     const why = swError && swError.message ? ` (${swError.message})` : '';
@@ -108,8 +111,19 @@ export function watchForUpdates(reg, hadController) {
     showUpdateBanner(v);
   };
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) announce(); });
-  const check = () => { if (navigator.onLine && document.visibilityState === 'visible') reg.update().catch(() => {}); };
+  // השוואה ישירה: אם ה-Service Worker הפעיל כבר בגרסה חדשה מהקוד שרץ בעמוד (למשל התעדכן בזמן שהאפליקציה הייתה ברקע וההתראה פוספסה) – מציגים הודעה
+  const compare = async () => {
+    if (window.__updating || !navigator.serviceWorker.controller) return;
+    const v = await askWorker(navigator.serviceWorker.controller);
+    if (v && v !== APP_VERSION) showUpdateBanner(v);
+  };
+  const check = () => {
+    if (document.visibilityState !== 'visible') return;
+    if (navigator.onLine) reg.update().catch(() => {}).finally(compare); else compare();
+  };
   document.addEventListener('visibilitychange', check);
+  window.addEventListener('online', check);
   setInterval(check, 15 * 60 * 1000);
+  setTimeout(compare, 3000);
   if (reg.waiting && hadController) announce();
 }

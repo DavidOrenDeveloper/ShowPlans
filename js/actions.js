@@ -179,7 +179,9 @@ export async function addVersionDialog(planId) {
   if (!file) return null;
   const date = h('input', { type: 'date', value: todayISO() });
   const note = h('input', { type: 'text', placeholder: tr('לדוגמה: תיקוני יועץ חשמל') });
-  const cur = h('input', { type: 'checkbox', checked: true });
+  const newest = () => !S.versionsOf(planId).some((v) => (v.date || '') > (date.value || ''));
+  const cur = h('input', { type: 'checkbox', checked: newest() });
+  date.addEventListener('change', () => { cur.checked = newest(); }); // גרסה ישנה יותר מהקיימות (למשל פברואר אחרי מרץ) לא הופכת לנוכחית כברירת מחדל
   const r = await UI.modal({
     title: tr('גרסה חדשה – ') + file.name,
     body: h('div', { class: 'form' }, h('label', {}, tr('תאריך הגרסה')), date, h('label', {}, tr('הערה לגרסה')), note,
@@ -212,9 +214,11 @@ export async function versionsDialog(planId, { onChange } = {}) {
   const plan = S.P.plans.get(planId); if (!plan) return;
   const list = h('div', { class: 'ver-list' });
   let m;
+  const sortBtn = h('button', { class: 'btn sm', onclick: () => { S.setVersionSortMode(S.versionSortMode() === 'date' ? 'upload' : 'date'); render(); } });
   const canEdit = () => canEditPlan(planId); // עובד עם הרשאת צפייה/סימון רואה ופותח גרסאות קודמות, אבל לא משנה אותן
   function render() {
     list.textContent = '';
+    sortBtn.textContent = S.versionSortMode() === 'date' ? tr('מיון: לפי תאריך הגרסה (לחצו לשינוי)') : tr('מיון: לפי סדר העלאה (לחצו לשינוי)');
     const vs = S.versionsOf(planId);
     vs.forEach((v) => {
       const isCur = plan.currentVersionId === v.id;
@@ -243,7 +247,7 @@ export async function versionsDialog(planId, { onChange } = {}) {
   }
   render();
   m = UI.openModal({
-    title: tr('גרסאות – ') + dn(plan.name), body: list, wide: true,
+    title: tr('גרסאות – ') + dn(plan.name), body: h('div', {}, h('div', { class: 'scope-row' }, sortBtn), list), wide: true,
     buttons: [{ text: tr('סגור'), value: true }, ...(canEdit() ? [{ text: tr('העלה גרסה חדשה'), kind: 'primary', icon: 'upload', keepOpen: true, onClick: async () => { const v = await addVersionDialog(planId); if (v) { render(); onChange?.(); } return false; } }] : [])],
   });
 }

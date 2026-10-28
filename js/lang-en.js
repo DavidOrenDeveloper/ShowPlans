@@ -1090,4 +1090,6 @@ export const EN = {
  "כל הפרויקט": "Whole project",
  "חיפוש ב:": "Search in:",
  "מוצגות {0} תוצאות ראשונות. צמצמו בחיפוש או בתיקייה.": "Showing the first {0} results. Narrow by search or folder.",
+ "מיון: לפי תאריך הגרסה (לחצו לשינוי)": "Sort: by version date (tap to change)",
+ "מיון: לפי סדר העלאה (לחצו לשינוי)": "Sort: by upload order (tap to change)",
 };
