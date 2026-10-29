@@ -1092,4 +1092,8 @@ export const EN = {
  "מוצגות {0} תוצאות ראשונות. צמצמו בחיפוש או בתיקייה.": "Showing the first {0} results. Narrow by search or folder.",
  "מיון: לפי תאריך הגרסה (לחצו לשינוי)": "Sort: by version date (tap to change)",
  "מיון: לפי סדר העלאה (לחצו לשינוי)": "Sort: by upload order (tap to change)",
+ "העובד רואה: {0} (נקבע כאן)": "Worker sees: {0} (set here)",
+ "העובד רואה: {0} (מתיקיית האב)": "Worker sees: {0} (from parent folder)",
+ "בחר את כל העובדים": "Select all workers",
+ "עודכנו {0} עובדים": "{0} workers updated",
 };

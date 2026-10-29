@@ -297,37 +297,80 @@ export async function usersDialog() {
 const LEVELS = [['', tr('ללא הרשאה ישירה')], ['none', tr('חסום (ללא גישה)')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]];
 export async function grantsDialog({ folderId = null, planId = null }) {
   const sb = client();
-  const target = planId ? S.P.plans.get(planId)?.name : S.P.folders.get(folderId)?.name;
+  const plan = planId ? S.P.plans.get(planId) : null;
+  const target = plan ? plan.name : S.P.folders.get(folderId)?.name;
   const col = planId ? 'plan_id' : 'folder_id', tid = planId || folderId;
   const body = h('div', { class: 'form' }, h('p', { class: 'hint' }, planId ? tr('ההרשאה חלה על התוכנית הזו.') : tr('ההרשאה חלה על התיקייה ועל כל מה שבתוכה.')));
   const m = UI.openModal({ title: tr('הרשאות: {0}', target || ''), body, wide: true, buttons: [{ text: tr('סגור'), value: true }] });
-  const [{ data: users, error: e1 }, { data: grants, error: e2 }] = await Promise.all([
+  // ההרשאות של התיקיות שמעל (וההרשאה על הפריט עצמו) – כדי להראות מה כל עובד מקבל בפועל, כולל ירושה מתיקיית האב
+  const chain = [];
+  { let f = S.P.folders.get(plan ? plan.folderId : folderId), n = 0; while (f && n++ < 200) { chain.push(f.id); f = f.parentId ? S.P.folders.get(f.parentId) : null; } }
+  const [uRes, gF, gP] = await Promise.all([
     sb.from('profiles').select('*').eq('role', 'worker').order('display_name'),
-    sb.from('grants').select('*').eq(col, tid),
+    chain.length ? sb.from('grants').select('*').in('folder_id', chain) : { data: [] },
+    plan ? sb.from('grants').select('*').eq('plan_id', planId) : { data: [] },
   ]);
-  if (e1 || e2) { body.append(h('p', { class: 'msg' }, tr('שגיאה: ') + (e1 || e2).message)); return m.promise; }
-  if (!users.length) body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.')));
-  for (const u of users) {
-    const cur = grants.find((g) => g.user_id === u.id);
-    const sel = h('select', {}, LEVELS.map(([v, t]) => h('option', { value: v }, t)));
-    sel.value = cur?.level || '';
-    sel.addEventListener('change', async () => {
-      sel.disabled = true;
-      try {
-        const existing = grants.find((g) => g.user_id === u.id);
-        if (!sel.value) {
-          if (existing) { const { error } = await sb.from('grants').delete().eq('id', existing.id); if (error) throw error; grants.splice(grants.indexOf(existing), 1); }
-        } else if (existing) {
-          const { error } = await sb.from('grants').update({ level: sel.value }).eq('id', existing.id); if (error) throw error; existing.level = sel.value;
-        } else {
-          const { data, error } = await sb.from('grants').insert({ user_id: u.id, [col]: tid, level: sel.value }).select().single(); if (error) throw error; grants.push(data);
-        }
-        UI.toast(tr('נשמר'));
-      } catch (e) { UI.toast(tr('שגיאה: ') + e.message, { type: 'error' }); sel.value = grants.find((g) => g.user_id === u.id)?.level || ''; }
-      sel.disabled = false;
-    });
-    body.append(h('div', { class: 'grant-row' }, h('div', {}, h('b', {}, u.display_name || u.email), h('small', { dir: 'ltr' }, u.email)), sel));
+  const err = uRes.error || gF.error || gP.error;
+  if (err) { body.append(h('p', { class: 'msg' }, tr('שגיאה: ') + err.message)); return m.promise; }
+  const users = uRes.data || [], all = [...(gF.data || []), ...(gP.data || [])];
+  if (!users.length) { body.append(h('p', { class: 'msg' }, tr('עוד אין עובדים. צרו עובד דרך "עובדים" בתפריט הצד.'))); return m.promise; }
+  const parentId = plan ? plan.folderId || null : S.P.folders.get(folderId)?.parentId || null;
+  const ug = (uid) => all.filter((g) => g.user_id === uid);
+  const direct = (uid) => all.find((g) => g.user_id === uid && g[col] === tid);
+  const eff = (uid) => (plan ? planLevelFrom(ug(uid), plan, S.P.folders) : folderLevelFrom(ug(uid), folderId, S.P.folders));
+  const inh = (uid) => folderLevelFrom(ug(uid), parentId, S.P.folders);
+  const lvlName = (n) => ['', 'view', 'mark', 'edit'][n] || '';
+  const selected = new Set();
+  const list = h('div', {}), selBar = h('div', { class: 'wa-sel' });
+  body.append(selBar, list);
+
+  async function setGrant(uid, value) {
+    const ex = direct(uid);
+    if (!value) { if (ex) { const { error } = await sb.from('grants').delete().eq('id', ex.id); if (error) throw error; all.splice(all.indexOf(ex), 1); } }
+    else if (ex) { if (ex.level !== value) { const { error } = await sb.from('grants').update({ level: value }).eq('id', ex.id); if (error) throw error; ex.level = value; } }
+    else { const { data, error } = await sb.from('grants').insert({ user_id: uid, [col]: tid, level: value }).select().single(); if (error) throw error; all.push(data); }
   }
+  const fail = (e) => UI.toast(tr('שגיאה: ') + (/check constraint|grants_level/i.test(e.message || '') ? tr('חסימה דורשת להריץ את קובץ ה-SQL החדש (update-v2.sql) ב-Supabase') : e.message), { type: 'error', ms: 6000 });
+  // מה העובד מקבל בפועל (כולל ירושה)
+  function status(uid) {
+    const d = direct(uid), e = eff(uid);
+    if (d?.level === 'none') return tr('חסום לעובד');
+    if (!e) return tr('העובד לא רואה');
+    return d ? tr('העובד רואה: {0} (נקבע כאן)', LEVEL_TEXT[lvlName(e)]) : tr('העובד רואה: {0} (מתיקיית האב)', LEVEL_TEXT[lvlName(e)]);
+  }
+  function paint() {
+    list.replaceChildren(...users.map((u) => {
+      const i = inh(u.id), d = direct(u.id);
+      const opts = LEVELS.filter(([v]) => v !== 'none' || i > 0 || d?.level === 'none')
+        .map(([v, t]) => h('option', { value: v }, v === '' ? (i > 0 ? tr('לפי התיקייה: {0}', LEVEL_TEXT[lvlName(i)]) : tr('ללא גישה')) : t));
+      const sel = h('select', { 'aria-label': tr('רמת גישה') }, opts);
+      sel.value = d?.level || '';
+      sel.addEventListener('change', async () => {
+        sel.disabled = true;
+        try { await setGrant(u.id, sel.value); UI.toast(tr('נשמר')); } catch (e) { fail(e); }
+        paint();
+      });
+      const ck = h('input', { type: 'checkbox', class: 'wa-ck', 'aria-label': tr('בחירה'), checked: selected.has(u.id), onchange: (e) => { e.target.checked ? selected.add(u.id) : selected.delete(u.id); paintBar(); } });
+      return h('div', { class: 'grant-row' + (selected.has(u.id) ? ' sel' : '') },
+        h('div', {}, h('div', { class: 'row' }, ck, h('b', {}, u.display_name || u.email)), h('small', { dir: 'ltr' }, u.email), h('small', {}, status(u.id))), sel);
+    }));
+    paintBar();
+  }
+  function paintBar() {
+    const n = selected.size;
+    const allOn = users.length && users.every((u) => selected.has(u.id));
+    const sel = h('select', { 'aria-label': tr('רמת גישה לנבחרים') }, [['', tr('הסר הרשאה ישירה (לפי התיקייה / ללא גישה)')], ['none', tr('חסום (ללא גישה)')], ['view', tr('צפייה בלבד')], ['mark', tr('צפייה + סימונים')], ['edit', tr('עריכה מלאה')]].map(([v, t]) => h('option', { value: v }, t)));
+    selBar.replaceChildren(
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!allOn, onchange: (e) => { users.forEach((u) => (e.target.checked ? selected.add(u.id) : selected.delete(u.id))); paint(); } }), tr('בחר את כל העובדים')),
+      n ? h('div', { class: 'row wrap' }, h('b', {}, tr('{0} נבחרו', n)), sel,
+        h('button', { class: 'btn sm primary', onclick: async () => {
+          const ids = [...selected];
+          try { for (const id of ids) await setGrant(id, sel.value); UI.toast(tr('עודכנו {0} עובדים', ids.length)); selected.clear(); } catch (e) { fail(e); }
+          paint();
+        } }, tr('החל על הנבחרים')),
+        h('button', { class: 'btn sm', onclick: () => { selected.clear(); paint(); } }, tr('נקה בחירה'))) : null);
+  }
+  paint();
   return m.promise;
 }
 

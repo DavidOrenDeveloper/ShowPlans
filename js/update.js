@@ -82,7 +82,9 @@ async function checkForUpdate0() {
 
 // ---------- הודעת "יש גרסה חדשה" לכל המשתמשים ----------
 let bannerEl = null;
+const dismissed = new Set(); // גרסאות שהמשתמש סגר ב-✕ (לא מציגים שוב באותה טעינה של האפליקציה)
 export function showUpdateBanner(version) {
+  if (version && dismissed.has(version)) return;
   if (bannerEl) { const b = bannerEl.querySelector('.ub-v'); if (b && version) b.textContent = tr('גרסה {0}', version); return; }
   const apply = () => {
     try { if (version) localStorage.setItem(KEY, version); } catch { /* ignore */ }
@@ -95,7 +97,7 @@ export function showUpdateBanner(version) {
   bannerEl.querySelector('.ub-v').textContent = version ? tr('גרסה {0}', version) : '';
   const ok = document.createElement('button'); ok.className = 'ub-go'; ok.textContent = tr('עדכן עכשיו'); ok.onclick = apply;
   const later = document.createElement('button'); later.className = 'ub-x'; later.textContent = '✕'; later.setAttribute('aria-label', tr('אחר כך'));
-  later.onclick = () => { bannerEl.classList.remove('show'); const el = bannerEl; setTimeout(() => el.remove(), 250); bannerEl = null; };
+  later.onclick = () => { if (version) dismissed.add(version); bannerEl.classList.remove('show'); const el = bannerEl; setTimeout(() => el.remove(), 250); bannerEl = null; };
   bannerEl.append(ok, later);
   document.body.append(bannerEl);
   requestAnimationFrame(() => bannerEl && bannerEl.classList.add('show'));
@@ -125,5 +127,7 @@ export function watchForUpdates(reg, hadController) {
   window.addEventListener('online', check);
   setInterval(check, 15 * 60 * 1000);
   setTimeout(compare, 3000);
+  // בדיקה מיד בפתיחת האפליקציה: דפדפן בודק עדכון בניווט רק פעם ב-24 שעות, ולכן בלי זה גרסה חדשה לא הייתה מזוהה עד שעוברים לרקע וחוזרים
+  check();
   if (reg.waiting && hadController) announce();
 }
