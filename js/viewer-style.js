@@ -140,8 +140,9 @@ export function installStyle(V) {
         const top = Math.max(60, 0), bottom = pr.top - sr.top - 10, W = this.stage.clientWidth;
         if (bottom < 80) return;
         this.bottomPad = this.H;
-        const b = boundsOf(this.selected), s = this.scale;
-        const x0 = this.tx + b.x0 * s, x1 = this.tx + b.x1 * s, y0 = this.ty + b.y0 * s, y1 = this.ty + b.y1 * s;
+        const b0 = boundsOf(this.selected), s = this.scale;
+        const c1 = this.o2d(b0.x0, b0.y0), c2 = this.o2d(b0.x1, b0.y1); // הסימון שמור בקואורדינטות המקור; התצוגה יכולה להיות מסובבת
+        const x0 = this.tx + Math.min(c1.x, c2.x) * s, x1 = this.tx + Math.max(c1.x, c2.x) * s, y0 = this.ty + Math.min(c1.y, c2.y) * s, y1 = this.ty + Math.max(c1.y, c2.y) * s;
         let dy = 0, dx = 0;
         if (y1 > bottom || y0 < top) dy = y1 - y0 > bottom - top ? top - y0 : (top + bottom) / 2 - (y0 + y1) / 2;
         if (x1 > W - 8 || x0 < 8) dx = x1 - x0 > W - 16 ? 8 - x0 : W / 2 - (x0 + x1) / 2;

@@ -320,13 +320,21 @@ const setSince = (t, v) => db.put('meta', { key: 'pull:' + t, v });
 // ושעודכן לאחרונה לפני הסמן של העובד, לא היה נמשך לעולם.
 async function fetchChanged(table, full = false) {
   const sb = client(); const since = full ? '1970-01-01T00:00:00Z' : await getSince(table);
-  const rows = []; let from = 0;
+  // עמודים קטנים עם מצביע לפי זמן עדכון (במקום offset): כל שאילתה נשארת קלה גם כשהרשאות השורות (RLS) יקרות לחישוב,
+  // ובמקרה של "statement timeout" (57014) מקטינים את העמוד ומנסים שוב.
+  const rows = [], seen = new Set();
+  let cursor = since, lim = 300, tries = 0;
   for (;;) {
-    const { data, error } = await sb.from(table).select('*').gte('updated_at', since).order('updated_at').order('id').range(from, from + 999);
-    if (error) throw error;
-    rows.push(...data);
-    if (data.length < 1000) break;
-    from += 1000;
+    const { data, error } = await sb.from(table).select('*').gte('updated_at', cursor).order('updated_at').order('id').limit(lim);
+    if (error) {
+      if (error.code === '57014' && lim > 40 && tries++ < 6) { lim = Math.max(40, Math.floor(lim / 2)); continue; }
+      throw error;
+    }
+    const fresh = data.filter((r) => !seen.has(r.id + '|' + r.updated_at));
+    fresh.forEach((r) => { seen.add(r.id + '|' + r.updated_at); rows.push(r); });
+    if (data.length < lim) break;
+    if (!fresh.length) { lim *= 2; if (lim > 6000) break; continue; } // עמוד שלם עם אותו זמן עדכון: מגדילים כדי להתקדם
+    cursor = data[data.length - 1].updated_at;
   }
   return { rows, since };
 }

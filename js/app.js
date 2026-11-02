@@ -33,7 +33,7 @@ async function route() {
     await openViewer(viewerRoot, parts[1], {
       page: q.get('page') ? parseInt(q.get('page'), 10) : undefined,
       v: q.get('v') || undefined, cmp: q.get('cmp') || undefined, query: q.get('q') || undefined,
-      pick: q.get('pick') === '1', x: num('x'), y: num('y'), z: num('z'),
+      pick: q.get('pick') === '1', print: q.get('print') === '1', x: num('x'), y: num('y'), z: num('z'),
     });
     return;
   }

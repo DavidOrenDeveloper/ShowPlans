@@ -379,6 +379,7 @@ function planMenu(id, anchor) {
     { label: tr('גרסאות'), icon: 'clock', onClick: () => A.versionsDialog(id) },
     ...(needsDownload(p) ? [{ label: tr('שמור במכשיר (לעבודה בלי קליטה)'), icon: 'cloud', onClick: () => downloadForOffline({ folders: [], plans: [id] }) }] : []),
     ...(isCloud() && isLocal(p.currentVersionId) && S.curVer(p)?.driveId ? [{ label: tr('הסר מהמכשיר (נשאר בענן)'), icon: 'trash', onClick: () => removeFromDevice({ folders: [], plans: [id] }) }] : []),
+    { label: tr('הדפסה / שמירה כ-PDF…'), icon: 'print', onClick: () => { location.hash = '#/p/' + id + '?print=1'; } },
     { label: tr('הורד PDF'), icon: 'download', onClick: () => A.downloadVersion(p.currentVersionId, p.name) },
     { label: tr('פתח באמצעות / שתף'), icon: 'share', onClick: () => A.openWithDialog(p) },
     ...(isAdmin() ? [{ label: tr('הרשאות עובדים…'), icon: 'lock', onClick: () => grantsDialog({ planId: id }) }] : []),

@@ -24,7 +24,8 @@ import { installPrint } from './viewer-print.js';
 import * as CS from './cloud-sync.js';
 import { isCloud, isAdmin } from './cloud.js';
 import { exportMeasurementsXlsx } from './xlsx-export.js';
-import { renderChangesCanvas } from './diffview.js';
+import { installCompare } from './viewer-compare.js';
+import { installArea } from './viewer-area.js';
 import * as SH from './item-share-ui.js';
 import { SplitHost } from './split.js';
 
@@ -49,9 +50,23 @@ const TOOLS = [
   { id: 'area', icon: 'polygon', label: tr('שטח') },
   { sep: true },
   { id: 'link', icon: 'link', label: tr('קישור') },
+  { sep: true },
+  { id: 'region', icon: 'crop', label: tr('אזור') },
 ];
 
 const lastView = new Map();
+// סיבוב תצוגה לכל עמוד (0/90/180/270), נשמר במכשיר. הקובץ והסימונים לא משתנים – זה רק אופן ההצגה.
+const ROT_KEY = 'plans.rot';
+const rotOf = (vid, n) => { try { return ((JSON.parse(localStorage.getItem(ROT_KEY) || '{}')[vid + ':' + n] | 0) % 360 + 360) % 360; } catch { return 0; } };
+const saveRot = (vid, n, r) => {
+  try {
+    const m = JSON.parse(localStorage.getItem(ROT_KEY) || '{}');
+    if (r) { delete m[vid + ':' + n]; m[vid + ':' + n] = r; } else delete m[vid + ':' + n];
+    const ks = Object.keys(m); for (const k of ks.slice(0, Math.max(0, ks.length - 500))) delete m[k];
+    localStorage.setItem(ROT_KEY, JSON.stringify(m));
+  } catch { /* ignore */ }
+};
+
 
 let cur = null;
 let split = null; // תצוגה מפוצלת פעילה (SplitHost) – במקום cur
@@ -73,7 +88,7 @@ export async function closeViewer() {
 }
 // כניסה לתצוגה מפוצלת מתוך צופה רגיל: בוחרים תוכנית שנייה, והתוכנית הנוכחית נשארת באותה נקודת תצוגה
 async function enterSplit(v) {
-  const p = await UI.planPicker({ title: tr('איזו תוכנית לפתוח לצד התוכנית הזו?') });
+  const p = await UI.planPicker({ title: tr('איזו תוכנית לפתוח לצד התוכנית הזו?'), startFolderId: v.plan?.folderId || null });
   if (!p || cur !== v) return;
   const root = v.root, keep = { page: v.pageNum, view: v.page ? v.viewCenter() : undefined, v: v.version?.id }, pid = v.planId;
   cur = null; await v.destroy();
@@ -103,6 +118,7 @@ class Viewer {
     this.pageToken = 0; this.searchToken = 0; this.textCache = new Map();
     this.cmp = null; this.split = false; this.lastTap = { t: 0, x: 0, y: 0 };
     this.eraseSet = null; this.styleOpen = false; this._editBefore = null;
+    this.rot = 0; this.region = null; this.cmpEditMode = null;
   }
 
   // ---------- בנייה ----------
@@ -116,8 +132,11 @@ class Viewer {
     this.layerB.el.style.display = 'none';
     this.layerN = new Layer(); this.layerP = new Layer();
     this.svg = svg('svg', { class: 'v-overlay', preserveAspectRatio: 'none' });
-    this.gSearch = svg('g'); this.gItems = svg('g'); this.gDraft = svg('g'); this.gSel = svg('g');
-    this.svg.append(this.gSearch, this.gItems, this.gDraft, this.gSel);
+    this.gSearch = svg('g'); this.gCmp = svg('g'); this.gItems = svg('g'); this.gDraft = svg('g'); this.gSel = svg('g');
+    // כל מה שמצויר במערכת הקואורדינטות של העמוד (סימונים, חיפוש, בחירה) נמצא בתוך gRot, שמסתובב יחד עם התוכנית
+    this.gRot = svg('g'); this.gRot.append(this.gSearch, this.gCmp, this.gItems, this.gDraft, this.gSel);
+    this.gRegion = svg('g');
+    this.svg.append(this.gRot, this.gRegion);
     this.loading = h('div', { class: 'v-loading' }, tr('טוען תוכנית…'));
     this.stage.append(this.layerA.el, this.layerB.el, this.layerN.el, this.layerP.el, this.svg, this.loading);
 
@@ -144,6 +163,7 @@ class Viewer {
       zbtn('zoomOut', tr('הקטן (לחיצה ארוכה = הקטנה רציפה)'), -1),
       this.fsBtn = btn('expand', tr('מסך מלא'), () => this.toggleFullscreen()),
       this.splitBtn = btn('split', tr('תצוגה מפוצלת: פתיחת 2–3 תוכניות במקביל'), () => this.splitEnter()),
+      btn('rotate', tr('סובב את התוכנית ב-90° (בכל לחיצה)'), () => this.rotate()),
       btn('maximize', tr('התאמה למסך: עמוד שלם / רוחב / גובה (לחיצות חוזרות מחליפות)'), () => this.cycleFit()),
       this.contBtn = btn('scroll', tr('גלילה רציפה (עמודים ברצף) / עמוד בודד'), () => this.setCont(!this.cont)));
 
@@ -168,7 +188,8 @@ class Viewer {
       btn('chevD', tr('תוצאה הבאה'), () => this.gotoMatch(this.search.idx + 1)),
       btn('list', tr('רשימת תוצאות'), () => this.openPanel('search')),
       btn('x', tr('סיום חיפוש'), () => this.clearSearch()));
-    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.panel);
+    this.regionBar = h('div', { class: 'v-region v-float hidden' });
+    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.regionBar, this.panel);
     this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': tr('כיווץ מסך מלא'), onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, tr('כיווץ מסך מלא')));
     // במסך מלא: חץ קטן שפותח/סוגר את כלי העריכה והאפשרויות מעל התוכנית
     this.fsToolsBtn = h('button', { class: 'v-fs-tools', 'aria-label': tr('כלי עריכה ואפשרויות'), onclick: () => { this.el.classList.toggle('fs-tools'); this._quietUntil = performance.now() + 250; } }, icon('chevU', 20));
@@ -251,6 +272,7 @@ class Viewer {
     else if (o.view || o.x != null) { const v = this.viewOf(o); if (v) this.applyView(v); }
     if (o.query) this.runSearch(o.query, true);
     if (o.cmp) this.openCompare(o.cmp);
+    if (o.print) { try { history.replaceState(history.state, '', '#/p/' + this.planId); } catch { /* ignore */ } this.printDialog(); }
   }
   viewOf(o) {
     if (o.view) return o.view;
@@ -285,6 +307,7 @@ class Viewer {
     if (o.pick) this.showPickBar();
     if (o.query) this.runSearch(o.query, true);
     if (o.cmp) this.openCompare(o.cmp);
+    if (o.print) { try { history.replaceState(history.state, '', '#/p/' + this.planId); } catch { /* ignore */ } this.printDialog(); }
   }
 
   showFallback(msg) {
@@ -305,7 +328,7 @@ class Viewer {
     const v = this.version;
     const isCur = v && this.plan.currentVersionId === v.id;
     this.titleEl.replaceChildren(
-      h('b', { title: this.plan.name }, dn(this.plan.name), h('span', { class: 'ted' }, icon('edit', 13))),
+      h('b', { title: this.plan.name }, dn(this.plan.name), h('span', { class: 'ted' }, icon(this.host ? 'swap' : 'edit', 13))),
       h('small', {}, [v && vs.length > 1 ? `V${v.number} · ${fmtDate(v.date)}` : null, v && !isCur ? tr('גרסה ישנה') : null].filter(Boolean).join(' · ') || S.planPathText(this.plan)));
     this.titleEl.classList.toggle('old', !!(v && !isCur));
   }
@@ -383,7 +406,10 @@ class Viewer {
     this.svg.setAttribute('viewBox', `${-tx / scale} ${-ty / scale} ${vw / scale} ${H / scale}`);
     this.layerA.place(scale, tx, ty, dpr);
     if (this.cmp) this.layerB.place(scale, tx, ty, dpr);
-    if (this.chCanvas) this.chCanvas.style.display = 'none'; // בזמן הזזה/זום מציגים את התוכנית הרגילה, ההדגשה מתעדכנת אחרי שהתנועה נעצרת
+    if (this.chEls) this.chEls.forEach((c) => { c.style.display = 'none'; }); // בזמן הזזה/זום מציגים את התוכנית הרגילה, ההדגשה מתעדכנת אחרי שהתנועה נעצרת
+    if (this.region) this.renderRegion();
+    if (this.cmpEditMode) this.renderCmpEdits();
+    if (this.cmpEditMode) this.renderCmpEdits();
     if (this.cont) { this.layerN.place(scale, tx, ty, dpr); this.layerP.place(scale, tx, ty, dpr); }
     if (this.selected || this.draft) { this.renderSel(); this.renderDraft(); }
   }
@@ -395,37 +421,13 @@ class Viewer {
     if (!this.page) return;
     const { scale, tx, ty, W, H, dpr } = this;
     this.layerA.renderDetail(scale, tx, ty, W, H, dpr);
-    if (this.cmp && this.cmp.mode === 'changes') this.renderChanges();
+    if (this.cmp && (this.cmp.mode === 'changes' || this.cmp.mode === 'sidechanges')) this.renderChanges();
     else if (this.cmp) this.layerB.renderDetail(scale, tx, ty, W, H, dpr);
     if (this.cont) {
       const nTop = ty + (this.ph + GAP) * scale, pBot = ty - GAP * scale;
       if (this.layerN.page && nTop < H) this.layerN.renderDetail(scale, tx, ty, W, H, dpr); else this.layerN.removeDetail();
       if (this.layerP.page && pBot > 0) this.layerP.renderDetail(scale, tx, ty, W, H, dpr); else this.layerP.removeDetail();
     }
-  }
-  // הדגשת שינויים (שכבה מחושבת מעל התוכנית)
-  async renderChanges() {
-    const c = this.cmp;
-    if (!c || c.mode !== 'changes' || !this.layerA.page || !this.layerB.page) return;
-    const gen = ++this.chGen || (this.chGen = 1);
-    this._chCancel?.();
-    const { scale, tx, ty, W, H, dpr } = this;
-    let d = Math.min(dpr || 1, 2); while (W * H * d * d > 4.5e6) d *= 0.9;
-    const mk = (L) => ({ page: L.page, k: scale * L.s * d, ox: (tx + L.sx + L.dx * scale) * d, oy: (ty + L.dy * scale) * d });
-    if (this.chBusy) this.chBusy.textContent = tr('מחשב הבדלים…');
-    let cv = null;
-    try { cv = await renderChangesCanvas({ A: mk(this.layerA), B: mk(this.layerB), w: Math.round(W * d), h: Math.round(H * d), emphasis: this.cmpSet.emph, tol: this.cmpSet.tol * d, colA: this.cmpSet.colA, colB: this.cmpSet.colB, onCancel: (f) => { this._chCancel = f; } }); } catch (e) { console.error(e); }
-    if (this.chBusy) this.chBusy.textContent = '';
-    if (!cv || gen !== this.chGen || !this.cmp || this.cmp.mode !== 'changes') return;
-    if (this.scale !== scale || this.tx !== tx || this.ty !== ty) return; // התוכנית זזה בינתיים: חישוב חדש כבר בדרך
-    cv.className = 'cmp-changes';
-    cv.style.width = W + 'px'; cv.style.height = H + 'px';
-    if (this.chCanvas) this.chCanvas.replaceWith(cv); else this.stage.insertBefore(cv, this.svg);
-    this.chCanvas = cv;
-  }
-  hideChanges() {
-    this.chGen = (this.chGen || 0) + 1; this._chCancel?.();
-    if (this.chCanvas) { this.chCanvas.remove(); this.chCanvas = null; }
   }
   // ---------- גלילה רציפה ----------
   placeNeighbors() {
@@ -443,6 +445,7 @@ class Viewer {
       const pg = await this.doc.getPage(n);
       if (tok !== this.pageToken || this.dead || !this.cont) return;
       L.n = n;
+      L.rot = rotOf(this.version.id, n);
       L.setPage(pg);
     }
     this.placeNeighbors();
@@ -463,6 +466,7 @@ class Viewer {
     this.layerA.dx = this.layerA.dy = 0;
     this.pageNum += dir; this.page = this.layerA.page; this.layerA.n = this.pageNum;
     this.pw = this.layerA.pw; this.ph = this.layerA.ph;
+    this.rot = this.layerA.rot || 0; this.updateRotTransform();
     this.pageToken++;
     this.selected = null; this.draft = null; this.gesture = this.gesture && this.gesture.type === 'pan' ? this.gesture : null; this.eraseSet = null;
     const ntx = tx + (oldpw - this.pw) * scale / 2;
@@ -536,8 +540,9 @@ class Viewer {
     const px = (x - this.tx) / this.scale, py = (y - this.ty) / this.scale;
     this.setView(ns, x - px * ns, y - py * ns);
   }
-  viewCenter() { return { cx: (this.vw / 2 - this.tx) / this.scale, cy: (this.H / 2 - this.ty) / this.scale, scale: this.scale }; }
-  applyView(v) { this.setView(v.scale, this.vw / 2 - v.cx * v.scale, this.H / 2 - v.cy * v.scale); }
+  // מרכז התצוגה בקואורדינטות העמוד המקורי (בלתי תלוי בסיבוב התצוגה)
+  viewCenter() { const o = this.d2o((this.vw / 2 - this.tx) / this.scale, (this.H / 2 - this.ty) / this.scale); return { cx: o.x, cy: o.y, scale: this.scale }; }
+  applyView(v) { const d = this.o2d(v.cx, v.cy); this.setView(v.scale, this.vw / 2 - d.x * v.scale, this.H / 2 - d.y * v.scale); }
   updateZoomUI() { this.zoomLabel.textContent = Math.round((this.scale / PT) * 100) + '%'; }
 
   // ---------- עמודים ----------
@@ -552,9 +557,12 @@ class Viewer {
     this.pageNum = n; this.page = page;
     if (this.cont) { this.layerN.clear(); this.layerP.clear(); }
     this.selected = null; this.draft = null; this.gesture = null; this.eraseSet = null;
+    this.clearRegion();
+    this.rot = rotOf(this.version.id, n); this.layerA.rot = this.rot;
     this.measure();
     this.layerA.setPage(page).then(() => { if (token === this.pageToken) this.loading.style.display = 'none'; });
     this.pw = this.layerA.pw; this.ph = this.layerA.ph;
+    this.updateRotTransform();
     if (this.cmp) this.loadCompareLayer();
     const saved = lastView.get(`${this.version.id}:${n}`);
     if (view) this.applyView(view);
@@ -582,9 +590,50 @@ class Viewer {
   }
 
   // ---------- קואורדינטות ----------
+  rotOfPage(n) { return rotOf(this.version.id, n); }
   local(e) { const r = this.stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
   viewX(x) { return this.split && x > this.vw ? x - this.vw : x; }
-  toPage(pt) { return { x: (this.viewX(pt.x) - this.tx) / this.scale, y: (pt.y - this.ty) / this.scale }; }
+  // נקודת מסך -> קואורדינטות העמוד המקורי (לפני סיבוב התצוגה), שבהן שמורים כל הסימונים
+  toPage(pt) { return this.d2o((this.viewX(pt.x) - this.tx) / this.scale, (pt.y - this.ty) / this.scale); }
+  // "תצוגה" = הקואורדינטות אחרי סיבוב התצוגה (pw×ph); "מקור" = לפני הסיבוב (ow×oh)
+  get ow() { return this.rot % 180 ? this.ph : this.pw; }
+  get oh() { return this.rot % 180 ? this.pw : this.ph; }
+  o2d(x, y) {
+    switch (this.rot) { case 90: return { x: this.oh - y, y: x }; case 180: return { x: this.ow - x, y: this.oh - y }; case 270: return { x: y, y: this.ow - x }; default: return { x, y }; }
+  }
+  d2o(X, Y) {
+    switch (this.rot) { case 90: return { x: Y, y: this.oh - X }; case 180: return { x: this.ow - X, y: this.oh - Y }; case 270: return { x: this.ow - Y, y: X }; default: return { x: X, y: Y }; }
+  }
+  rotMatrix(rot = this.rot, ow = this.ow, oh = this.oh) {
+    switch (rot) { case 90: return `matrix(0 1 -1 0 ${oh} 0)`; case 180: return `matrix(-1 0 0 -1 ${ow} ${oh})`; case 270: return `matrix(0 -1 1 0 0 ${ow})`; default: return ''; }
+  }
+  updateRotTransform() { this.gRot.setAttribute('transform', this.rotMatrix()); }
+  // סיבוב התוכנית ב-90° עם כיוון השעון (נשמר לעמוד הזה). הקובץ והסימונים לא משתנים – זה רק אופן ההצגה.
+  rotate() {
+    if (!this.page || this.dead) return;
+    if (this.draft) this.cancelDraft();
+    const oldPh = this.ph, B = this.cmp && this.layerB.page ? this.layerB : null, bh = B ? B.ph : 0;
+    const reg = this.region ? { ...this.region } : null;
+    this.rot = (this.rot + 90) % 360;
+    saveRot(this.version.id, this.pageNum, this.rot);
+    this.layerA.rot = this.rot;
+    this.layerA.setPage(this.page);
+    this.pw = this.layerA.pw; this.ph = this.layerA.ph;
+    this.updateRotTransform();
+    if (B) { // תוכנית ההשוואה מסתובבת יחד עם הפתוחה, וההיסט שלה מתעדכן בהתאם
+      const ndx = oldPh - B.dy - B.s * bh, ndy = B.dx;
+      B.rot = (B.rot + 90) % 360; B.setPage(B.page); B.dx = ndx; B.dy = ndy;
+    }
+    if (reg) this.region = { x0: oldPh - reg.y1, y0: reg.x0, x1: oldPh - reg.y0, y1: reg.x1 };
+    this.hideChanges();
+    this.fit(this.cont ? 'width' : 'page');
+    this.renderItems();
+    if (this.search) this.renderSearchHits();
+    if (this.cont) this.loadNeighbors();
+    this.scheduleDetail(30);
+    this.updateRegionUI();
+    UI.toast(tr('סיבוב: {0}°', this.rot), { ms: 1200 });
+  }
 
   // ---------- מחוות ----------
   onWheel(e) {
@@ -631,12 +680,18 @@ class Viewer {
     this.assist = null;
     if (g && g.hold) clearTimeout(g.hold);
     if (g && g.type === 'erase') { this.eraseSet = null; this.renderItems(); }
+    if (g && g.type === 'region') { if (g.hd === 'new') this.clearRegion(); else { this.region = g.r0; this.renderRegion(); } }
+    if (g && g.type === 'cmpedit') this.gDraft.textContent = '';
     if (g && (g.type === 'drag' || g.type === 'pen' || g.type === 'seg')) this.draft = null;
     this.gesture = null;
     this.renderDraft();
   }
   startPinch() {
     const [a, b] = [...this.ptrs.values()];
+    if (this.cmp && this.alignDrag && this.layerB.page) { // יישור ידני של תוכנית ההשוואה: צביטה = שינוי גודל שלה (סביב מרכז הצביטה), הזזה = הזזה שלה
+      this.pinch = { mode: 'align', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, c0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+      return;
+    }
     const sel = this.selected;
     if (sel && sel.type === 'text' && this.canEditItem(sel)) { // צביטה על טקסט נבחר משנה את גודל הטקסט ולא את הזום
       const mid = this.toPage({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
@@ -652,6 +707,13 @@ class Viewer {
     const [a, b] = [...this.ptrs.values()];
     const p = this.pinch;
     const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    if (p.mode === 'align') { // צביטה: שינוי גודל + הזזה של התוכנית שנבחרה, בצעדים קטנים
+      const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      this.relMove(c.x - p.c0.x, c.y - p.c0.y);
+      this.relZoom(d / p.d0, this.viewX(c.x), c.y);
+      p.d0 = d; p.c0 = c;
+      return;
+    }
     if (p.mode === 'text') {
       this.selected.fontSize = Math.max(2, p.f0 * clamp(d / p.d0, 0.15, 10));
       this.renderItems();
@@ -739,8 +801,7 @@ class Viewer {
         g.x = pt.x; g.y = pt.y;
         break;
       case 'align':
-        this.layerB.dx += dx / this.scale; this.layerB.dy += dy / this.scale;
-        this.layerB.place(this.scale, this.tx, this.ty, this.dpr);
+        this.relMove(dx, dy);
         g.x = pt.x; g.y = pt.y; g.moved = true;
         break;
       case 'drag': this.draft.pts[1] = LINE_TOOLS.has(this.draft.type) ? ps(this.draft.pts[0]) : p; this.renderDraft(); this.edgeCheck(g, pt); break;
@@ -756,6 +817,8 @@ class Viewer {
         break;
       }
       case 'erase': this.eraseAt(g.last, p); g.last = p; break;
+      case 'region': this.regionMove(g, pt); break;
+      case 'cmpedit': this.cmpEditMove(g, p); break;
       case 'seg':
         if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, ps(g.p0)] }; this.renderDraft(); this.edgeCheck(g, pt); }
         break;
@@ -798,7 +861,8 @@ class Viewer {
         const pm = this.pinch;
         this.pinch = null;
         if (pm.mode === 'text') { this.commitMod(pm.before, this.selected).then(() => this.renderProps()); return; }
-        if (this.ptrs.size === 1) { const [id, q] = [...this.ptrs][0]; this.gesture = { type: 'pan', id, x: q.x, y: q.y, sx: q.x, sy: q.y, moved: true, t0: 0 }; }
+        if (pm.mode === 'align') { this.scheduleDetail(30); this.cmpUI?.refresh?.(); }
+        if (this.ptrs.size === 1) { const [id, q] = [...this.ptrs][0]; this.gesture = { type: this.cmp && this.alignDrag ? 'align' : 'pan', id, x: q.x, y: q.y, sx: q.x, sy: q.y, moved: true, t0: 0 }; }
       }
       return;
     }
@@ -813,7 +877,9 @@ class Viewer {
         if (!g.moved && performance.now() - g.t0 < 600) this.onTap(pt);
         else if (g.moved && !g.mouse) this.maybeSwipe(g, pt);
         break;
-      case 'align': this.scheduleDetail(30); break;
+      case 'align': this.scheduleDetail(30); this.cmpUI?.refresh?.(); break;
+      case 'region': this.regionUp(g, pt); break;
+      case 'cmpedit': this.cmpEditUp(g, p, pt); break;
       case 'drag': {
         const d = this.draft; this.draft = null;
         if (d && this.shiftDown && LINE_TOOLS.has(d.type)) d.pts[1] = snap45(d.pts[0], p);
@@ -881,7 +947,8 @@ class Viewer {
     if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || k.toLowerCase() === 'z')) { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; } // לפי המקש הפיזי: עובד גם במקלדת בעברית
     if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || k.toLowerCase() === 'y')) { e.preventDefault(); this.redo(); return; }
     if (k === 'Escape') {
-      if (this.draft) this.cancelDraft();
+      if (this.region) this.clearRegion();
+      else if (this.draft) this.cancelDraft();
       else if (this.selected) this.select(null);
       else if (this.tool !== 'pan') { this.tool = 'pan'; this.updateToolUI(); this.renderProps(); }
       else this.goBack();
@@ -893,6 +960,7 @@ class Viewer {
     else if (k === '-') this.zoomBy(1 / 1.4);
     else if (k === '0') this.setZoom100();
     else if (k.toLowerCase() === 'f') this.fit('page');
+    else if (k.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) this.rotate();
     else if (k.toLowerCase() === 'w') this.fit('width');
     else if (k === 'PageDown') this.goPage(this.pageNum + 1);
     else if (k === 'PageUp') this.goPage(this.pageNum - 1);
@@ -904,11 +972,15 @@ class Viewer {
 
   // ---------- כלים ----------
   setTool(t) {
-    if (t !== 'pan' && t !== 'select' && !CS.canMarkPlan(this.planId)) { UI.toast(tr('בתוכנית הזו יש לך הרשאת צפייה בלבד. סימון דורש הרשאת סימון מהמנהל'), { type: 'error' }); return; }
+    if (t !== 'pan' && t !== 'select' && t !== 'region' && !CS.canMarkPlan(this.planId)) { UI.toast(tr('בתוכנית הזו יש לך הרשאת צפייה בלבד. סימון דורש הרשאת סימון מהמנהל'), { type: 'error' }); return; }
+    if (this.cmp && this.cmpNoteMode && ['text', 'eraser', 'measure', 'area', 'calibrate', 'link'].includes(t)) { UI.toast(tr('בהשוואה אפשר לצייר חץ / מלבן / עיגול / הדגשה / עט / קו. כדי להשתמש בכלי הזה כבו את "צייר על ההשוואה בלבד"'), { ms: 5000 }); return; }
     if (t === 'link' && !CS.canEditPlanItems(this.planId)) { UI.toast(tr('קישורים בין תוכניות דורשים הרשאת עריכה מלאה'), { type: 'error' }); return; }
     if ((t === 'measure' || t === 'area') && !this.calibs.get(this.pageNum)) { this.needCalibration(t); return; }
     if (this.draft) { this.draft = null; this.renderDraft(); }
+    if (this.tool === 'region' && t !== 'region') this.clearRegion();
+    if (this.tool === 'cmpedit' && t !== 'cmpedit') { this.cmpEditMode = null; this.syncCmpEditUI?.(); }
     this.tool = t;
+    if (t === 'region' && !this.region) UI.toast(tr('גררו על התוכנית כדי לסמן אזור. אחר כך אפשר להזיז, לשנות גודל, להתקרב – ולשמור כתמונה או להדפיס'), { ms: 4500 });
     if (t !== 'select') this.select(null, true);
     this.updateToolUI(); this.renderProps();
   }
@@ -916,7 +988,7 @@ class Viewer {
     const canMark = CS.canMarkPlan(this.planId), canEdit = CS.canEditPlanItems(this.planId);
     Object.entries(this.toolBtns).forEach(([id, b]) => {
       b.classList.toggle('on', id === this.tool);
-      const off = id !== 'pan' && id !== 'select' && (!canMark || (id === 'link' && !canEdit));
+      const off = id !== 'pan' && id !== 'select' && id !== 'region' && (!canMark || (id === 'link' && !canEdit));
       b.disabled = off; b.style.opacity = off ? '0.4' : '';
     });
     this.stage.dataset.tool = this.tool;
@@ -939,6 +1011,8 @@ class Viewer {
         this.gesture = { type: 'pan', id: e.pointerId, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t0: performance.now(), moved: false, mouse: e.pointerType === 'mouse' };
         return;
       }
+      case 'region': this.regionDown(pt, e, base); return;
+      case 'cmpedit': this.gesture = { ...base, type: 'cmpedit', p0: p }; return;
       case 'text': this.gesture = { ...base, type: 'text', x: pt.x, y: pt.y }; return;
       case 'measure': case 'calibrate':
         if (this.draft && this.draft.wait) { this.gesture = { ...base, type: 'seg2', x: pt.x, y: pt.y }; return; }
@@ -1086,6 +1160,7 @@ class Viewer {
   async commitNew(d) {
     if (d.type === 'calibrate') { this.calibrateFromPoints(d.pts); return; }
     if (d.type === 'link') { await this.createLink(d); return; }
+    if (this.cmpNoteActive(d.type)) { this.addCmpNote(d); return; } // סימון על ההשוואה בלבד
     const it = this.newItem(d);
     await this.addItem(it);
     // הפריט שנוצר נשאר נבחר: שינוי צבע/גודל חל עליו, ורק נגיעה במקום אחר מתחילה פריט חדש
@@ -1120,12 +1195,13 @@ class Viewer {
     const list = c.multi ? (undo ? [...c.multi].reverse() : c.multi) : [c];
     for (const e of list) await (undo ? this.setItemState(e.after, e.before) : this.setItemState(e.before, e.after));
   }
-  async undo() { const c = this.history.pop(); if (!c) return; await this.applyEntry(c, true); this.redoStack.push(c); this.updateUndo(); }
-  async redo() { const c = this.redoStack.pop(); if (!c) return; await this.applyEntry(c, false); this.history.push(c); this.updateUndo(); }
+  async undo() { if (this.cmp && this.cmpNoteMode) { this.cmpUndo(); return; } const c = this.history.pop(); if (!c) return; await this.applyEntry(c, true); this.redoStack.push(c); this.updateUndo(); }
+  async redo() { if (this.cmp && this.cmpNoteMode) { this.cmpRedo(); return; } const c = this.redoStack.pop(); if (!c) return; await this.applyEntry(c, false); this.history.push(c); this.updateUndo(); }
   updateUndo() {
     if (!this.undoBtn) return;
-    this.undoBtn.disabled = !this.history.length;
-    this.redoBtn.disabled = !this.redoStack.length;
+    const cm = this.cmp && this.cmpNoteMode ? this.cmp : null;
+    this.undoBtn.disabled = cm ? !cm.hist.length : !this.history.length;
+    this.redoBtn.disabled = cm ? !cm.redo.length : !this.redoStack.length;
   }
 
   hit(p) {
@@ -1630,8 +1706,8 @@ class Viewer {
     if (m.page !== this.pageNum) await this.goPage(m.page, { fresh: true });
     const r = m.d.rects(m.start, m.end)[0];
     if (r) {
-      const sc = Math.max(this.scale, PT * 1.5);
-      this.setView(sc, this.vw / 2 - (r.x + r.w / 2) * sc, this.H / 2 - (r.y + r.h / 2) * sc);
+      const sc = Math.max(this.scale, PT * 1.5), c = this.o2d(r.x + r.w / 2, r.y + r.h / 2);
+      this.setView(sc, this.vw / 2 - c.x * sc, this.H / 2 - c.y * sc);
     }
     this.renderSearchHits(); this.renderSearchList(); this.updateSearchBar();
     this.searchList?.querySelector('.result.cur')?.scrollIntoView({ block: 'nearest' });
@@ -1683,150 +1759,6 @@ class Viewer {
     }
   }
 
-  // ---------- השוואה ----------
-  async openCompare(preVid) {
-    if (this.cont) this.setCont(false, { quiet: true });
-    if (this.cmpUI) { if (preVid) { this.cmpUI.setVersion(preVid); this.cmpUI.apply(); } return; }
-    if (!this.doc) return;
-    const planSel = h('select', {}), verSel = h('select', {});
-    const plans = [...S.P.plans.values()].sort((a, b) => natural(S.planPathText(a) + a.name, S.planPathText(b) + b.name));
-    plans.forEach((p) => planSel.append(h('option', { value: p.id }, p.id === this.planId ? tr('{0} (התוכנית הזו)', dn(p.name)) : `${dn(p.name)} — ${S.planPathText(p)}`)));
-    const fillVers = (sel) => {
-      verSel.textContent = '';
-      S.versionsOf(planSel.value).forEach((v) => verSel.append(h('option', { value: v.id }, `V${v.number} – ${fmtDate(v.date)}${v.id === this.version.id ? tr(' (הפתוחה)') : ''}${S.P.plans.get(v.planId)?.currentVersionId === v.id ? tr(' · נוכחית') : ''}`)));
-      if (sel) verSel.value = sel;
-    };
-    const setVersion = (vid) => { const v = S.P.versions.get(vid); if (!v) return; planSel.value = v.planId; fillVers(vid); };
-    planSel.value = this.planId; fillVers();
-    const other = S.versionsOf(this.planId).find((v) => v.id !== this.version.id);
-    if (other) verSel.value = other.id;
-    planSel.onchange = () => fillVers();
-    const pageIn = h('input', { type: 'number', min: 1, value: this.pageNum, inputMode: 'numeric', class: 'num' });
-    this.cmpSet = this.cmpSet || { emph: 0.6, tol: 1.5, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff' };
-    const modeSel = h('select', {}, h('option', { value: 'changes' }, tr('הדגשת שינויים')), h('option', { value: 'diff' }, tr('הבדלים (צבעים)')), h('option', { value: 'overlay' }, tr('שקיפות')), h('option', { value: 'split' }, tr('זו לצד זו')));
-    const op = h('input', { type: 'range', min: 0, max: 100, value: Math.round(this.cmpSet.emph * 100) });
-    const opLabel = h('span', {}, tr('עוצמת ההדגשה'));
-    const tolIn = h('input', { type: 'range', min: 0, max: 8, step: 0.5, value: this.cmpSet.tol, 'aria-label': tr('רגישות') });
-    const tolBox = h('span', { class: 'cmp-tol' }, h('span', {}, tr('התעלמות מהזזות קטנות')), tolIn);
-    const busy = h('small', { class: 'cmp-busy' });
-    // צבעים להבדלים: אפשר לבחור כרצון (למשל כשהקירות בתוכנית כחולים)
-    const colorIn = (key, label) => {
-      const inp = h('input', { type: 'color', value: this.cmpSet[key === 'colA' ? 'colA' : 'colB'], 'aria-label': label });
-      inp.oninput = () => { this.cmpSet[key] = inp.value; prefs[key === 'colA' ? 'cmpA' : 'cmpB'] = inp.value; savePrefs(); if (this.cmp && this.cmp.mode === 'changes') later(); };
-      inp.onchange = () => { if (this.cmp && this.cmp.mode === 'diff') this.setCompareMode('diff', this.cmp.opacity); };
-      return h('label', { class: 'cmp-col' }, h('span', {}, label), inp);
-    };
-    const colBox = h('span', { class: 'cmp-colors' }, colorIn('colA', tr('צבע: רק בפתוחה')), colorIn('colB', tr('צבע: רק בהשוואה')));
-    this.chBusy = busy;
-    const syncControls = () => {
-      const m = modeSel.value;
-      opLabel.textContent = m === 'changes' ? tr('עוצמת ההדגשה') : m === 'diff' ? tr('עוצמת התוכנית להשוואה') : tr('שקיפות');
-      tolBox.style.display = m === 'changes' ? '' : 'none';
-      colBox.style.display = m === 'changes' || m === 'diff' ? '' : 'none';
-      op.disabled = m === 'split';
-    };
-    let chT = 0;
-    const later = () => { clearTimeout(chT); chT = setTimeout(() => this.renderChanges(), 160); };
-    tolIn.oninput = () => { this.cmpSet.tol = +tolIn.value; if (this.cmp && this.cmp.mode === 'changes') later(); };
-    const legend = h('div', { class: 'cmp-legend' });
-    const apply = async () => {
-      const vid = verSel.value;
-      if (!vid) return;
-      legend.textContent = tr('טוען…');
-      try { await this.startCompare(vid, parseInt(pageIn.value, 10) || 1, modeSel.value, op.value / 100); } catch (e) { console.error(e); UI.toast(tr('לא ניתן לטעון את התוכנית להשוואה'), { type: 'error' }); legend.textContent = ''; return; }
-      this.updateCmpLegend(legend);
-    };
-    modeSel.onchange = () => {
-      const m = modeSel.value;
-      op.value = m === 'changes' ? Math.round(this.cmpSet.emph * 100) : m === 'overlay' ? 50 : 100;
-      syncControls();
-      if (this.cmp) { this.setCompareMode(m, op.value / 100); this.updateCmpLegend(legend); }
-    };
-    op.oninput = () => {
-      if (!this.cmp) return;
-      const val = op.value / 100;
-      this.cmp.opacity = val;
-      if (this.cmp.mode === 'changes') { this.cmpSet.emph = val; later(); }
-      else if (this.cmp.mode === 'overlay' || this.cmp.mode === 'diff') this.layerB.el.style.opacity = val;
-    };
-    syncControls();
-    const nudge = (dx, dy) => { if (!this.cmp) return; const st = 1.5 / this.scale; this.layerB.dx += dx * st; this.layerB.dy += dy * st; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(200); };
-    const nb = (ic, fn, label) => h('button', { class: 'icon-btn sm', 'aria-label': label, onclick: fn }, icon(ic, 18));
-    const alignBtn = h('button', { class: 'btn sm', onclick: () => { this.alignDrag = !this.alignDrag; alignBtn.classList.toggle('primary', this.alignDrag); if (this.alignDrag) UI.toast(tr('בכלי ההזזה: גררו את המסך כדי להזיז את התוכנית להשוואה')); } }, tr('גרור ליישור'));
-    const sc = (f) => { if (!this.cmp) return; this.layerB.s *= f; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(200); };
-    this.cmpBar.replaceChildren(
-      h('div', { class: 'cmp-row' }, h('b', {}, tr('השוואה עם:')), planSel, verSel, h('span', {}, tr('עמוד')), pageIn, modeSel,
-        h('button', { class: 'btn sm primary', onclick: apply }, tr('השווה')), h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור השוואה'), onclick: () => this.closeCompare() }, icon('x', 18))),
-      h('div', { class: 'cmp-row' }, opLabel, op, tolBox, colBox, busy, h('span', { class: 'sp' }), h('span', {}, tr('יישור:')),
-        nb('chevU', () => nudge(0, -1), tr('למעלה')), nb('chevD', () => nudge(0, 1), tr('למטה')), nb('chevR', () => nudge(1, 0), tr('ימינה')), nb('chevL', () => nudge(-1, 0), tr('שמאלה')),
-        h('button', { class: 'btn sm', onclick: () => sc(1.002) }, tr('הגדל')), h('button', { class: 'btn sm', onclick: () => sc(1 / 1.002) }, tr('הקטן')),
-        alignBtn,
-        h('button', { class: 'btn sm', onclick: () => { if (!this.cmp) return; this.layerB.dx = this.layerB.dy = 0; this.layerB.s = this.cmp.baseS; this.layerB.place(this.scale, this.tx, this.ty, this.dpr); this.scheduleDetail(50); } }, tr('אפס יישור'))),
-      legend);
-    this.cmpBar.classList.remove('hidden');
-    this.el.classList.add('cmp-open');
-    this.cmpUI = { setVersion, apply };
-    if (preVid) { setVersion(preVid); apply(); }
-  }
-  updateCmpLegend(el) {
-    const mode = this.cmp?.mode;
-    el.replaceChildren(h('small', {},
-      mode === 'changes' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · אפור = זהה (מוחלש ככל שמגדילים את עוצמת ההדגשה). "התעלמות מהזזות קטנות" מסנן הבדלים שנובעים מאי-יישור. ') : mode === 'diff' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · שחור = זהה. ') : mode === 'overlay' ? tr('התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ') : tr('שתי התוכניות זו לצד זו עם זום והזזה משותפים. '),
-      tr('זו השוואה חזותית בלבד – לא זיהוי אוטומטי של שינויים, והיא אמינה רק כשהתוכניות מיושרות.'),
-      this.cmp?.sizeNote ? ' ' + this.cmp.sizeNote : ''));
-  }
-  async startCompare(vid, pageNo, mode, opacity) {
-    const blob = await S.getFileBlob(vid);
-    if (!blob) throw new Error('missing');
-    const doc = await openPdf(blob, { interactive: true });
-    destroyDoc(this.cmpDoc);
-    this.cmpDoc = doc;
-    this.cmp = { vid, page: clamp(pageNo, 1, doc.numPages), mode, opacity, baseS: 1 };
-    await this.loadCompareLayer();
-    this.setCompareMode(mode, opacity);
-  }
-  async loadCompareLayer() {
-    if (!this.cmpDoc || !this.cmp) return;
-    const pg = await this.cmpDoc.getPage(clamp(this.cmp.page, 1, this.cmpDoc.numPages));
-    await this.layerB.setPage(pg);
-    this.layerB.dx = this.layerB.dy = 0;
-    const r = this.layerA.pw / this.layerB.pw;
-    this.cmp.sizeNote = '';
-    if (Math.abs(r - 1) > 0.01) { this.layerB.s = r; this.cmp.baseS = r; this.cmp.sizeNote = tr('גודל העמודים שונה – הותאם לפי הרוחב, כדאי לוודא יישור.'); } else { this.layerB.s = 1; this.cmp.baseS = 1; }
-  }
-  setCompareMode(mode, opacity) {
-    const c = this.cmp; c.mode = mode; c.opacity = opacity;
-    this.split = mode === 'split';
-    const diff = mode === 'diff';
-    const changes = mode === 'changes';
-    if (changes) { this.cmpSet = this.cmpSet || { emph: 0.6, tol: 1.5, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff' }; this.cmpSet.emph = opacity; } else this.hideChanges();
-    this.layerA.tint = diff ? this.cmpSet.colA : null;
-    this.layerB.tint = diff ? this.cmpSet.colB : null;
-    const B = this.layerB.el;
-    B.style.display = changes ? 'none' : '';
-    B.style.isolation = 'isolate';
-    B.style.mixBlendMode = diff ? 'multiply' : 'normal';
-    B.style.opacity = mode === 'overlay' || diff ? opacity : 1;
-    this.measure();
-    this.layerA.renderBase(); this.layerB.renderBase();
-    this.layerA.removeDetail(); this.layerB.removeDetail();
-    this.fit(this.fitMode || 'page');
-    this.scheduleDetail(50);
-  }
-  closeCompare() {
-    this.cmp = null; this.split = false; this.alignDrag = false; this.cmpUI = null;
-    this.hideChanges();
-    this.layerA.tint = null;
-    this.layerB.el.style.display = 'none'; this.layerB.removeDetail();
-    destroyDoc(this.cmpDoc); this.cmpDoc = null;
-    this.cmpBar.classList.add('hidden');
-    this.el.classList.remove('cmp-open');
-    this.measure();
-    this.layerA.renderBase(); this.layerA.removeDetail();
-    this.fit(this.fitMode || 'page');
-    this.scheduleDetail(50);
-  }
-
   // ---------- תפריטים ----------
   layersDialog() {
     const mk = (key, label) => {
@@ -1862,6 +1794,8 @@ class Viewer {
     UI.menu(anchor, [
       { label: tr('גרסאות'), icon: 'clock', onClick: () => A.versionsDialog(this.planId, { onChange: () => this.afterVersionsChange() }) },
       { label: tr('השוואת תוכניות'), icon: 'compare', onClick: () => this.openCompare() },
+      { label: tr('סובב ב-90°'), icon: 'rotate', onClick: () => this.rotate() },
+      { label: tr('בחירת אזור: שמירה כתמונה / הדפסה'), icon: 'crop', onClick: () => this.setTool('region') },
       { label: this.cont ? tr('מצב עמוד בודד') : tr('גלילה רציפה (עמודים ברצף)'), icon: 'scroll', onClick: () => this.setCont(!this.cont) },
       { label: tr('זיהוי טקסט בסריקה (OCR)…'), icon: 'search', onClick: () => this.ocrDialog() },
       { label: tr('שכבות (הצגה/הסתרה)'), icon: 'layers', onClick: () => this.layersDialog() },
@@ -1948,4 +1882,6 @@ class Viewer {
 }
 
 installStyle(Viewer);
-installPrint(Viewer);
+installCompare(Viewer);
+installArea(Viewer);
+installPrint(Viewer, rotOf);

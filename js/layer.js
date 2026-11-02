@@ -21,15 +21,19 @@ export class Layer {
     this.page = null; this.pw = 0; this.ph = 0;
     this.dx = 0; this.dy = 0; this.s = 1; this.sx = 0;
     this.tint = null;
+    this.rot = 0; // סיבוב נוסף (0/90/180/270) מעל הסיבוב המובנה של העמוד
     this.base = null; this.detail = null; this.baseK = 1;
     this.baseGen = 0; this.gen = 0; this.dState = null;
     this.baseTask = null; this.dTask = null;
   }
 
+  // viewport לפי הסיבוב הנוכחי של השכבה
+  vp(scale) { return this.page.getViewport({ scale, rotation: (((this.page.rotate || 0) + (this.rot || 0)) % 360 + 360) % 360 }); }
+
   setPage(page) {
     this.cancel();
     this.page = page;
-    const vp = page.getViewport({ scale: 1 });
+    const vp = this.vp(1);
     this.pw = vp.width; this.ph = vp.height;
     this.el.textContent = '';
     this.detail = null; this.dState = null;
@@ -53,7 +57,7 @@ export class Layer {
     this.baseTask?.cancel();
     const c = this.base;
     const ctx = c.getContext('2d');
-    const task = this.page.render({ canvasContext: ctx, viewport: this.page.getViewport({ scale: this.baseK }), background: '#ffffff' });
+    const task = this.page.render({ canvasContext: ctx, viewport: this.vp(this.baseK), background: '#ffffff' });
     this.baseTask = task;
     try { await task.promise; } catch (e) {
       if (e && e.name === 'RenderingCancelledException') return;
@@ -109,7 +113,7 @@ export class Layer {
     const ox = ex * d, oy = ey * d;
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(ox, oy, this.pw * k, this.ph * k);
-    const vp = this.page.getViewport({ scale: k });
+    const vp = this.vp(k);
     const task = this.page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, ox, oy], background: 'rgba(0,0,0,0)' });
     this.dTask = task;
     try { await task.promise; } catch (e) {

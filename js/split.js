@@ -60,12 +60,13 @@ export class SplitHost {
     await this.fill(slot, planId, opts);
   }
   async pickFor(v) {
-    const p = await UI.planPicker({ title: tr('איזו תוכנית להציג כאן?') });
+    // נפתח בתיקייה של התוכנית שמוצגת כרגע בתצוגה הזו (למשל "לביצוע קומה A"), כדי להחליף במהירות לתוכנית אחות
+    const p = await UI.planPicker({ title: tr('איזו תוכנית להציג כאן?'), startFolderId: v.plan?.folderId || null, currentId: v.planId });
     if (p) await this.replace(v, p.id, {});
   }
   async addByPicker() {
     if (this.slots.length >= MAX_PANES) { UI.toast(tr('אפשר עד {0} תצוגות במקביל', MAX_PANES)); return; }
-    const p = await UI.planPicker({ title: tr('איזו תוכנית להוסיף לתצוגה?') });
+    const p = await UI.planPicker({ title: tr('איזו תוכנית להוסיף לתצוגה?'), startFolderId: (this.active || this.slots[0]?.v)?.plan?.folderId || null });
     if (p) await this.add(p.id, {});
   }
   async close(v) {

@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.18.0';
+const VERSION = '1.19.0';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -13,6 +13,7 @@ const CORE = [
   "index.html",
   "js/actions.js",
   "js/app.js",
+  "js/autoalign.js",
   "js/backstack.js",
   "js/backup.js",
   "js/browser.js",
@@ -53,6 +54,8 @@ const CORE = [
   "js/update.js",
   "js/util.js",
   "js/version.js",
+  "js/viewer-area.js",
+  "js/viewer-compare.js",
   "js/viewer-print.js",
   "js/viewer-style.js",
   "js/viewer.js",

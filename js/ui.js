@@ -255,12 +255,13 @@ export function folderScopeSelect(value = '', onChange) {
 }
 
 // בורר תוכנית: עץ תיקיות באותו סדר כמו באפליקציה, חיפוש ואפשרות לצמצם לתיקייה מסוימת
-export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new Set() } = {}) {
+// startFolderId: נפתח ישר בתיקייה הזו (אפשר להרחיב בבורר "חיפוש ב"); currentId: התוכנית שמוצגת עכשיו (מסומנת)
+export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new Set(), startFolderId = null, currentId = null } = {}) {
   const q = h('input', { type: 'search', placeholder: tr('חיפוש תוכנית…') });
   const list = h('div', { class: 'picker-list tall' });
   const open = new Set();
   let m;
-  const scopeSel = folderScopeSelect('', () => render());
+  const scopeSel = folderScopeSelect(startFolderId || '', () => render());
   const LIMIT = 400;
   function render() {
     list.textContent = '';
@@ -284,8 +285,8 @@ export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new
       }
       for (const p of node.plans) {
         if (shown++ >= LIMIT) return;
-        list.append(h('button', { class: 'picker-plan', type: 'button', style: { paddingInlineStart: 10 + depth * 16 + 'px' }, onclick: () => m.close(p) },
-          icon('file', 18), h('span', { class: 'col' }, h('b', {}, dn(p.name)), filtering ? h('small', {}, S.planPathText(p)) : null)));
+        list.append(h('button', { class: 'picker-plan' + (p.id === currentId ? ' cur' : ''), type: 'button', style: { paddingInlineStart: 10 + depth * 16 + 'px' }, onclick: () => m.close(p) },
+          icon(p.id === currentId ? 'check' : 'file', 18), h('span', { class: 'col' }, h('b', {}, dn(p.name)), filtering ? h('small', {}, S.planPathText(p)) : null)));
       }
     };
     draw(root, 0);
@@ -294,5 +295,6 @@ export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new
   q.addEventListener('input', render);
   render();
   m = openModal({ title, body: h('div', {}, q, h('div', { class: 'scope-row' }, h('span', {}, tr('חיפוש ב:')), scopeSel), list), buttons: [{ text: tr('ביטול'), value: null }] });
+  if (currentId) setTimeout(() => list.querySelector('.picker-plan.cur')?.scrollIntoView({ block: 'center' }), 80);
   return m.promise.then((v) => v || null);
 }
