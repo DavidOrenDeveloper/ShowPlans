@@ -71,6 +71,9 @@ async function checkForUpdate0() {
     nw.addEventListener('statechange', chk); chk();
   });
   if (done !== 'ok') {
+    let why = '';
+    try { const r = await (await caches.open('plans-sw-error')).match('err'); if (r) why = await r.text(); } catch { /* ignore */ }
+    if (why) { try { const D = await import('./diag.js'); D.warn('update:install', why); } catch { /* ignore */ } UI.alertBox(tr('ההתקנה של הגרסה החדשה נכשלה. הסיבה: ') + why + tr('\n\nבדרך כלל זה אומר שקובץ חסר או לא הועלה לגיטהאב (או שהעלאה עדיין לא פורסמה). בדקו שכל הקבצים ששונו הועלו, ונסו שוב אחרי דקה-שתיים.'), { title: tr('העדכון נכשל') }); return; }
     UI.toast(done === 'timeout' ? tr('ההתקנה לוקחת יותר מדי זמן (חיבור איטי?). נסו שוב.') : tr('ההתקנה של הגרסה החדשה נכשלה. נסו שוב מאוחר יותר.'), { type: 'error', ms: 7000 });
     return;
   }

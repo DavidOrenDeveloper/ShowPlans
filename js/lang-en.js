@@ -1201,4 +1201,7 @@ export const EN = {
  "סובב ב-90°": "Rotate 90°",
  "בחירת אזור: שמירה כתמונה / הדפסה": "Select region: save as image / print",
  "מילוי": "Fill",
+ "ההתקנה של הגרסה החדשה נכשלה. הסיבה: ": "Installing the new version failed. Reason: ",
+ "\n\nבדרך כלל זה אומר שקובץ חסר או לא הועלה לגיטהאב (או שהעלאה עדיין לא פורסמה). בדקו שכל הקבצים ששונו הועלו, ונסו שוב אחרי דקה-שתיים.": "\n\nThis usually means a file is missing or was not uploaded to GitHub (or the upload is not published yet). Check that all changed files were uploaded and try again in a minute or two.",
+ "העדכון נכשל": "Update failed",
 };
