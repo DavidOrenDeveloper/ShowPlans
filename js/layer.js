@@ -11,7 +11,12 @@ function tintCanvas(ctx, x, y, w, hh, color) {
   ctx.restore();
 }
 
-const MAX_DETAIL_PIXELS = 16e6;
+let COARSE = false; try { COARSE = matchMedia('(pointer: coarse)').matches; } catch { /* ignore */ }
+const MAX_DETAIL_PIXELS = COARSE ? 7e6 : 16e6; // בטלפון קנבס גדול מדי גורם לקריסת הדף
+// "פירור" אבחוני: נשמר לפני רינדור כבד; אם הדף קורס, בפתיחה הבאה אפשר לראות מה קרה (ביומן התקלות)
+// תקרת רזולוציית רינדור (פיקסלי מכשיר לנקודת עמוד). בטלפון ברירת מחדל 64; אם הדף קרס באמצע רינדור – האפליקציה מורידה אותה אוטומטית (ראו app.js), כך שהזום נשאר מלא והחדות יורדת רק כמה שהמכשיר צריך
+export const safeK = () => { try { const v = parseFloat(localStorage.getItem('plans.safeK')); if (v > 0) return v; } catch { /* ignore */ } return COARSE ? 64 : Infinity; };
+const crumb = (o) => { try { localStorage.setItem('plans.crumb', JSON.stringify({ ...o, t: Date.now() })); } catch { /* ignore */ } };
 const MAX_BASE_PIXELS = 14e6;
 
 export class Layer {
@@ -104,6 +109,7 @@ export class Layer {
     this.dTask?.cancel();
     let d = dpr;
     if (W * H * d * d > MAX_DETAIL_PIXELS) d = Math.sqrt(MAX_DETAIL_PIXELS / (W * H));
+    if (k0 * d > safeK()) d = Math.max(0.25, safeK() / k0);
     const cw = Math.max(1, Math.round(W * d)), ch = Math.max(1, Math.round(H * d));
     const c = document.createElement('canvas');
     c.width = cw; c.height = ch;
@@ -114,12 +120,14 @@ export class Layer {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(ox, oy, this.pw * k, this.ph * k);
     const vp = this.vp(k);
+    crumb({ ph: 'detail', zoom: Math.round(k0 * 75), k: +k.toFixed(2), cw, ch, pw: Math.round(this.pw), phh: Math.round(this.ph) });
     const task = this.page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, ox, oy], background: 'rgba(0,0,0,0)' });
     this.dTask = task;
     try { await task.promise; } catch (e) {
       if (e && e.name === 'RenderingCancelledException') return;
       console.error(e); return;
     }
+    crumb({ ph: 'ok' });
     if (gen !== this.gen) return;
     if (this.tint) {
       const x0 = Math.max(0, ox), y0 = Math.max(0, oy);

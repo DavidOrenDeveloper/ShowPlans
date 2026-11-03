@@ -99,6 +99,13 @@ async function main() {
   } catch { /* ignore */ }
   registerSW();
   verifyAfterBoot();
+  // אם הדף קרס בפעם הקודמת (למשל מחוסר זיכרון בזום גבוה) – אין מי שיכתוב ליומן, אז בפתיחה הבאה רושמים מה היה בעיצומו
+  try {
+    const clean = localStorage.getItem('plans.clean'), cr = JSON.parse(localStorage.getItem('plans.crumb') || 'null');
+    if (clean === '0' && cr && cr.ph === 'detail') { import('./diag.js').then((D) => D.warn('crash-suspect', 'הדף נסגר באמצע רינדור בהגדלה גבוהה – מורידים את רזולוציית הרינדור המרבית במכשיר', cr)); try { const cur = parseFloat(localStorage.getItem('plans.safeK')) || 64; localStorage.setItem('plans.safeK', String(Math.max(8, Math.min(cur, Math.floor((cr.k || 64) * 0.6))))); } catch { /* ignore */ } }
+    localStorage.removeItem('plans.crumb'); localStorage.setItem('plans.clean', '0');
+    addEventListener('pagehide', () => { try { localStorage.setItem('plans.clean', '1'); } catch { /* ignore */ } });
+  } catch { /* ignore */ }
   db.requestPersist();
   if (isCloud()) { try { await startSync(); await maybeImportLocal(); } catch (e) { console.warn('sync start', e); } }
 }

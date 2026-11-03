@@ -32,7 +32,7 @@ import { SplitHost } from './split.js';
 
 const PT = 96 / 72; // "100%" = גודל אמיתי ב-96 DPI
 const GAP = 24;
-const MAXS = PT * 64; // עד 6400%
+const MAXS = PT * 64; // תקרה מוחלטת (6400%); בפועל מוגבל לפי גודל התוכנית והמכשיר – ראו maxScale()
 const TOOLS = [
   { id: 'pan', icon: 'move', label: tr('הזזה') },
   { id: 'select', icon: 'cursor', label: tr('בחירה') },
@@ -374,6 +374,7 @@ class Viewer {
     if (!this.page) return;
     if (this.fitMode) this.fit(this.fitMode); else this.setView(this.scale, this.tx, this.ty);
   }
+  maxScale() { return MAXS; } // זום מלא (עד 6400%). את חדות הרינדור במכשיר חלש מווסתת שכבת העמוד (ראו safeK ב-layer.js), לא תקרת הזום
   minScale() { return Math.min(this.vw / this.pw, this.H / this.ph) * 0.4; }
   clampView(s, tx, ty) {
     const M = 60, pw = this.pw * s, ph = this.ph * s;
@@ -389,7 +390,7 @@ class Viewer {
   }
   setView(scale, tx, ty, { keepFit = false } = {}) {
     if (!this.page) return;
-    scale = clamp(scale, this.minScale(), MAXS);
+    scale = clamp(scale, this.minScale(), this.maxScale());
     [tx, ty] = this.clampView(scale, tx, ty);
     if (this.cont) {
       const sh = this.maybeShift(scale, tx, ty);
@@ -537,7 +538,7 @@ class Viewer {
   setZoom100() { this.zoomAt(this.vw / 2, this.H / 2, PT / this.scale); }
   zoomBy(f) { this.zoomAt(this.vw / 2, this.H / 2, f); }
   zoomAt(x, y, f) {
-    const ns = clamp(this.scale * f, this.minScale(), MAXS);
+    const ns = clamp(this.scale * f, this.minScale(), this.maxScale());
     const px = (x - this.tx) / this.scale, py = (y - this.ty) / this.scale;
     this.setView(ns, x - px * ns, y - py * ns);
   }
@@ -722,7 +723,7 @@ class Viewer {
       return;
     }
     const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const ns = clamp(p.s0 * (d / p.d0), this.minScale(), MAXS);
+    const ns = clamp(p.s0 * (d / p.d0), this.minScale(), this.maxScale());
     const c0x = this.viewX(p.c0.x), cx = this.viewX(c.x);
     const px = (c0x - p.tx0) / p.s0, py = (p.c0.y - p.ty0) / p.s0;
     this.setView(ns, cx - px * ns, c.y - py * ns);
@@ -746,7 +747,7 @@ class Viewer {
     if (l.length !== a.n) { this.assistReset(); return; }
     const c = { x: l.reduce((s, q) => s + q.x, 0) / l.length, y: l.reduce((s, q) => s + q.y, 0) / l.length };
     const d = l.length > 1 ? Math.hypot(l[0].x - l[1].x, l[0].y - l[1].y) || 1 : 0;
-    const ns = l.length > 1 && a.d ? clamp(this.scale * (d / a.d), this.minScale(), MAXS) : this.scale;
+    const ns = l.length > 1 && a.d ? clamp(this.scale * (d / a.d), this.minScale(), this.maxScale()) : this.scale;
     const px = (this.viewX(a.c.x) - this.tx) / this.scale, py = (a.c.y - this.ty) / this.scale;
     this.setView(ns, this.viewX(c.x) - px * ns, c.y - py * ns);
     a.c = c; a.d = d;
