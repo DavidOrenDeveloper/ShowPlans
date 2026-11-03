@@ -119,15 +119,40 @@ export class Layer {
     const k = k0 * d;
     const ex = tx + this.sx + this.dx * scale, ey = ty + this.dy * scale;
     const ox = ex * d, oy = ey * d;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(ox, oy, this.pw * k, this.ph * k);
     const vp = this.vp(k);
-    crumb({ ph: 'detail', zoom: Math.round(k0 * 75), k: +k.toFixed(2), cw, ch, pw: Math.round(this.pw), phh: Math.round(this.ph) });
-    const task = this.page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, ox, oy], background: 'rgba(0,0,0,0)' });
-    this.dTask = task;
-    try { await task.promise; } catch (e) {
-      if (e && e.name === 'RenderingCancelledException') return;
-      console.error(e); return;
+    // בהגדלה גבוהה בטלפון מציירים באריחים קטנים: ב-pdf.js כל קבוצת שקיפות/מסכה מקצה קנבס זמני בגודל הקנבס שאליו מציירים,
+    // ובתוכנית עם אלפי קבוצות כאלה (הדפסות CAD) זה מילא את הזיכרון וגרם לקריסה. אריחים קטנים = הקצאות קטנות פי כמה.
+    let forced = false; try { forced = localStorage.getItem('plans.tiles') === '1'; } catch { /* ignore */ }
+    const TS = 384;
+    const tiled = (COARSE || forced) && k >= 8 && cw * ch > 2 * TS * TS;
+    crumb({ ph: 'detail', zoom: Math.round(k0 * 75), k: +k.toFixed(2), cw, ch, pw: Math.round(this.pw), phh: Math.round(this.ph), tiled });
+    if (!tiled) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(ox, oy, this.pw * k, this.ph * k);
+      const task = this.page.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, ox, oy], background: 'rgba(0,0,0,0)' });
+      this.dTask = task;
+      try { await task.promise; } catch (e) {
+        if (e && e.name === 'RenderingCancelledException') return;
+        console.error(e); return;
+      }
+    } else {
+      const X0 = Math.max(0, Math.floor(ox)), Y0 = Math.max(0, Math.floor(oy)), X1 = Math.min(cw, Math.ceil(ox + this.pw * k)), Y1 = Math.min(ch, Math.ceil(oy + this.ph * k));
+      for (let ty0 = Y0; ty0 < Y1; ty0 += TS) for (let tx0 = X0; tx0 < X1; tx0 += TS) {
+        if (gen !== this.gen) return;
+        const tw = Math.min(TS, X1 - tx0), th = Math.min(TS, Y1 - ty0);
+        const tc = document.createElement('canvas'); tc.width = tw; tc.height = th;
+        const tctx = tc.getContext('2d');
+        tctx.fillStyle = '#ffffff'; tctx.fillRect(0, 0, tw, th);
+        const task = this.page.render({ canvasContext: tctx, viewport: vp, transform: [1, 0, 0, 1, ox - tx0, oy - ty0], background: 'rgba(0,0,0,0)' });
+        this.dTask = task;
+        try { await task.promise; } catch (e) {
+          tc.width = tc.height = 0;
+          if (e && e.name === 'RenderingCancelledException') return;
+          console.error(e); return;
+        }
+        ctx.drawImage(tc, tx0, ty0);
+        tc.width = tc.height = 0;
+      }
     }
     crumb({ ph: 'ok' });
     if (gen !== this.gen) return;
