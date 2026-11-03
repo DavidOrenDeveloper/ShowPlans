@@ -17,6 +17,7 @@ import {
 } from './markup.js';
 import { recognize, snapAngle } from './shape-recog.js';
 const LINE_TOOLS = new Set(['line', 'arrow', 'measure', 'calibrate']);
+const AIM_TOOLS = new Set(['measure', 'calibrate', 'area', 'polyline']); // כלים שדורשים דיוק: במגע – נקודה מעל האצבע + זכוכית מגדלת
 const snap45 = (a, p) => { const dx = p.x - a.x, dy = p.y - a.y, len = Math.hypot(dx, dy), r = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4); return { x: a.x + Math.cos(r) * len, y: a.y + Math.sin(r) * len }; };
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
 import { installStyle } from './viewer-style.js';
@@ -682,6 +683,7 @@ class Viewer {
     if (g && g.type === 'erase') { this.eraseSet = null; this.renderItems(); }
     if (g && g.type === 'region') { if (g.hd === 'new') this.clearRegion(); else { this.region = g.r0; this.renderRegion(); } }
     if (g && g.type === 'cmpedit') this.gDraft.textContent = '';
+    if (g && g.type === 'aim') this.aimEnd();
     if (g && (g.type === 'drag' || g.type === 'pen' || g.type === 'seg')) this.draft = null;
     this.gesture = null;
     this.renderDraft();
@@ -819,6 +821,7 @@ class Viewer {
       case 'erase': this.eraseAt(g.last, p); g.last = p; break;
       case 'region': this.regionMove(g, pt); break;
       case 'cmpedit': this.cmpEditMove(g, p); break;
+      case 'aim': this.aimMove(pt); break;
       case 'seg':
         if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, ps(g.p0)] }; this.renderDraft(); this.edgeCheck(g, pt); }
         break;
@@ -880,6 +883,7 @@ class Viewer {
       case 'align': this.scheduleDetail(30); this.cmpUI?.refresh?.(); break;
       case 'region': this.regionUp(g, pt); break;
       case 'cmpedit': this.cmpEditUp(g, p, pt); break;
+      case 'aim': this.aimUp(); break;
       case 'drag': {
         const d = this.draft; this.draft = null;
         if (d && this.shiftDown && LINE_TOOLS.has(d.type)) d.pts[1] = snap45(d.pts[0], p);
@@ -1001,6 +1005,11 @@ class Viewer {
     }
     const p = this.toPage(pt);
     const base = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false };
+    if (AIM_TOOLS.has(this.tool) && e.pointerType !== 'mouse') { // מגע/עט: מכוונים בזכוכית מגדלת, הנקודה נקבעת בעזיבת האצבע
+      this.gesture = { ...base, type: 'aim' };
+      this.aimMove(pt);
+      return;
+    }
     switch (this.tool) {
       case 'select': {
         const hd = this.selected && this.canEditItem(this.selected) && this.hitHandle(p);
@@ -1078,8 +1087,11 @@ class Viewer {
   fixedMeasure(it) {
     if (it.type !== 'measure' && it.type !== 'area' && !(it.type === 'polyline' && it.showLen)) return it;
     const sc = this.scale || 1;
-    if (it.tsz) return { ...it, fontSize: it.tsz / this.refScale() }; // גודל שנקבע ידנית: לא מוגבל
-    return { ...it, fontSize: clamp(it.fontSize || 15 / sc, 12 / sc, 30 / sc) };
+    // עובי הקו (ואיתו סימוני הקצה והנקודות) נשאר סביר על המסך בכל זום. בלי זה, בהגדלה גדולה הקו הפך לעבה בעשרות/מאות פיקסלים והדפדפן קרס
+    const wMax = Math.max(6, (prefs.mw || 2.5) * 2);
+    const base = it.type === 'polyline' ? it : { ...it, width: clamp(it.width || 2 / sc, 1.2 / sc, wMax / sc) };
+    if (it.tsz) return { ...base, fontSize: it.tsz / this.refScale() }; // גודל שנקבע ידנית: לא מוגבל
+    return { ...base, fontSize: clamp(it.fontSize || 15 / sc, 12 / sc, 30 / sc) };
   }
   async exportXlsx() {
     const rows = [];
@@ -1115,9 +1127,11 @@ class Viewer {
   }
   renderDraft() {
     this.gDraft.textContent = '';
+    this.drawAim();
     const d = this.draft;
     if (!d) return;
     const sc = this.scale;
+    if (d.wait) this.drawFirstPoint(d.pts[0]);
     if (d.type === 'calibrate') {
       const pts = d.wait && d.hover ? [d.pts[0], d.hover] : d.pts;
       this.gDraft.append(drawItem({ type: 'line', pts, color: '#d81b60', width: 2 / sc }, this.ctx()));
@@ -1131,6 +1145,67 @@ class Viewer {
     this.gDraft.append(drawItem(this.fixedMeasure({ ...it, pts }), this.ctx()));
     if (isPoly) d.pts.forEach((q) => this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 5 / sc, fill: '#fff', stroke: '#d81b60', 'stroke-width': 2 / sc })));
   }
+  // ---------- כיוון מדויק במגע: הנקודה מוצגת מעל האצבע ("סמן מוזז") + זכוכית מגדלת ----------
+  aimPoint(pt) { const off = Math.min(72, Math.max(0, pt.y - 8)); return { x: pt.x, y: pt.y - off }; }
+  aimMove(pt) {
+    const a = this.aimPoint(pt), p = this.toPage(a);
+    this.aim = p; this.aimScreen = a;
+    const d = this.draft;
+    if (d && (d.wait || d.type === 'area' || d.type === 'polyline')) d.hover = p;
+    this.renderDraft();
+    this.showLoupe(a, pt);
+  }
+  aimUp() {
+    const p = this.aim; this.aimEnd();
+    if (!p) return;
+    const t = this.tool;
+    if (t === 'measure' || t === 'calibrate') {
+      const d = this.draft;
+      if (!d || !d.wait) { this.draft = { type: t, pts: [p, p], wait: true, hover: p }; this.renderDraft(); this.renderProps(); return; }
+      if (dist(d.pts[0], p) * this.scale < 4) { this.renderDraft(); return; }
+      this.draft = null; d.pts = [d.pts[0], p]; delete d.wait; delete d.hover; this.commitNew(d);
+    } else this.addAreaPoint(p);
+  }
+  aimEnd() { this.aim = null; this.aimScreen = null; this.hideLoupe(); this.renderDraft(); }
+  drawAim() {
+    if (!this.aim) return;
+    const sc = this.scale, a = this.aim, r = 7 / sc, L = 22 / sc, g = 5 / sc;
+    for (const [col, w] of [['#fff', 4.5], ['#d81b60', 1.6]]) {
+      const st = { stroke: col, 'stroke-width': w / sc, fill: 'none', 'stroke-linecap': 'round' };
+      this.gDraft.append(svg('circle', { cx: a.x, cy: a.y, r, ...st }));
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) this.gDraft.append(svg('line', { x1: a.x + dx * (r + g * 0.2), y1: a.y + dy * (r + g * 0.2), x2: a.x + dx * L, y2: a.y + dy * L, ...st }));
+    }
+  }
+  drawFirstPoint(q) {
+    const sc = this.scale;
+    this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 6 / sc, fill: 'none', stroke: '#fff', 'stroke-width': 4.5 / sc }));
+    this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 6 / sc, fill: 'none', stroke: '#d81b60', 'stroke-width': 2 / sc }));
+    this.gDraft.append(svg('circle', { cx: q.x, cy: q.y, r: 1.6 / sc, fill: '#d81b60' }));
+  }
+  showLoupe(a, finger) {
+    const SZ = 132, Z = 2.6;
+    if (!this.loupe) { this.loupe = h('canvas', { class: 'v-loupe', width: SZ * 2, height: SZ * 2 }); this.stage.append(this.loupe); }
+    const lp = this.loupe; lp.style.display = 'block';
+    const W = this.stage.clientWidth;
+    lp.style.left = (finger.x < W / 2 ? W - SZ - 8 : 8) + 'px'; lp.style.top = '8px';
+    const x = lp.getContext('2d'); x.setTransform(2, 0, 0, 2, 0, 0);
+    x.fillStyle = '#fff'; x.fillRect(0, 0, SZ, SZ);
+    const L = this.layerA, vis = (c) => c && c.isConnected && c.style.display !== 'none';
+    const c = vis(L.detail) ? L.detail : vis(L.base) ? L.base : null;
+    if (c) {
+      const sr = this.stage.getBoundingClientRect(), cr = c.getBoundingClientRect();
+      if (cr.width > 0 && cr.height > 0) {
+        const kx = c.width / cr.width, ky = c.height / cr.height, S = SZ / Z;
+        const sx = (sr.left + a.x - S / 2 - cr.left) * kx, sy = (sr.top + a.y - S / 2 - cr.top) * ky;
+        try { x.drawImage(c, sx, sy, S * kx, S * ky, 0, 0, SZ, SZ); } catch { /* ignore */ }
+      }
+    }
+    x.strokeStyle = '#d81b60'; x.lineWidth = 1.4; x.beginPath();
+    x.moveTo(SZ / 2, 6); x.lineTo(SZ / 2, SZ / 2 - 6); x.moveTo(SZ / 2, SZ / 2 + 6); x.lineTo(SZ / 2, SZ - 6);
+    x.moveTo(6, SZ / 2); x.lineTo(SZ / 2 - 6, SZ / 2); x.moveTo(SZ / 2 + 6, SZ / 2); x.lineTo(SZ - 6, SZ / 2); x.stroke();
+    x.beginPath(); x.arc(SZ / 2, SZ / 2, 1.6, 0, 7); x.fillStyle = '#d81b60'; x.fill();
+  }
+  hideLoupe() { if (this.loupe) this.loupe.style.display = 'none'; }
   newItem(d, preview = false) {
     const sc = this.scale;
     const type = d.type;

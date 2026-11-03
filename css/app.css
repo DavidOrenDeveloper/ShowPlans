@@ -648,3 +648,6 @@ body.bgp-on .toast { bottom: calc(150px + var(--safe-b)); }
 .cmp-tolbox { display: inline-flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
 .cmp-val { min-width: 54px; text-align: start; font-variant-numeric: tabular-nums; direction: ltr; }
 .cmp-row .check { display: inline-flex; align-items: center; gap: 6px; }
+
+/* זכוכית מגדלת לכיוון מדויק במגע */
+.v-loupe { position: absolute; z-index: 7; width: 132px; height: 132px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 10px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.3); pointer-events: none; background: #fff; display: none; }
