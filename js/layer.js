@@ -109,7 +109,9 @@ export class Layer {
     this.dTask?.cancel();
     let d = dpr;
     if (W * H * d * d > MAX_DETAIL_PIXELS) d = Math.sqrt(MAX_DETAIL_PIXELS / (W * H));
-    if (k0 * d > safeK()) d = Math.max(0.25, safeK() / k0);
+    // בטלפון: גם תקרה לפי גודל העמוד הווירטואלי (קריסה אמיתית נרשמה בעמוד של 4252 נקודות ברזולוציה 64: כ-270 אלף פיקסלים ברוחב)
+    const cap = Math.min(safeK(), COARSE ? 150000 / Math.max(this.pw, this.ph) : Infinity);
+    if (k0 * d > cap) d = Math.max(0.25, cap / k0);
     const cw = Math.max(1, Math.round(W * d)), ch = Math.max(1, Math.round(H * d));
     const c = document.createElement('canvas');
     c.width = cw; c.height = ch;
