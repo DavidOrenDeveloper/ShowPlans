@@ -9,7 +9,7 @@ import * as UI from './ui.js';
 import * as diag from './diag.js';
 import * as A from './actions.js';
 import { openPdf, pageText, destroyDoc } from './pdfio.js';
-import { Layer } from './layer.js';
+import { Layer, mkCtx } from './layer.js';
 import { h, icon, uid, clamp, clone, fmtDate, natural } from './util.js';
 import {
   svg, LAYER_OF, RECT_TYPES, dist, drawItem, hitItem, handlesOf, boundsOf, corners, textBox,
@@ -72,7 +72,7 @@ const saveRot = (vid, n, r) => {
 let cur = null;
 let split = null; // תצוגה מפוצלת פעילה (SplitHost) – במקום cur
 let pickCtx = null;
-const ASSIST_TYPES = new Set(['seg', 'seg2', 'poly', 'drag', 'pen']), EDGE_TYPES = new Set(['seg', 'drag', 'pen']);
+const ASSIST_TYPES = new Set(['seg', 'seg2', 'poly', 'drag', 'pen', 'aim']), EDGE_TYPES = new Set(['seg', 'drag', 'pen']);
 export function startPick(ctx) { pickCtx = ctx; }
 if (typeof window !== 'undefined') window.__viewer = () => cur;
 
@@ -730,6 +730,7 @@ class Viewer {
   }
   // האם האצבע הראשונה כבר באמצע שרטוט (זזה ממקום הנגיעה)? אם לא – אצבע שנייה היא צביטה/הזזה רגילה של התוכנית
   drawing(g) {
+    if (g.type === 'aim') return true; // מדידה/כיול במגע: היד השנייה תמיד מזיזה ומגדילה את התוכנית
     if (g.type === 'pen') return !!(this.draft && this.draft.pts.length > 3);
     const q = this.ptrs.get(g.id);
     return !!g.moved || (!!q && Math.hypot(q.x - g.sx, q.y - g.sy) > 12 && (g.type === 'drag' || g.type === 'seg'));
@@ -1662,6 +1663,11 @@ class Viewer {
       io.observe(d);
     }
   }
+  // page.cleanup() זורק את רשימת הפעולות של העמוד; אם זה העמוד המוצג, הרינדור הבא מנתח מחדש את כל העמוד (בתוכנית CAD – כמיליון פעולות וגיגות של זבל)
+  safeCleanup(page) {
+    for (const L of [this.layerA, this.layerB]) if (L && L.page === page) return;
+    try { page.cleanup(); } catch { /* ignore */ }
+  }
   async renderThumbInto(i, canvas) {
     try {
       if (!this.doc || !canvas.isConnected) return;
@@ -1670,8 +1676,10 @@ class Viewer {
       const s = Math.min(240 / v1.width, 300 / v1.height) * Math.min(this.dpr, 2);
       const vp = page.getViewport({ scale: s });
       canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, background: '#fff' }).promise;
-      page.cleanup();
+      const cur = i === this.pageNum && this.layerA?.page === page && this.layerA.base;
+      if (cur) { const g = canvas.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height); g.drawImage(cur, 0, 0, canvas.width, canvas.height); }
+      else await page.render({ canvas: null, canvasContext: mkCtx(canvas.getContext('2d'), canvas.width, canvas.height, false), viewport: vp, background: '#fff' }).promise;
+      this.safeCleanup(page);
     } catch { /* ignore */ }
   }
   markThumb() {
@@ -1687,7 +1695,7 @@ class Viewer {
       try {
         const row = await db.get('textindex', `${this.version.id}:${i}`);
         if (row && row.ocr && row.words) {
-          page.cleanup();
+          this.safeCleanup(page);
           const words = row.words;
           const rects = (s, e) => words.filter((w) => w.e > s && w.s < e).map((w) => ({ x: w.x, y: w.y, w: w.w, h: w.h }));
           const d = { text: row.text, rects, ocr: true };
@@ -1732,7 +1740,7 @@ class Viewer {
       }
       return out;
     };
-    page.cleanup();
+    this.safeCleanup(page);
     const d = { text, rects };
     this.textCache.set(i, d);
     return d;

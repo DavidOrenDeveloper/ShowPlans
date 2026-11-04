@@ -100,6 +100,7 @@ function paintBar(i) {
       h('div', { class: 'sb-track' }, h('div', { class: 'sb-fill' })),
       h('div', { class: 'sb-bot' }, h('span', { class: 'sb-file' }), h('span', { class: 'sb-eta' })));
     document.body.append(barEl); document.body.classList.add('sync-bar-on');
+    barEl.title = tr('אפשר לגרור באצבע למקום אחר'); UI.makeDraggable(barEl); // העלאה ברקע: פס קטן שאפשר להזיז כדי שלא יפריע
   }
   barEl.classList.toggle('done', !!i.finished);
   barEl.querySelector('.sb-title').textContent = i.finished ? tr('הסנכרון הסתיים ✓ ({0} קבצים)', i.total) : tr('מעלה לענן · {0} מתוך {1} קבצים', i.done, i.total);

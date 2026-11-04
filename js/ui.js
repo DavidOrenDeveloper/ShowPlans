@@ -124,7 +124,7 @@ export function progressBox(title) {
 
 // ---------- גרירה חופשית של שבב (באצבע) לכל מקום במסך; המיקום נשמר עד סגירת האפליקציה ----------
 let chipPos = null;
-function makeDraggable(chip) {
+export function makeDraggable(chip) {
   const place = (x, y) => {
     const w = chip.offsetWidth, hh = chip.offsetHeight;
     x = Math.max(4, Math.min(window.innerWidth - w - 4, x)); y = Math.max(4, Math.min(window.innerHeight - hh - 4, y));

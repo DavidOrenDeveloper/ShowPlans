@@ -49,7 +49,8 @@ export async function renderThumb(doc, maxSide = 400) {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.ceil(vp.width));
   c.height = Math.max(1, Math.ceil(vp.height));
-  await page.render({ canvasContext: c.getContext('2d'), viewport: vp, background: '#ffffff' }).promise;
+  const { mkCtx } = await import('./layer.js');
+  await page.render({ canvas: null, canvasContext: mkCtx(c.getContext('2d'), c.width, c.height), viewport: vp, background: '#ffffff' }).promise;
   page.cleanup();
   const blob = await toBlob(c, 'image/jpeg', 0.72);
   c.width = c.height = 0;
