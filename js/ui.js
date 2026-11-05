@@ -259,12 +259,16 @@ export function folderScopeSelect(value = '', onChange) {
 export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new Set(), startFolderId = null, currentId = null } = {}) {
   const q = h('input', { type: 'search', placeholder: tr('חיפוש תוכנית…') });
   const list = h('div', { class: 'picker-list tall' });
-  const open = new Set();
+  // העץ נפתח לפי הנתיב של התיקייה ההתחלתית; לכל תיקייה חץ משלה לפתיחה/סגירה (בלי קשר לשדה "חיפוש ב")
+  const open = new Set(startFolderId ? [...S.folderPath(startFolderId).map((f) => f.id), startFolderId] : []);
+  const closedInSearch = new Set();
   let m;
-  const scopeSel = folderScopeSelect(startFolderId || '', () => render());
+  const scopeSel = folderScopeSelect('', () => render());
   const LIMIT = 400;
   function render() {
+    const keepTop = list.scrollTop;
     list.textContent = '';
+    queueMicrotask(() => { list.scrollTop = keepTop; });
     const n = norm(q.value), scope = S.scopeSet(scopeSel.value), filtering = !!n || !!scope;
     const match = (p) => !excludeIds.has(p.id) && (!scope || scope.has(p.folderId))
       && (!n || nameVariants(p.name).some((v) => norm(v).includes(n)) || norm(S.planPathText(p)).includes(n));
@@ -276,19 +280,33 @@ export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new
     const root = build(null);
     if (!root.count) { list.append(h('p', { class: 'empty-sm' }, tr('לא נמצאו תוכניות'))); return; }
     let shown = 0;
+    const isOpen = (id) => (filtering ? !closedInSearch.has(id) : open.has(id));
+    const toggle = (id) => {
+      if (filtering) closedInSearch.has(id) ? closedInSearch.delete(id) : closedInSearch.add(id);
+      else open.has(id) ? open.delete(id) : open.add(id);
+      render();
+    };
+    const setAll = (v) => { // פתח / סגור את כל התיקיות
+      const walk = (node) => { for (const k of node.folders) { if (v) { open.add(k.f.id); closedInSearch.delete(k.f.id); } else { open.delete(k.f.id); closedInSearch.add(k.f.id); } walk(k); } };
+      walk(root); render();
+    };
     const draw = (node, depth) => {
       for (const k of node.folders) {
-        const isOpen = filtering || open.has(k.f.id);
-        list.append(h('button', { class: 'picker-folder', type: 'button', style: { paddingInlineStart: 10 + depth * 16 + 'px' }, onclick: () => { if (filtering) return; open.has(k.f.id) ? open.delete(k.f.id) : open.add(k.f.id); render(); } },
-          icon(isOpen ? 'chevD' : CHEV_FWD, 16), icon('folder', 18), h('span', { class: 'nm' }, dn(k.f.name)), h('small', {}, String(k.count))));
-        if (isOpen) draw(k, depth + 1);
+        const op = isOpen(k.f.id);
+        list.append(h('div', { class: 'picker-folder', role: 'button', tabindex: 0, style: { paddingInlineStart: 6 + depth * 18 + 'px' }, onclick: () => toggle(k.f.id) },
+          h('button', { class: 'twisty', type: 'button', 'aria-expanded': String(op), 'aria-label': op ? tr('סגור תיקייה') : tr('פתח תיקייה'), onclick: (e) => { e.stopPropagation(); toggle(k.f.id); } }, icon(op ? 'chevD' : CHEV_FWD, 18)),
+          icon('folder', 18), h('span', { class: 'nm' }, dn(k.f.name)), h('small', {}, String(k.count))));
+        if (op) draw(k, depth + 1);
       }
       for (const p of node.plans) {
         if (shown++ >= LIMIT) return;
-        list.append(h('button', { class: 'picker-plan' + (p.id === currentId ? ' cur' : ''), type: 'button', style: { paddingInlineStart: 10 + depth * 16 + 'px' }, onclick: () => m.close(p) },
+        list.append(h('button', { class: 'picker-plan' + (p.id === currentId ? ' cur' : ''), type: 'button', style: { paddingInlineStart: 10 + 24 + depth * 18 + 'px' }, onclick: () => m.close(p) },
           icon(p.id === currentId ? 'check' : 'file', 18), h('span', { class: 'col' }, h('b', {}, dn(p.name)), filtering ? h('small', {}, S.planPathText(p)) : null)));
       }
     };
+    list.append(h('div', { class: 'picker-tools' },
+      h('button', { class: 'btn sm', type: 'button', onclick: () => setAll(true) }, tr('פתח הכל')),
+      h('button', { class: 'btn sm', type: 'button', onclick: () => setAll(false) }, tr('סגור הכל'))));
     draw(root, 0);
     if (shown > LIMIT) list.append(h('p', { class: 'empty-sm' }, tr('מוצגות {0} תוצאות ראשונות. צמצמו בחיפוש או בתיקייה.', LIMIT)));
   }

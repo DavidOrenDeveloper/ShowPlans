@@ -299,6 +299,7 @@ export function installStyle(V) {
           row.push(h('button', { class: 'btn sm', onclick: async () => { const v = await UI.promptBox({ title: tr('שם הקישור (אופציונלי)'), value: sel.text || '', okText: tr('שמור') }); if (v != null) this.modifySelected((it) => { it.text = v; }); } }, tr('שם')));
         }
         if (this.canShareHere() && (sel.layer === 'markups' || sel.layer === 'measurements')) row.push(h('button', { class: 'btn sm', onclick: () => SH_DIALOG(this, { preset: 'sel' }) }, icon('users', 16), tr('שיתוף')));
+        row.push(h('button', { class: 'btn sm', title: tr('בחר את הסימן שמתחת לסימן הנבחר (באותו מקום)'), onclick: () => this.cycleBeneath() }, icon('layers', 16), tr('סימן מתחת')));
         row.push(h('button', { class: 'btn sm danger', onclick: () => this.deleteSelected() }, icon('trash', 16), tr('מחק')));
       }
       p.classList.toggle('has', row.length > 0);

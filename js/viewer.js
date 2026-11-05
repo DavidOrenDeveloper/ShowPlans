@@ -730,7 +730,8 @@ class Viewer {
   }
   // האם האצבע הראשונה כבר באמצע שרטוט (זזה ממקום הנגיעה)? אם לא – אצבע שנייה היא צביטה/הזזה רגילה של התוכנית
   drawing(g) {
-    if (g.type === 'aim') return true; // מדידה/כיול במגע: היד השנייה תמיד מזיזה ומגדילה את התוכנית
+    if (performance.now() - (g.t || 0) < 300) return false; // שתי אצבעות שנוגעות כמעט יחד = צביטה (זום/הזזה), לא התחלת סימון
+    if (g.type === 'aim') return true; // מדידה/כיול במגע: אחרי שהאצבע הראשונה מכוונת (החזקה מכוונת), היד השנייה מזיזה ומגדילה את התוכנית
     if (g.type === 'pen') return !!(this.draft && this.draft.pts.length > 3);
     const q = this.ptrs.get(g.id);
     return !!g.moved || (!!q && Math.hypot(q.x - g.sx, q.y - g.sy) > 12 && (g.type === 'drag' || g.type === 'seg'));
@@ -835,8 +836,9 @@ class Viewer {
         } else if (g.type === 'seg2') { this.draft.pts[1] = ps(this.draft.pts[0]); this.renderDraft(); }
         break;
       case 'move': {
+        if (!g.moved && Math.hypot(pt.x - g.sx, pt.y - g.sy) > 5) g.moved = true;
+        if (!g.moved || g.ro) break;
         const ddx = p.x - g.p0.x, ddy = p.y - g.p0.y;
-        if (Math.hypot(pt.x - g.sx, pt.y - g.sy) > 3) g.moved = true;
         this.selected.pts = g.before.pts.map((q) => ({ x: q.x + ddx, y: q.y + ddy }));
         this.renderItems();
         break;
@@ -914,7 +916,8 @@ class Viewer {
       case 'poly': if (!g.moved) this.addAreaPoint(p); break;
       case 'text': if (!g.moved) this.placeText(p); break;
       case 'move': case 'handle':
-        if (g.moved) this.commitMod(g.before, this.selected).then(() => { if (g.type === 'handle') this.renderProps(); });
+        if (g.moved && !g.ro) this.commitMod(g.before, this.selected).then(() => { if (g.type === 'handle') this.renderProps(); });
+        else if (!g.moved && g.type === 'move' && g.cyc) this.cycleBeneath(g.stack);
         break;
     }
   }
@@ -1000,13 +1003,21 @@ class Viewer {
     this.stage.dataset.tool = this.tool;
   }
   toolDown(pt, e) {
-    if (this.autoSel) {
-      const fs = this.selected && this.selected.id === this.autoSel && this.tool !== 'select';
-      if (fs) { const it = this.selected; this.select(null); this.dropFreshText(it); }
-      this.autoSel = null;
+    const p0 = this.toPage(pt);
+    // פריט שנבחר (למשל אחרי שסיימנו לצייר אותו) נשאר נבחר בכל כלי: אפשר להזיז אותו, לשנות גודל בידיות, לערוך ולמחוק.
+    // רק נגיעה מחוץ לו מאפסת את הבחירה ומתחילה סימון חדש מאותו הכלי.
+    if (this.selected && this.tool !== 'select' && !this.draft) {
+      const sel = this.selected, canEdit = this.canEditItem(sel);
+      const hd = canEdit && this.hitHandle(p0);
+      if (hd) { this.gesture = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false, t: performance.now(), type: 'handle', idx: hd.idx, before: clone(sel) }; return; }
+      if (canEdit && hitItem(sel, p0, 18 / this.scale)) { this.gesture = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false, t: performance.now(), type: 'move', p0, before: clone(sel) }; return; }
+      const fs = this.autoSel && sel.id === this.autoSel;
+      this.select(null);
+      if (fs) this.dropFreshText(sel);
     }
+    this.autoSel = null;
     const p = this.toPage(pt);
-    const base = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false };
+    const base = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false, t: performance.now() };
     if (AIM_TOOLS.has(this.tool) && e.pointerType !== 'mouse') { // מגע/עט: מכוונים בזכוכית מגדלת, הנקודה נקבעת בעזיבת האצבע
       this.gesture = { ...base, type: 'aim' };
       this.aimMove(pt);
@@ -1016,8 +1027,11 @@ class Viewer {
       case 'select': {
         const hd = this.selected && this.canEditItem(this.selected) && this.hitHandle(p);
         if (hd) { this.gesture = { ...base, type: 'handle', idx: hd.idx, before: clone(this.selected) }; return; }
-        const it = this.hit(p);
-        if (it) { this.select(it); if (this.canEditItem(it)) this.gesture = { ...base, type: 'move', p0: p, before: clone(it) }; return; }
+        const stack = this.hitAll(p);
+        this._selPt = p;
+        const cur = this.selected && stack.find((x) => x.id === this.selected.id);
+        const it = cur || stack[0]; // נגיעה על הפריט שכבר נבחר משאירה אותו; נגיעה חוזרת ללא הזזה עוברת לסימן שמתחתיו
+        if (it) { if (it !== this.selected) this.select(it); this.gesture = { ...base, type: 'move', p0: p, before: clone(it), stack, cyc: !!cur && stack.length > 1, ro: !this.canEditItem(it) }; return; }
         this.select(null);
         this.gesture = { type: 'pan', id: e.pointerId, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t0: performance.now(), moved: false, mouse: e.pointerType === 'mouse' };
         return;
@@ -1286,6 +1300,27 @@ class Viewer {
     const list = this.visibleItems();
     for (let i = list.length - 1; i >= 0; i--) if (hitItem(list[i], p, tol)) return list[i];
     return null;
+  }
+  // כל הסימונים שנמצאים בנקודה (מהעליון לתחתון) – כדי להגיע גם לסימן שמוסתר מתחת לסימן אחר (למשל טקסט מתחת להדגשה)
+  hitAll(p) {
+    const tol = 12 / this.scale, out = [];
+    const list = this.visibleItems();
+    for (let i = list.length - 1; i >= 0; i--) if (hitItem(list[i], p, tol)) out.push(list[i]);
+    return out;
+  }
+  cycleBeneath(stack) {
+    if (!this.selected) return;
+    let list = stack;
+    if (!list || list.length < 2) {
+      const b = boundsOf(this.selected), p = this._selPt || { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
+      list = this.hitAll(p);
+      if (!list.some((x) => x.id === this.selected.id)) list = this.hitAll({ x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 });
+    }
+    if (list.length < 2) { UI.toast(tr('אין סימן נוסף במקום הזה')); return; }
+    const i = list.findIndex((x) => x.id === this.selected.id);
+    const nx = list[(i + 1) % list.length];
+    this.select(nx);
+    UI.toast(tr('נבחר סימן {0} מתוך {1} במקום הזה', ((i + 1) % list.length) + 1, list.length), { ms: 1400 });
   }
   hitHandle(p) {
     const tol = 16 / this.scale;

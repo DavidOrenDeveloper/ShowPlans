@@ -175,6 +175,16 @@ export function downloadBlob(blob, filename) {
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 60000);
 }
 
+// שמירה עם בחירת שם ומיקום (Chrome/Edge במחשב). בדפדפנים בלי תמיכה (טלפונים) – מחזיר null וההורדה רגילה.
+// חייבת להיקרא מיד אחרי לחיצת המשתמש (לפני עבודה ארוכה), ואז כותבים לתוצאה בסוף.
+export const canPickSave = () => typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+export async function askSaveHandle(name, mime, desc) {
+  if (!canPickSave()) return null;
+  const ext = '.' + (name.split('.').pop() || 'bin').toLowerCase();
+  try { return await window.showSaveFilePicker({ suggestedName: name, types: [{ description: desc, accept: { [mime]: [ext] } }] }); } catch (e) { return e && e.name === 'AbortError' ? 'cancel' : null; }
+}
+export async function writeToHandle(handle, blob) { const w = await handle.createWritable(); await w.write(blob); await w.close(); }
+
 // SHA-256 של קובץ/Blob/ArrayBuffer (מחרוזת hex), או null אם הדפדפן לא תומך
 export async function sha256(src) {
   try {

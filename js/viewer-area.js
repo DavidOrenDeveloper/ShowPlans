@@ -3,7 +3,8 @@
 // עובד בעכבר ובמגע: גרירה בתוך המסגרת = הזזת האזור, גרירת ידית = שינוי גודל, גרירה מחוץ למסגרת = הזזת התוכנית, צביטה = זום.
 import { t as tr } from './i18n.js';
 import * as UI from './ui.js';
-import { h, icon, safeName, downloadBlob, clamp } from './util.js';
+import { h, icon, safeName, downloadBlob, clamp, askSaveHandle, writeToHandle, canPickSave } from './util.js';
+import { bi } from './print-layout.js';
 import { svg } from './markup.js';
 import { prefs } from './prefs.js';
 import { capScale, MAX_PX } from './viewer-print.js';
@@ -109,20 +110,33 @@ export function installArea(V) {
       if (!this.region || !this.page) return;
       const r = this.regionNorm(), wPt = r.x1 - r.x0, hPt = r.y1 - r.y0;
       const kScreen = Math.max(this.scale * this.dpr, 2);
-      const opts = [['screen', tr('כמו שנראה עכשיו במסך (מומלץ אחרי התקרבות)'), kScreen], ['high', tr('גבוהה (300 DPI)'), 300 / 72], ['max', tr('מקסימלית (מוגבלת בזיכרון המכשיר)'), 1000]];
+      const opts = [['screen', bi('כמו שנראה עכשיו במסך (מומלץ אחרי התקרבות)', 'As currently shown on screen (recommended after zooming)'), kScreen], ['high', bi('גבוהה (300 DPI)', 'High (300 DPI)'), 300 / 72], ['max', bi('מקסימלית (מוגבלת בזיכרון המכשיר)', 'Maximum (limited by device memory)'), 1000]];
       const sel = h('select', {}, opts.map(([v, t]) => h('option', { value: v }, t)));
-      const fmt = h('select', {}, h('option', { value: 'png' }, tr('PNG (חד, מומלץ לתוכניות)')), h('option', { value: 'jpg' }, tr('JPG (קובץ קטן יותר)')));
+      const fmt = h('select', {}, h('option', { value: 'png' }, bi('PNG (חד, מומלץ לתוכניות)', 'PNG (sharp, recommended for plans)')), h('option', { value: 'jpg' }, bi('JPG (קובץ קטן יותר)', 'JPG (smaller file)')));
+      const baseName = tr('{0}_עמוד{1}_אזור', safeName(this.plan.name), this.pageNum);
+      const nameIn = h('input', { type: 'text', value: baseName, dir: 'auto', 'aria-label': bi('שם הקובץ', 'File name') });
       const info = h('p', { class: 'hint' });
       const mk = (label, on) => { const cb = h('input', { type: 'checkbox', checked: on }); return { cb, el: h('label', { class: 'check' }, cb, label) }; };
-      const cMk = mk(tr('סימונים וטקסטים שלי'), prefs.show.markups !== false), cMs = mk(tr('מדידות'), prefs.show.measurements !== false), cLn = mk(tr('קישורים'), false);
-      const cCmp = this.cmp && this.layerB.page ? mk(tr('כולל הדגשת ההשוואה'), true) : null;
+      const cMk = mk(bi('סימונים וטקסטים שלי', 'My markups and text'), prefs.show.markups !== false), cMs = mk(bi('מדידות', 'Measurements'), prefs.show.measurements !== false), cLn = mk(bi('קישורים', 'Links'), false);
+      const cCmp = this.cmp && this.layerB.page ? mk(bi('כולל הדגשת ההשוואה', 'Include comparison highlights'), true) : null;
       const kOf = () => { const base = opts.find((o) => o[0] === sel.value)[2]; return capScale(base, wPt, hPt, MAX_PX); };
-      const upd = () => { const k = kOf(); info.textContent = tr('גודל התמונה: {0}×{1} פיקסלים', Math.round(wPt * k), Math.round(hPt * k)); };
+      const upd = () => { const k = kOf(); info.textContent = bi('גודל התמונה: {0}×{1} פיקסלים', 'Image size: {0}×{1} pixels').replace('{0}', Math.round(wPt * k)).replace('{1}', Math.round(hPt * k)); };
       sel.onchange = upd; upd();
-      const body = h('div', { class: 'form' }, h('label', {}, tr('איכות / רזולוציה')), sel, info, h('label', {}, tr('פורמט')), fmt, cMk.el, cMs.el, cLn.el, cCmp ? cCmp.el : null,
-        h('p', { class: 'hint' }, tr('התמונה נוצרת מחדש מהקובץ המקורי ברזולוציה הנבחרת, כך שגם באזור גדול הקווים והטקסט נשארים חדים.')));
-      const act = await UI.modal({ title: tr('שמירת האזור כתמונה'), body, buttons: [{ text: tr('ביטול'), value: null }, { text: tr('שתף'), icon: 'share', value: 'share' }, { text: tr('שמור'), kind: 'primary', icon: 'download', value: 'save' }] });
+      const body = h('div', { class: 'form' },
+        h('label', {}, bi('שם הקובץ', 'File name')), nameIn,
+        h('label', {}, bi('איכות / רזולוציה', 'Quality / resolution')), sel, info,
+        h('label', {}, bi('פורמט', 'Format')), fmt, cMk.el, cMs.el, cLn.el, cCmp ? cCmp.el : null,
+        h('p', { class: 'hint' }, canPickSave() ? bi('בלחיצה על "שמור" תיפתח בחירת תיקייה ושם לקובץ.', 'Clicking “Save” opens a dialog to choose the folder and file name.') : bi('בדפדפן הזה הקובץ יורד לתיקיית ההורדות עם השם שבחרתם (אפשר לשתף ולבחור יעד דרך "שתף").', 'In this browser the file goes to your downloads folder with the name above (use “Share” to pick a destination).')),
+        h('p', { class: 'hint' }, bi('התמונה נוצרת מחדש מהקובץ המקורי ברזולוציה הנבחרת, כך שגם באזור גדול הקווים והטקסט נשארים חדים.', 'The image is re-rendered from the original file at the chosen resolution, so lines and text stay sharp.')));
+      const act = await UI.modal({ title: bi('שמירת האזור כתמונה', 'Save area as image'), body, buttons: [{ text: bi('ביטול', 'Cancel'), value: null }, { text: bi('שתף', 'Share'), icon: 'share', value: 'share' }, { text: bi('שמור', 'Save'), kind: 'primary', icon: 'download', value: 'save' }] });
       if (!act) return;
+      const isPng = fmt.value === 'png';
+      const name = (safeName(nameIn.value.replace(/\.(png|jpe?g)$/i, '')) || baseName) + (isPng ? '.png' : '.jpg');
+      let handle = null;
+      if (act === 'save') { // קודם בוחרים שם ומיקום (בזמן שהלחיצה עדיין "טרייה"), ורק אחר כך יוצרים את התמונה
+        handle = await askSaveHandle(name, isPng ? 'image/png' : 'image/jpeg', bi('תמונה', 'Image'));
+        if (handle === 'cancel') return;
+      }
       const pb = UI.progressBox(tr('יוצר תמונה…'));
       try {
         const k = kOf(), layers = { markups: cMk.cb.checked, measurements: cMs.cb.checked, links: cLn.cb.checked };
@@ -132,16 +146,15 @@ export function installArea(V) {
           const layout = this.cmp.mode === 'sidechanges' ? 'side' : 'overlay';
           canvas = (await this.renderCompareCanvas({ rect: r, k: capScale(k, wPt * (layout === 'side' ? 2 : 1), hPt, 9e6), layout, markups: layers.markups || layers.measurements })).canvas;
         } else canvas = (await this.renderRectCanvas({ rect: r, k, layers, fixed: true })).canvas;
-        const isPng = fmt.value === 'png';
         const blob = await new Promise((res) => canvas.toBlob(res, isPng ? 'image/png' : 'image/jpeg', 0.93));
         canvas.width = canvas.height = 0;
         pb.close();
         if (!blob) throw new Error(tr('יצירת התמונה נכשלה (חסר זיכרון?)'));
-        const name = tr('{0}_עמוד{1}_אזור.', safeName(this.plan.name), this.pageNum) + (isPng ? 'png' : 'jpg');
         const file = new File([blob], name, { type: blob.type });
         if (act === 'share' && navigator.canShare && navigator.canShare({ files: [file] })) {
           try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
         }
+        if (handle) { await writeToHandle(handle, blob); UI.toast(tr('התמונה נשמרה (') + (handle.name || name) + ')'); return; }
         downloadBlob(blob, name);
         UI.toast(tr('התמונה נשמרה (') + name + ')');
       } catch (e) {

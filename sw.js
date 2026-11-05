@@ -1,6 +1,6 @@
 /* Service Worker – שומר את האפליקציה לעבודה Offline.
    כדי לפרסם עדכון: להעלות את הקבצים החדשים ולהגדיל את VERSION (או להריץ tools/make-sw.py <גרסה>). */
-const VERSION = '1.19.7';
+const VERSION = '1.20.0';
 const CACHE = 'plans-app-' + VERSION;
 const CORE = [
   "./",
@@ -39,10 +39,12 @@ const CORE = [
   "js/order.js",
   "js/overlay.js",
   "js/overrides.js",
+  "js/pdf-vector.js",
   "js/pdfio.js",
   "js/personal-ui.js",
   "js/plan-preview.js",
   "js/prefs.js",
+  "js/print-layout.js",
   "js/privacy-config.js",
   "js/privacy.js",
   "js/pwa.js",
@@ -62,6 +64,7 @@ const CORE = [
   "js/xlsx-export.js",
   "js/zip.js",
   "lib/LICENSE-pdfjs.txt",
+  "lib/pdf-lib.esm.min.js",
   "lib/pdf.min.mjs",
   "lib/pdf.worker.min.mjs",
   "lib/pdfjs/LICENSE-pdfjs.txt",

@@ -122,6 +122,9 @@ export class SplitHost {
       { label: this.dir === 'row' ? tr('סידור: זו מעל זו') : tr('סידור: זו לצד זו'), icon: 'split', onClick: () => this.toggleDir() },
       { label: tr('סגור תצוגה זו'), icon: 'x', onClick: () => this.close(v) },
       { divider: true },
+      { label: tr('הדפסה / PDF של כל המסך'), icon: 'print', onClick: () => v.printDialog({ screen: true }) },
+      { label: tr('שמור את כל המסך כתמונה'), icon: 'image', onClick: () => v.saveScreenImage() },
+      { divider: true },
       { label: tr('חזרה לתצוגה רגילה (תוכנית אחת)'), icon: 'maximize', onClick: () => this.exit(v) },
     ]);
   }
