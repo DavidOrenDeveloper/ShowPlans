@@ -4,7 +4,7 @@ import { t as tr } from './i18n.js';
 import { h, icon, clone } from './util.js';
 import * as UI from './ui.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
-import { kindOf, canFill, hasFill, isNoStroke, boundsOf, FM, setFm, setAllFm, allFm, remask, pfList, pfStore, lineCount } from './markup.js';
+import { kindOf, canFill, hasFill, isNoStroke, boundsOf, FM, setFm, setAllFm, allFm, remask, pfList, pfStore, lineCount, isRTL } from './markup.js';
 import * as SH from './item-share-ui.js';
 import { itemAccess } from './cloud-sync.js';
 
@@ -172,7 +172,7 @@ export function installStyle(V) {
         this.inl.ed.focus();
         const ls = this.inlLines(), on = ls.every((d) => (d.dataset[key] || '') === v);
         ls.forEach((d) => { if (kind === 'list' && on) delete d.dataset[key]; else d.dataset[key] = v; });
-        this.positionInline(); this.refreshFmt();
+        this.fixEmptyDirs(this.inl.ed); this.positionInline(); this.refreshFmt();
         return;
       }
       const it = this.selected; if (!it || it.type !== 'text') return;
@@ -209,6 +209,7 @@ export function installStyle(V) {
         off += ln.length + 1;
         ed.append(this.lineEl(pf[i].l, pf[i].a, runs));
       });
+      this.fixEmptyDirs(ed);
     },
     fmEditorRead(ed) {
       let text = '', fm = '';
@@ -236,6 +237,16 @@ export function installStyle(V) {
       const tmp = {}; pfStore(tmp, pf);
       return { text, fm: /[1-9a-f]/.test(fm) ? fm : '', pf: tmp.pf ? tmp.pf.join(',') : '' };
     },
+    // שורה ריקה אין לה כיוון משלה (dir=auto נופל לשמאל) ולכן הנקודה/המספר קפצו שמאלה עד להקלדה: שורה ריקה יורשת את כיוון השורה שמעליה
+    fixEmptyDirs(ed) {
+      let prev = 'rtl';
+      for (const d of ed.children) {
+        if (d.tagName !== 'DIV') continue;
+        if (/[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.test(d.textContent)) { d.setAttribute('dir', 'auto'); prev = isRTL(d.textContent) ? 'rtl' : 'ltr'; }
+        else if (!d.textContent) d.setAttribute('dir', prev);
+        else d.setAttribute('dir', 'auto');
+      }
+    },
     curLine(ed) {
       const sel = window.getSelection();
       if (!sel.rangeCount) return null;
@@ -258,6 +269,7 @@ export function installStyle(V) {
       if (!nd.textContent) nd.replaceChildren(document.createElement('br'));
       if (!d.textContent) d.replaceChildren(document.createElement('br'));
       d.after(nd);
+      this.fixEmptyDirs(ed);
       const nr = document.createRange(); nr.setStart(nd, 0); nr.collapse(true); sel.removeAllRanges(); sel.addRange(nr);
     },
     insertPlain(txt) {
@@ -285,6 +297,7 @@ export function installStyle(V) {
           this.fmEditorFill(ed, t);
         }
         ed.querySelectorAll(':scope > div').forEach((d) => { if (!d.firstChild) d.append(document.createElement('br')); });
+        this.fixEmptyDirs(ed);
         this.positionInline();
       });
       ed.addEventListener('beforeinput', (e) => {

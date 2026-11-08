@@ -85,7 +85,7 @@ export function measureLabel(it, cal, unit) { const v = measureText(it, cal, uni
 
 // ---------- טקסט ----------
 // כיוון לפי התו ה"חזק" הראשון (כמו dir=auto): שורה שמתחילה באנגלית נשארת LTR גם אם יש בה מילה בעברית, והסוגריים נשארים במקומם
-const isRTL = (s) => { const m = /[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.exec(s || ''); return !!m && /[\u0590-\u05FF\u0600-\u06FF]/.test(m[0]); };
+export const isRTL = (s) => { const m = /[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.exec(s || ''); return !!m && /[\u0590-\u05FF\u0600-\u06FF]/.test(m[0]); };
 // עיצוב חלקי בתוך טקסט (מודגש/נטוי/קו תחתון/קו חוצה): it.fm = מחרוזת הקסה, תו לכל תו בטקסט. ביטים: 1 מודגש, 2 נטוי, 4 קו תחתון, 8 קו חוצה
 export const FM = { bold: 1, italic: 2, underline: 4, strike: 8 };
 export const fmAt = (it, i) => (it.fm ? parseInt(it.fm[i], 16) || 0 : 0);
@@ -121,6 +121,7 @@ export function remask(it, nt) {
 // פסקאות: it.pf = מערך של מחרוזות בנות 2 תווים לכל שורה (רשימה: b נקודות / n מספרים, יישור: l שמאל / c מרכז / r ימין; '-' = ברירת מחדל)
 export const pfList = (it, n) => Array.from({ length: n }, (_, i) => { const x = it.pf && it.pf[i]; return { l: x && x[0] !== '-' ? x[0] : '', a: x && x[1] !== '-' ? x[1] : '' }; });
 export function pfStore(it, arr) { const o = arr.map((x) => (x.l || '-') + (x.a || '-')); if (o.some((x) => x !== '--')) it.pf = o; else delete it.pf; }
+export const LIST_INDENT = 1.2; // הזחת שורות ברשימה (ביחידות גודל גופן), כמו בוורד
 export const lineCount = (it) => String(it.text || '').split('\n').length;
 // התחילית של כל שורה ברשימה ("• " או "1. "), מספור רץ ברצף שורות ממוספרות
 export function linePrefixes(it) {
@@ -133,7 +134,7 @@ export function textBox(it) {
   const fs = it.fontSize;
   let off = 0, wmax = 1;
   const pre = it.pf ? linePrefixes(it) : null;
-  for (const [li, l] of lines.entries()) { let w = pre ? pre[li].length * 0.58 : 0; for (let i = 0; i < l.length; i++) w += 0.58 + (fmAt(it, off + i) & 1 ? 0.07 : 0); wmax = Math.max(wmax, w); off += l.length + 1; }
+  for (const [li, l] of lines.entries()) { let w = pre ? pre[li].length * 0.58 + (pre[li] ? LIST_INDENT : 0) : 0; for (let i = 0; i < l.length; i++) w += 0.58 + (fmAt(it, off + i) & 1 ? 0.07 : 0); wmax = Math.max(wmax, w); off += l.length + 1; }
   const w = wmax * fs;
   return { x0: it.pts[0].x, y0: it.pts[0].y, x1: it.pts[0].x + w, y1: it.pts[0].y + lines.length * fs * 1.25 };
 }
@@ -208,16 +209,18 @@ export function drawItem(it, cx) {
         const pd = it.fontSize * 0.2;
         g.append(svg('rect', { x: bx.x0 - pd, y: bx.y0 - pd * 0.4, width: bx.x1 - bx.x0 + pd * 2, height: bx.y1 - bx.y0 + pd * 0.8, fill: it.bg, opacity: it.bgOp == null ? 1 : it.bgOp, rx: pd * 0.6 }));
       }
-      let off = 0;
+      let off = 0, prevRtl = null;
       const prefs_ = it.pf ? linePrefixes(it) : null, pfl = it.pf ? pfList(it, lines.length) : null;
       lines.forEach((ln, i) => {
         const lineOff = off; off += ln.length + 1;
         const pre = prefs_ ? prefs_[i] : '', al = pfl ? pfl[i].a : '';
-        const rtl = isRTL(ln);
+        const rtl = /[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.test(ln) ? isRTL(ln) : (prevRtl == null ? isRTL(ln) : prevRtl); // שורה ריקה/ללא אותיות יורשת את הכיוון של השורה שמעליה
+        prevRtl = rtl;
         let x = rtl ? bx.x1 : bx.x0, anchor = 'start';
         if (al === 'c') { x = (bx.x0 + bx.x1) / 2; anchor = 'middle'; } // יישור מפורש: מרכז / שמאל / ימין של התיבה
         else if (al === 'l') { x = bx.x0; anchor = rtl ? 'end' : 'start'; }
         else if (al === 'r') { x = bx.x1; anchor = rtl ? 'start' : 'end'; }
+        if (pre && al !== 'c') x += (x === bx.x1 ? -1 : 1) * LIST_INDENT * it.fontSize; // הזחה פנימה מהקצה שאליו השורה מיושרת
         const t = svg('text', {
           x, y: a.y + it.fontSize + i * it.fontSize * 1.25, 'font-size': it.fontSize, fill: it.color || '#111', opacity: op, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 400,
           stroke: '#fff', 'stroke-width': it.fontSize * 0.16, 'paint-order': 'stroke', 'stroke-linejoin': 'round',

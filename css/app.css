@@ -690,6 +690,7 @@ body.sync-bar-on .fab { bottom: calc(16px + var(--safe-b)); }
 
 .txt-canvas > div { min-height: 1.25em; }
 .txt-canvas > div[data-a=l] { text-align: left; } .txt-canvas > div[data-a=c] { text-align: center; } .txt-canvas > div[data-a=r] { text-align: right; }
+.txt-canvas > div[data-l] { padding-inline-start: 1.2em; } /* הזחת רשימה */
 .txt-canvas > div[data-l=b]::before { content: '\2022  '; white-space: pre; }
 .txt-canvas > div[data-l=n]::before { content: counter(txtn) '. '; white-space: pre; }
 .txt-canvas > div[data-l=n] { counter-increment: txtn; }
