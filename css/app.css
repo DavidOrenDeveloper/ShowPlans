@@ -683,3 +683,14 @@ body.sync-bar-on .fab { bottom: calc(16px + var(--safe-b)); }
   .pr-prev { position: static; order: -1; }
   .pr-canvas { max-height: 34dvh; }
 }
+
+/* עריכת טקסט ישירות על התוכנית */
+.txt-canvas { position: absolute; z-index: 8; box-sizing: content-box; margin: 0; padding: 0; border: 0; outline: 1.5px dashed #1d4e89; outline-offset: 3px; overflow: visible; white-space: pre; width: max-content; font-family: system-ui, Arial, sans-serif; font-weight: 400; user-select: text; -webkit-user-select: text; touch-action: auto; cursor: text; border-radius: 2px; direction: ltr; unicode-bidi: plaintext; caret-color: #1d4e89; }
+.btn.fmt { min-width: 36px; padding-inline: 8px; font-size: 15px; }
+
+.txt-canvas > div { min-height: 1.25em; }
+.txt-canvas > div[data-a=l] { text-align: left; } .txt-canvas > div[data-a=c] { text-align: center; } .txt-canvas > div[data-a=r] { text-align: right; }
+.txt-canvas > div[data-l=b]::before { content: '\2022  '; white-space: pre; }
+.txt-canvas > div[data-l=n]::before { content: counter(txtn) '. '; white-space: pre; }
+.txt-canvas > div[data-l=n] { counter-increment: txtn; }
+.txt-canvas > div:not([data-l=n]) { counter-reset: txtn; }

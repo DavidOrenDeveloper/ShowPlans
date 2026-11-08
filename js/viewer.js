@@ -221,7 +221,7 @@ class Viewer {
     s.addEventListener('lostpointercapture', (e) => { if (this.ptrs.has(e.pointerId)) this.onUp(e, true); });
     s.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     s.addEventListener('contextmenu', (e) => e.preventDefault());
-    s.addEventListener('dblclick', (e) => { if (this.tool === 'area' || this.tool === 'polyline') { e.preventDefault(); this.finishArea(); } });
+    s.addEventListener('dblclick', (e) => { if (this.tool === 'area' || this.tool === 'polyline') { e.preventDefault(); this.finishArea(); } else if (this.selected && this.selected.type === 'text') this.startInline(); });
     this.keyFn = (e) => this.onKey(e);
     this.keyUpFn = (e) => { if (e.code === 'Space') this.spaceDown = false; if (e.key === 'Shift') this.shiftDown = false; };
     document.addEventListener('keydown', this.keyFn);
@@ -399,6 +399,7 @@ class Viewer {
     if (!keepFit) this.fitMode = null;
     this.scale = scale; this.tx = tx; this.ty = ty;
     this.applyTransform();
+    this.positionInline?.();
     this.scheduleDetail();
     this.updateZoomUI();
   }
@@ -918,6 +919,7 @@ class Viewer {
       case 'move': case 'handle':
         if (g.moved && !g.ro) this.commitMod(g.before, this.selected).then(() => { if (g.type === 'handle') this.renderProps(); });
         else if (!g.moved && g.type === 'move' && g.cyc) this.cycleBeneath(g.stack);
+        else if (!g.moved && g.type === 'move' && g.wasSel && !g.ro && this.selected && this.selected.type === 'text') this.startInline(); // נגיעה בטקסט שכבר נבחר: עריכה ישירות על התוכנית
         break;
     }
   }
@@ -1010,7 +1012,7 @@ class Viewer {
       const sel = this.selected, canEdit = this.canEditItem(sel);
       const hd = canEdit && this.hitHandle(p0);
       if (hd) { this.gesture = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false, t: performance.now(), type: 'handle', idx: hd.idx, before: clone(sel) }; return; }
-      if (canEdit && hitItem(sel, p0, 18 / this.scale)) { this.gesture = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false, t: performance.now(), type: 'move', p0, before: clone(sel) }; return; }
+      if (canEdit && hitItem(sel, p0, 18 / this.scale)) { this.gesture = { id: e.pointerId, sx: pt.x, sy: pt.y, moved: false, t: performance.now(), type: 'move', p0, before: clone(sel), wasSel: true }; return; }
       const fs = this.autoSel && sel.id === this.autoSel;
       this.select(null);
       if (fs) this.dropFreshText(sel);
@@ -1031,7 +1033,7 @@ class Viewer {
         this._selPt = p;
         const cur = this.selected && stack.find((x) => x.id === this.selected.id);
         const it = cur || stack[0]; // נגיעה על הפריט שכבר נבחר משאירה אותו; נגיעה חוזרת ללא הזזה עוברת לסימן שמתחתיו
-        if (it) { if (it !== this.selected) this.select(it); this.gesture = { ...base, type: 'move', p0: p, before: clone(it), stack, cyc: !!cur && stack.length > 1, ro: !this.canEditItem(it) }; return; }
+        if (it) { if (it !== this.selected) this.select(it); this.gesture = { ...base, type: 'move', p0: p, before: clone(it), stack, cyc: !!cur && stack.length > 1, ro: !this.canEditItem(it), wasSel: !!cur }; return; }
         this.select(null);
         this.gesture = { type: 'pan', id: e.pointerId, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t0: performance.now(), moved: false, mouse: e.pointerType === 'mouse' };
         return;
@@ -1058,7 +1060,7 @@ class Viewer {
     const out = [];
     for (const l of ['markups', 'measurements', 'links']) {
       if (!prefs.show[l]) continue;
-      for (const it of this.items[l]) if (it.page === this.pageNum && this.itemShown(it)) out.push(it);
+      for (const it of this.items[l]) if (it.page === this.pageNum && this.itemShown(it) && !(this.inl && this.inl.id === it.id)) out.push(it);
     }
     return out;
   }
@@ -1232,6 +1234,7 @@ class Viewer {
     const kind = kindOf(type);
     if (kind === 'text') {
       it.color = prefs.tcolor; it.op = prefs.top; if (prefs.tbg) { it.bg = prefs.tbg; it.bgOp = prefs.tbgop; } it.text = d.text || ''; it.fontSize = prefs.tsize / sc; it.width = 1 / sc;
+      { const fb = (prefs.tbold ? 1 : 0) | (prefs.titalic ? 2 : 0) | (prefs.tunder ? 4 : 0) | (prefs.tstrike ? 8 : 0); if (fb && it.text) it.fm = fb.toString(16).repeat(it.text.length); }
     } else if (kind === 'hl') {
       it.color = prefs.hcolor; it.fillOp = prefs.hop; it.width = 1 / sc;
     } else if (kind === 'shape') {
@@ -1328,6 +1331,7 @@ class Viewer {
   }
   select(it, silent) {
     if (this._editBefore) this.commitEdit();
+    if (this.inl && (!it || it.id !== this.inl.id)) this.endInline(true);
     this.selected = it;
     this.renderSel();
     if (!silent) this.renderProps();
@@ -1368,6 +1372,7 @@ class Viewer {
     if (!this.items[it.layer].includes(it)) return;
     this.freshText = { id: it.id, ph };
     this.autoSel = it.id; this.select(it);
+    if (this.startInline()) return;
     const inp = this.props.querySelector('.txt-inline');
     if (inp) { inp.focus(); inp.select(); }
   }
@@ -1977,6 +1982,7 @@ class Viewer {
   }
 
   async destroy() {
+    this.endInline?.(true);
     this.dead = true;
     if (this._fsLayer) { this._fsLayer.release(); this._fsLayer = null; }
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

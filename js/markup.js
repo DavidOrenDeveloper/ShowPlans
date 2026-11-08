@@ -86,10 +86,55 @@ export function measureLabel(it, cal, unit) { const v = measureText(it, cal, uni
 // ---------- טקסט ----------
 // כיוון לפי התו ה"חזק" הראשון (כמו dir=auto): שורה שמתחילה באנגלית נשארת LTR גם אם יש בה מילה בעברית, והסוגריים נשארים במקומם
 const isRTL = (s) => { const m = /[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF]/.exec(s || ''); return !!m && /[\u0590-\u05FF\u0600-\u06FF]/.test(m[0]); };
+// עיצוב חלקי בתוך טקסט (מודגש/נטוי/קו תחתון/קו חוצה): it.fm = מחרוזת הקסה, תו לכל תו בטקסט. ביטים: 1 מודגש, 2 נטוי, 4 קו תחתון, 8 קו חוצה
+export const FM = { bold: 1, italic: 2, underline: 4, strike: 8 };
+export const fmAt = (it, i) => (it.fm ? parseInt(it.fm[i], 16) || 0 : 0);
+export function setFm(it, fm) { if (fm && /[1-9a-f]/.test(fm)) it.fm = fm; else delete it.fm; }
+export function setAllFm(it, bit, on) {
+  const t = String(it.text || ''); let out = '';
+  for (let i = 0; i < t.length; i++) { const c = fmAt(it, i); out += (on ? c | bit : c & ~bit).toString(16); }
+  setFm(it, out);
+}
+export function allFm(it, bit) {
+  const t = String(it.text || ''); let n = 0;
+  for (let i = 0; i < t.length; i++) { if (t[i] === '\n') continue; n++; if (!(fmAt(it, i) & bit)) return false; }
+  return n > 0;
+}
+// עריכת הטקסט בשדה רגיל: מעדכנים את העיצוב החלקי כך שיישאר צמוד לאותיות (הוספה יורשת את העיצוב של התו שלפניה)
+export function remask(it, nt) {
+  const old = String(it.text || ''), fm = it.fm; it.text = nt;
+  if (it.pf) { // רשימות ויישור לפי שורה: מוסיפים/מסירים שורות באותו מקום שבו הטקסט השתנה
+    const oc = old.split('\n').length, nc = nt.split('\n').length;
+    if (oc !== nc) {
+      let q = 0; while (q < old.length && q < nt.length && old[q] === nt[q]) q++;
+      const at = nt.slice(0, q).split('\n').length - 1, arr = pfList(it, oc);
+      if (nc > oc) arr.splice(at + 1, 0, ...Array(nc - oc).fill(arr[at] || { l: '', a: '' })); else arr.splice(at + 1, oc - nc);
+      pfStore(it, arr);
+    }
+  }
+  if (!fm) return;
+  let pre = 0; while (pre < old.length && pre < nt.length && old[pre] === nt[pre]) pre++;
+  let suf = 0; while (suf < old.length - pre && suf < nt.length - pre && old[old.length - 1 - suf] === nt[nt.length - 1 - suf]) suf++;
+  const mid = nt.length - pre - suf, fill = pre > 0 ? fm[pre - 1] : (fm[pre] || '0');
+  setFm(it, fm.slice(0, pre) + fill.repeat(Math.max(0, mid)) + fm.slice(old.length - suf));
+}
+// פסקאות: it.pf = מערך של מחרוזות בנות 2 תווים לכל שורה (רשימה: b נקודות / n מספרים, יישור: l שמאל / c מרכז / r ימין; '-' = ברירת מחדל)
+export const pfList = (it, n) => Array.from({ length: n }, (_, i) => { const x = it.pf && it.pf[i]; return { l: x && x[0] !== '-' ? x[0] : '', a: x && x[1] !== '-' ? x[1] : '' }; });
+export function pfStore(it, arr) { const o = arr.map((x) => (x.l || '-') + (x.a || '-')); if (o.some((x) => x !== '--')) it.pf = o; else delete it.pf; }
+export const lineCount = (it) => String(it.text || '').split('\n').length;
+// התחילית של כל שורה ברשימה ("• " או "1. "), מספור רץ ברצף שורות ממוספרות
+export function linePrefixes(it) {
+  const arr = pfList(it, lineCount(it)); let k = 0;
+  return arr.map((x) => { if (x.l === 'n') { k++; return k + '. '; } k = 0; return x.l === 'b' ? '\u2022 ' : ''; });
+}
+const decoOf = (m) => [m & 4 ? 'underline' : '', m & 8 ? 'line-through' : ''].join(' ').trim() || 'none';
 export function textBox(it) {
   const lines = String(it.text || '').split('\n');
   const fs = it.fontSize;
-  const w = Math.max(...lines.map((l) => l.length), 1) * fs * 0.58;
+  let off = 0, wmax = 1;
+  const pre = it.pf ? linePrefixes(it) : null;
+  for (const [li, l] of lines.entries()) { let w = pre ? pre[li].length * 0.58 : 0; for (let i = 0; i < l.length; i++) w += 0.58 + (fmAt(it, off + i) & 1 ? 0.07 : 0); wmax = Math.max(wmax, w); off += l.length + 1; }
+  const w = wmax * fs;
   return { x0: it.pts[0].x, y0: it.pts[0].y, x1: it.pts[0].x + w, y1: it.pts[0].y + lines.length * fs * 1.25 };
 }
 function label(text, x, y, fs, { anchor = 'middle', fill = '#111', rtl = false } = {}) {
@@ -163,15 +208,31 @@ export function drawItem(it, cx) {
         const pd = it.fontSize * 0.2;
         g.append(svg('rect', { x: bx.x0 - pd, y: bx.y0 - pd * 0.4, width: bx.x1 - bx.x0 + pd * 2, height: bx.y1 - bx.y0 + pd * 0.8, fill: it.bg, opacity: it.bgOp == null ? 1 : it.bgOp, rx: pd * 0.6 }));
       }
+      let off = 0;
+      const prefs_ = it.pf ? linePrefixes(it) : null, pfl = it.pf ? pfList(it, lines.length) : null;
       lines.forEach((ln, i) => {
+        const lineOff = off; off += ln.length + 1;
+        const pre = prefs_ ? prefs_[i] : '', al = pfl ? pfl[i].a : '';
         const rtl = isRTL(ln);
-        const x = rtl ? bx.x1 : bx.x0;
+        let x = rtl ? bx.x1 : bx.x0, anchor = 'start';
+        if (al === 'c') { x = (bx.x0 + bx.x1) / 2; anchor = 'middle'; } // יישור מפורש: מרכז / שמאל / ימין של התיבה
+        else if (al === 'l') { x = bx.x0; anchor = rtl ? 'end' : 'start'; }
+        else if (al === 'r') { x = bx.x1; anchor = rtl ? 'start' : 'end'; }
         const t = svg('text', {
-          x, y: a.y + it.fontSize + i * it.fontSize * 1.25, 'font-size': it.fontSize, fill: it.color || '#111', opacity: op, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 600,
+          x, y: a.y + it.fontSize + i * it.fontSize * 1.25, 'font-size': it.fontSize, fill: it.color || '#111', opacity: op, 'font-family': 'system-ui, Arial, sans-serif', 'font-weight': 400,
           stroke: '#fff', 'stroke-width': it.fontSize * 0.16, 'paint-order': 'stroke', 'stroke-linejoin': 'round',
-          direction: rtl ? 'rtl' : 'ltr', 'text-anchor': 'start', 'unicode-bidi': 'plaintext',
+          direction: rtl ? 'rtl' : 'ltr', 'text-anchor': anchor, 'unicode-bidi': 'plaintext',
         });
-        t.textContent = ln || ' ';
+        if (it.fm && ln) { // עיצוב חלקי: קטע נפרד לכל רצף עם אותו עיצוב
+          if (pre) { const tp = svg('tspan', { 'font-weight': 400 }); tp.textContent = pre; t.append(tp); }
+          let j = 0;
+          while (j < ln.length) {
+            const m = fmAt(it, lineOff + j); let k = j + 1;
+            while (k < ln.length && fmAt(it, lineOff + k) === m) k++;
+            const ts = svg('tspan', { 'font-weight': m & 1 ? 700 : 400, 'font-style': m & 2 ? 'italic' : 'normal', 'text-decoration': decoOf(m) });
+            ts.textContent = ln.slice(j, k); t.append(ts); j = k;
+          }
+        } else t.textContent = (pre + ln) || ' ';
         g.append(t);
       });
       break;

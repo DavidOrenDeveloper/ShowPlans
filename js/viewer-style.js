@@ -4,7 +4,7 @@ import { t as tr } from './i18n.js';
 import { h, icon, clone } from './util.js';
 import * as UI from './ui.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
-import { kindOf, canFill, hasFill, isNoStroke, boundsOf } from './markup.js';
+import { kindOf, canFill, hasFill, isNoStroke, boundsOf, FM, setFm, setAllFm, allFm, remask, pfList, pfStore, lineCount } from './markup.js';
 import * as SH from './item-share-ui.js';
 import { itemAccess } from './cloud-sync.js';
 
@@ -15,7 +15,7 @@ const SH_DIALOG = (v, o) => SH.shareDialog(v, o);
 const TOOL_KIND = { pen: 'shape', line: 'shape', polyline: 'shape', arrow: 'shape', rect: 'shape', ellipse: 'shape', text: 'text', highlight: 'hl' };
 const PREF_KEYS = {
   shape: { color: 'color', fill: 'fill', fillOp: 'fillOp', op: 'op', width: 'w' },
-  text: { color: 'tcolor', op: 'top', bg: 'tbg', bgOp: 'tbgop' },
+  text: { color: 'tcolor', op: 'top', bg: 'tbg', bgOp: 'tbgop', bold: 'tbold', italic: 'titalic', underline: 'tunder', strike: 'tstrike' },
   hl: { color: 'hcolor', fillOp: 'hop' },
 };
 const FILL_COLORS = [...COLORS.slice(0, 5), '#ffffff', '#111111'];
@@ -41,6 +41,7 @@ export function installStyle(V) {
           case 'size': return sel.fontSize;
           case 'bg': return sel.bg || null;
           case 'bgOp': return sel.bgOp == null ? 1 : sel.bgOp;
+          case 'bold': case 'italic': case 'underline': case 'strike': return allFm(sel, FM[key]);
           default: return undefined;
         }
       }
@@ -72,6 +73,7 @@ export function installStyle(V) {
             case 'size': it.fontSize = val; break;
             case 'bg': if (val) it.bg = val; else delete it.bg; break;
             case 'bgOp': it.bgOp = val; break;
+            case 'bold': case 'italic': case 'underline': case 'strike': setAllFm(it, FM[key], !!val); break;
             default: break;
           }
         };
@@ -110,6 +112,241 @@ export function installStyle(V) {
       return h('button', { class: 'btn sm' + (on ? ' primary' : ''), title: tr('שמור עיצוב: ההגדרות הנוכחיות (צבע, שקיפות, עובי, גודל…) יישארו לכל הסימונים הבאים עד שתשנו אותן שוב'), 'aria-pressed': on ? 'true' : 'false',
         onclick: () => { prefs.keep = !prefs.keep; if (prefs.keep) this.keepFromSel(); savePrefs(); UI.toast(prefs.keep ? tr('העיצוב הנוכחי נשמר לסימונים הבאים') : tr('שמירת העיצוב כובתה')); this.renderProps(); } },
         icon('lock', 16), tr('שמור עיצוב'));
+    },
+
+    // ---------- עיצוב טקסט: מודגש / נטוי / קו תחתון / קו חוצה ----------
+    // בזמן עריכה על התוכנית – חל על הטקסט המסומן (כמו בעורך תמלילים). בלי עריכה – על כל הטקסט הנבחר, ואם לא נבחר – ברירת מחדל לטקסט הבא
+    fmtRow() {
+      const defs = [['bold', 'B', tr('מודגש'), 'bold', 'font-weight:800'], ['italic', 'I', tr('נטוי'), 'italic', 'font-style:italic;font-weight:600'], ['underline', 'U', tr('קו תחתון'), 'underline', 'text-decoration:underline;font-weight:600'], ['strike', 'S', tr('קו חוצה'), 'strikeThrough', 'text-decoration:line-through;font-weight:600']];
+      return defs.map(([k, ch, title, cmd, css]) => {
+        const on = this.fmtState(k, cmd);
+        const b = h('button', { class: 'btn sm fmt' + (on ? ' primary' : ''), title, 'aria-label': title, 'aria-pressed': on ? 'true' : 'false', 'data-fmt': k, 'data-cmd': cmd,
+          onclick: () => { if (this.inl) { this.inl.ed.focus(); document.execCommand('styleWithCSS', false, false); document.execCommand(cmd, false); this.refreshFmt(); } else this.setStyle(k, !this.getStyle(k)); } }, h('span', { style: css }, ch));
+        for (const ev of ['pointerdown', 'mousedown']) b.addEventListener(ev, (e) => e.preventDefault()); // לא גונב את המיקוד מהעורך שעל התוכנית
+        return b;
+      });
+    },
+    fmtState(k, cmd) {
+      if (this.inl) { try { return document.queryCommandState(cmd); } catch { return false; } }
+      return !!this.getStyle(k);
+    },
+    refreshFmt() {
+      this.el?.querySelectorAll('[data-fmt]').forEach((b) => { const on = this.fmtState(b.dataset.fmt, b.dataset.cmd); b.classList.toggle('primary', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      this.el?.querySelectorAll('[data-blk]').forEach((b) => { const [k, v] = b.dataset.blk.split(':'); const on = this.blockState(k, v); b.classList.toggle('primary', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    },
+
+    // ---------- רשימות ויישור (לפי שורה/פסקה) ----------
+    blockRow() {
+      const ic = (d) => { const sv = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); sv.setAttribute('viewBox', '0 0 24 24'); sv.setAttribute('width', '16'); sv.setAttribute('height', '16'); sv.setAttribute('fill', 'none'); sv.setAttribute('stroke', 'currentColor'); sv.setAttribute('stroke-width', '2'); sv.setAttribute('stroke-linecap', 'round'); sv.innerHTML = d; return sv; };
+      const L = (w, y, al) => `<line x1="${al === 'l' ? 4 : al === 'r' ? 20 - w : 12 - w / 2}" y1="${y}" x2="${al === 'l' ? 4 + w : al === 'r' ? 20 : 12 + w / 2}" y2="${y}"/>`;
+      const al = (a) => L(16, 6, a) + L(10, 12, a) + L(16, 18, a);
+      const defs = [
+        ['b', 'list', tr('רשימת נקודות'), ic('<line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>')],
+        ['n', 'list', tr('רשימה ממוספרת'), h('span', { style: 'font-size:12px;font-weight:700;letter-spacing:-1px' }, '1.2.')],
+        ['l', 'align', tr('יישור לשמאל'), ic(al('l'))], ['c', 'align', tr('יישור למרכז'), ic(al('c'))], ['r', 'align', tr('יישור לימין'), ic(al('r'))],
+      ];
+      return defs.map(([v, kind, title, content]) => {
+        const on = this.blockState(kind, v);
+        const b = h('button', { class: 'btn sm fmt' + (on ? ' primary' : ''), title, 'aria-label': title, 'aria-pressed': on ? 'true' : 'false', 'data-blk': kind + ':' + v, onclick: () => this.blockSet(kind, v) }, content);
+        for (const ev of ['pointerdown', 'mousedown']) b.addEventListener(ev, (e) => e.preventDefault());
+        return b;
+      });
+    },
+    // השורות שנוגעת בהן הבחירה בעורך (או כל השורות כשלא עורכים)
+    inlLines() {
+      const ed = this.inl.ed, sel = window.getSelection();
+      const all = [...ed.children];
+      if (!sel.rangeCount || !ed.contains(sel.anchorNode)) return all.slice(0, 1);
+      const r = sel.getRangeAt(0), out = all.filter((d) => r.intersectsNode(d));
+      return out.length ? out : all.slice(0, 1);
+    },
+    blockState(kind, v) {
+      const key = kind === 'list' ? 'l' : 'a';
+      if (this.inl) { const ls = this.inlLines(); return ls.length > 0 && ls.every((d) => (d.dataset[key] || '') === v); }
+      const it = this.selected; if (!it || it.type !== 'text') return false;
+      return pfList(it, lineCount(it)).every((x) => x[key] === v);
+    },
+    blockSet(kind, v) {
+      const key = kind === 'list' ? 'l' : 'a';
+      if (this.inl) {
+        this.inl.ed.focus();
+        const ls = this.inlLines(), on = ls.every((d) => (d.dataset[key] || '') === v);
+        ls.forEach((d) => { if (kind === 'list' && on) delete d.dataset[key]; else d.dataset[key] = v; });
+        this.positionInline(); this.refreshFmt();
+        return;
+      }
+      const it = this.selected; if (!it || it.type !== 'text') return;
+      const on = this.blockState(kind, v);
+      this.modifySelected((i) => { const arr = pfList(i, lineCount(i)); arr.forEach((x) => { x[key] = kind === 'list' && on ? '' : v; }); pfStore(i, arr); });
+    },
+
+    // ---------- עריכת טקסט ישירות על התוכנית (contenteditable, עם עיצוב חלקי למילים מסומנות) ----------
+    lineEl(l, a, runs) {
+      const d = document.createElement('div'); d.setAttribute('dir', 'auto');
+      if (l) d.dataset.l = l; if (a) d.dataset.a = a;
+      for (const [txt, m] of runs) {
+        let n = document.createTextNode(txt);
+        if (m & 1) { const e = document.createElement('b'); e.append(n); n = e; }
+        if (m & 2) { const e = document.createElement('i'); e.append(n); n = e; }
+        if (m & 4) { const e = document.createElement('u'); e.append(n); n = e; }
+        if (m & 8) { const e = document.createElement('s'); e.append(n); n = e; }
+        d.append(n);
+      }
+      if (!d.firstChild) d.append(document.createElement('br')); // שורה ריקה צריכה גובה
+      return d;
+    },
+    fmEditorFill(ed, it) {
+      ed.textContent = '';
+      const lines = String(it.text || '').split('\n'), pf = pfList(it, lines.length);
+      let off = 0;
+      lines.forEach((ln, i) => {
+        const runs = []; let j = 0;
+        while (j < ln.length) {
+          const m = it.fm ? parseInt(it.fm[off + j], 16) || 0 : 0; let k = j + 1;
+          while (k < ln.length && (it.fm ? parseInt(it.fm[off + k], 16) || 0 : 0) === m) k++;
+          runs.push([ln.slice(j, k), m]); j = k;
+        }
+        off += ln.length + 1;
+        ed.append(this.lineEl(pf[i].l, pf[i].a, runs));
+      });
+    },
+    fmEditorRead(ed) {
+      let text = '', fm = '';
+      const pf = [];
+      const walk = (n, st) => {
+        if (n.nodeType === 3) { const v = n.nodeValue.replace(/[ \n\r]/g, ' '); for (let i = 0; i < v.length; i++) { text += v[i]; fm += st.toString(16); } return; }
+        if (n.nodeType !== 1 || n.tagName === 'BR') return;
+        const tg = n.tagName, sy = n.style;
+        if (tg === 'B' || tg === 'STRONG') st |= 1;
+        if (tg === 'I' || tg === 'EM') st |= 2;
+        if (tg === 'U') st |= 4;
+        if (tg === 'S' || tg === 'STRIKE' || tg === 'DEL') st |= 8;
+        const fw = sy.fontWeight; if (fw) { if (fw === 'bold' || +fw >= 600) st |= 1; else st &= ~1; }
+        if (sy.fontStyle) { if (sy.fontStyle === 'italic') st |= 2; else st &= ~2; }
+        const td = sy.textDecorationLine || sy.textDecoration || '';
+        if (td) { if (td.includes('none')) st &= ~12; if (td.includes('underline')) st |= 4; if (td.includes('line-through')) st |= 8; }
+        n.childNodes.forEach((c) => walk(c, st));
+      };
+      const lines = [...ed.childNodes];
+      if (!lines.length) lines.push(document.createElement('div'));
+      lines.forEach((d, i) => {
+        if (i > 0) { text += '\n'; fm += '0'; }
+        if (d.nodeType === 1 && d.tagName === 'DIV') { pf.push({ l: d.dataset.l || '', a: d.dataset.a || '' }); d.childNodes.forEach((c) => walk(c, 0)); } else { pf.push({ l: '', a: '' }); walk(d, 0); }
+      });
+      const tmp = {}; pfStore(tmp, pf);
+      return { text, fm: /[1-9a-f]/.test(fm) ? fm : '', pf: tmp.pf ? tmp.pf.join(',') : '' };
+    },
+    curLine(ed) {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return null;
+      let n = sel.anchorNode;
+      while (n && n.parentNode !== ed) n = n.parentNode;
+      return n && n.nodeType === 1 ? n : null;
+    },
+    // מפצל את השורה הנוכחית במקום הסמן; השורה החדשה יורשת רשימה ויישור (כמו אנטר בוורד)
+    splitLine() {
+      const ed = this.inl.ed, sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      if (!sel.isCollapsed) sel.getRangeAt(0).deleteContents();
+      const d = this.curLine(ed); if (!d) return;
+      const r = sel.getRangeAt(0), tail = document.createRange();
+      tail.setStart(r.startContainer, r.startOffset); tail.setEnd(d, d.childNodes.length);
+      const frag = tail.extractContents();
+      const nd = document.createElement('div'); nd.setAttribute('dir', 'auto');
+      if (d.dataset.l) nd.dataset.l = d.dataset.l; if (d.dataset.a) nd.dataset.a = d.dataset.a;
+      nd.append(frag);
+      if (!nd.textContent) nd.replaceChildren(document.createElement('br'));
+      if (!d.textContent) d.replaceChildren(document.createElement('br'));
+      d.after(nd);
+      const nr = document.createRange(); nr.setStart(nd, 0); nr.collapse(true); sel.removeAllRanges(); sel.addRange(nr);
+    },
+    insertPlain(txt) {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      txt.split(/\r?\n/).forEach((part, i) => {
+        if (i > 0) this.splitLine();
+        if (!part) return;
+        const r = sel.getRangeAt(0); r.deleteContents();
+        const d = this.curLine(this.inl.ed); if (d && d.firstChild && d.firstChild.tagName === 'BR' && !d.textContent) d.replaceChildren();
+        const nd = document.createTextNode(part); sel.getRangeAt(0).insertNode(nd);
+        const r2 = document.createRange(); r2.setStartAfter(nd); r2.collapse(true); sel.removeAllRanges(); sel.addRange(r2);
+      });
+    },
+    startInline() {
+      const it = this.selected;
+      if (!it || it.type !== 'text' || !this.canEditItem(it)) return false;
+      if (this.inl) { this.inl.ed.focus(); return true; }
+      const ed = h('div', { class: 'txt-canvas', contenteditable: 'true', spellcheck: 'false', dir: 'auto', role: 'textbox', 'aria-label': tr('טקסט') });
+      this.fmEditorFill(ed, it);
+      for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'dblclick', 'click', 'contextmenu']) ed.addEventListener(ev, (e) => e.stopPropagation());
+      ed.addEventListener('input', () => {
+        if (!ed.firstChild || ![...ed.childNodes].every((c) => c.nodeType === 1 && c.tagName === 'DIV')) { // הדפדפן השאיר צמתים מחוץ לשורות: עוטפים אותם בשורה
+          const tx = this.fmEditorRead(ed); const t = {}; t.text = tx.text; t.fm = tx.fm; if (tx.pf) t.pf = tx.pf.split(',');
+          this.fmEditorFill(ed, t);
+        }
+        ed.querySelectorAll(':scope > div').forEach((d) => { if (!d.firstChild) d.append(document.createElement('br')); });
+        this.positionInline();
+      });
+      ed.addEventListener('beforeinput', (e) => {
+        const t = e.inputType;
+        if (t === 'insertParagraph' || t === 'insertLineBreak') {
+          e.preventDefault();
+          const d = this.curLine(ed);
+          if (d && d.dataset.l && !d.textContent) { delete d.dataset.l; this.refreshFmt(); } // אנטר בשורה ריקה ברשימה: יוצא מהרשימה
+          else this.splitLine();
+          this.positionInline();
+        }
+        else if (t === 'insertFromPaste' || t === 'insertFromDrop') { e.preventDefault(); const v = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (v) { this.insertPlain(v); this.positionInline(); } }
+      });
+      ed.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); this.endInline(false); }
+        else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.endInline(true); }
+        else if (e.key === 'Backspace') { // בתחילת שורה ברשימה: מחיקה מסירה קודם את הנקודה/המספר (כמו בוורד)
+          const d = this.curLine(ed), sel = window.getSelection();
+          if (d && d.dataset.l && sel.isCollapsed) { const r = document.createRange(); r.setStart(d, 0); r.setEnd(sel.anchorNode, sel.anchorOffset); if (!r.toString()) { e.preventDefault(); delete d.dataset.l; this.refreshFmt(); } }
+        }
+      });
+      ed.addEventListener('blur', () => this.endInline(true));
+      this._selFn = () => { if (this.inl) this.refreshFmt(); };
+      document.addEventListener('selectionchange', this._selFn);
+      const ph = !!(this.freshText && this.freshText.id === it.id && it.text === this.freshText.ph);
+      this.inl = { id: it.id, ed };
+      this.stage.append(ed);
+      this.renderItems(); // הפריט המקורי מוסתר בזמן העריכה
+      this.positionInline();
+      ed.focus();
+      const r = document.createRange(), sel = window.getSelection();
+      const last = ed.lastElementChild;
+      if (ph) r.selectNodeContents(ed); else { r.selectNodeContents(last); r.collapse(false); if (last.lastChild && last.lastChild.tagName === 'BR') { r.setStartBefore(last.lastChild); r.collapse(true); } }
+      sel.removeAllRanges(); sel.addRange(r);
+      this.refreshFmt();
+      return true;
+    },
+    positionInline() {
+      const inl = this.inl;
+      if (!inl) return;
+      const it = this.selected;
+      if (!it || it.id !== inl.id) return;
+      const s = this.scale, fs = it.fontSize * s, o0 = this.o2d(it.pts[0].x, it.pts[0].y);
+      Object.assign(inl.ed.style, {
+        left: (this.tx + o0.x * s) + 'px', top: (this.ty + o0.y * s) + 'px', transformOrigin: '0 0', transform: this.rot ? `rotate(${this.rot}deg)` : 'none', // בתצוגה מסובבת העורך מסתובב יחד עם התוכנית
+        minWidth: Math.max(fs * 3, 20) + 'px', fontSize: fs + 'px', lineHeight: '1.25', color: it.color || '#111',
+        background: it.bg || 'rgba(255,255,255,.94)',
+      });
+    },
+    endInline(commit) {
+      const inl = this.inl;
+      if (!inl) return;
+      this.inl = null;
+      document.removeEventListener('selectionchange', this._selFn);
+      const v = this.fmEditorRead(inl.ed);
+      inl.ed.remove();
+      const it = this.selected;
+      if (commit && it && it.id === inl.id && this.canEditItem(it) && (v.text !== it.text || v.fm !== (it.fm || '') || v.pf !== (it.pf ? it.pf.join(',') : ''))) {
+        if (this.freshText && this.freshText.id === it.id && v.text && v.text !== this.freshText.ph) this.freshText = null;
+        this.modifySelected((i) => { i.text = v.text; setFm(i, v.fm); if (v.pf) i.pf = v.pf.split(','); else delete i.pf; });
+      } else { this.renderItems(); this.renderProps(); }
     },
 
     liveEdit(mut) {
@@ -276,7 +513,8 @@ export function installStyle(V) {
           row.push(
             h('button', { class: 'icon-btn sm', 'aria-label': tr('הקטן טקסט'), onclick: () => this.setStyle('size', Math.max(2, Math.round(sel.fontSize * 0.9))) }, icon('minus', 16)),
             sizeIn,
-            h('button', { class: 'icon-btn sm', 'aria-label': tr('הגדל טקסט'), onclick: () => this.setStyle('size', Math.round(sel.fontSize * 1.1) + 1) }, icon('plus', 16)));
+            h('button', { class: 'icon-btn sm', 'aria-label': tr('הגדל טקסט'), onclick: () => this.setStyle('size', Math.round(sel.fontSize * 1.1) + 1) }, icon('plus', 16)),
+            ...this.fmtRow(), ...this.blockRow());
         }
         if (kind !== 'meas') row.push(h('button', { class: 'btn sm' + (this.styleOpen ? ' primary' : ''), onclick: () => this.togglePanel() }, icon('sliders', 16), tr('עיצוב')));
       }
@@ -320,7 +558,7 @@ export function installStyle(V) {
         if (sel.type === 'text') {
           const ta = h('textarea', { class: 'txt-inline', rows: 1, placeholder: tr('הקלד טקסט…'), 'aria-label': tr('טקסט') }, sel.text || '');
           ta.value = sel.text || '';
-          ta.addEventListener('input', () => { this.liveEdit((it) => { it.text = ta.value; }); ta.style.height = 'auto'; ta.style.height = Math.min(110, ta.scrollHeight) + 'px'; });
+          ta.addEventListener('input', () => { this.liveEdit((it) => { remask(it, ta.value); }); ta.style.height = 'auto'; ta.style.height = Math.min(110, ta.scrollHeight) + 'px'; });
           ta.addEventListener('change', () => { if (this.freshText && this.freshText.id === sel.id && ta.value && ta.value !== this.freshText.ph) this.freshText = null; this.commitEdit(); });
           row.unshift(ta);
         }
@@ -340,6 +578,7 @@ export function installStyle(V) {
       this.renderStylePanel();
       this.renderMeasPanel();
       this.ensureSelVisible();
+      this.positionInline();
     },
 
     // ---------- פאנל עיצוב מלא ----------
@@ -362,6 +601,8 @@ export function installStyle(V) {
       } else if (kind === 'hl') {
         body.push(sec(tr('הדגשה'), this.colorRow('color'), this.slider(tr('שקיפות'), 'fillOp', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
       } else if (kind === 'text') {
+        body.push(sec(tr('סגנון'), h('div', { class: 'st-row' }, ...this.fmtRow())));
+        if (sel) body.push(sec(tr('פסקה'), h('div', { class: 'st-row' }, ...this.blockRow())));
         body.push(sec(tr('טקסט'), this.colorRow('color'), this.slider(tr('שקיפות טקסט'), 'op', { min: 0.05, max: 1, step: 0.05, fmt: pct })));
         body.push(sec(tr('רקע לטקסט'), this.colorRow('bg', { none: true, palette: ['#fff59d', '#ffffff', '#ffcc80', '#a5d6a7', '#90caf9', '#f48fb1', '#111111'] }), this.slider(tr('שקיפות רקע'), 'bgOp', { min: 0.1, max: 1, step: 0.05, fmt: pct })));
         if (sel) {

@@ -1,5 +1,16 @@
 // English translations. Key = the Hebrew source string (as written in the code), value = English.
 export const EN = {
+ "רשימת נקודות": "Bulleted list",
+ "רשימה ממוספרת": "Numbered list",
+ "יישור לשמאל": "Align left",
+ "יישור למרכז": "Align center",
+ "יישור לימין": "Align right",
+ "פסקה": "Paragraph",
+ "מודגש": "Bold",
+ "נטוי": "Italic",
+ "קו תחתון": "Underline",
+ "קו חוצה": "Strikethrough",
+ "סגנון": "Style",
  "שמור עיצוב": "Keep style",
  "שמור עיצוב: ההגדרות הנוכחיות (צבע, שקיפות, עובי, גודל…) יישארו לכל הסימונים הבאים עד שתשנו אותן שוב": "Keep style: the current settings (color, opacity, width, size…) stay for all following markups until you change them again",
  "העיצוב הנוכחי נשמר לסימונים הבאים": "Current style kept for the next markups",
