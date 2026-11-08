@@ -76,6 +76,7 @@ export function installStyle(V) {
           }
         };
         if (live) this.liveEdit(mut); else this.modifySelected(mut);
+        if (prefs.keep) this.keepStyle(key, val);
         return;
       }
       const m = PREF_KEYS[kind];
@@ -83,6 +84,32 @@ export function installStyle(V) {
       prefs[m[key]] = val;
       savePrefs();
       if (!live) this.renderProps();
+    },
+
+    // "שמור עיצוב" (Keep tool selected): כשפעיל, כל שינוי עיצוב בפריט נבחר נשמר גם כברירת מחדל לסימון הבא, עד שמשנים שוב
+    keepStyle(key, val) {
+      const { kind } = this.styleCtx();
+      const m = PREF_KEYS[kind];
+      if (!m) return;
+      if (key === 'size') { if (kind === 'text') prefs.tsize = Math.max(8, Math.round(val * this.scale)); }
+      else if (m[key]) { if (key === 'color' && val === 'none') return; prefs[m[key]] = val; }
+      else return;
+      savePrefs();
+    },
+    keepFromSel() {
+      const { sel, kind } = this.styleCtx();
+      const m = PREF_KEYS[kind];
+      if (!sel || !m || !this.canEditItem(sel)) return;
+      for (const k of Object.keys(m)) { if ((k === 'fill' || k === 'fillOp') && kind === 'shape' && !canFill(sel)) continue; const v = this.getStyle(k); if (v !== undefined && !(k === 'color' && v === 'none')) prefs[m[k]] = v; }
+      if (kind === 'text') prefs.tsize = Math.max(8, Math.round(sel.fontSize * this.scale));
+      if (sel.type === 'measure' || sel.type === 'area') for (const k of ['color', 'width', 'tcolor', 'tsize']) prefs[{ color: 'mcolor', width: 'mw', tcolor: 'mtcolor', tsize: 'mtsize' }[k]] = this.measGet(k);
+      savePrefs();
+    },
+    keepBtn() {
+      const on = !!prefs.keep;
+      return h('button', { class: 'btn sm' + (on ? ' primary' : ''), title: tr('שמור עיצוב: ההגדרות הנוכחיות (צבע, שקיפות, עובי, גודל…) יישארו לכל הסימונים הבאים עד שתשנו אותן שוב'), 'aria-pressed': on ? 'true' : 'false',
+        onclick: () => { prefs.keep = !prefs.keep; if (prefs.keep) this.keepFromSel(); savePrefs(); UI.toast(prefs.keep ? tr('העיצוב הנוכחי נשמר לסימונים הבאים') : tr('שמירת העיצוב כובתה')); this.renderProps(); } },
+        icon('lock', 16), tr('שמור עיצוב'));
     },
 
     liveEdit(mut) {
@@ -121,10 +148,13 @@ export function installStyle(V) {
     },
     slider(label, key, { min, max, step, fmt }) {
       const val = this.getStyle(key);
-      const out = h('b', { class: 'st-v' }, fmt(val));
+      const isPct = fmt === pct; // שקיפות: צעד של 1% + שדה להקלדת ערך מדויק
+      if (isPct) step = 0.01;
+      const out = isPct ? h('input', { type: 'number', class: 'num sz', min: Math.round(min * 100), max: Math.round(max * 100), step: 1, value: Math.round(val * 100), 'aria-label': label }) : h('b', { class: 'st-v' }, fmt(val));
       const r = h('input', { type: 'range', min, max, step, value: val, 'aria-label': label });
-      r.addEventListener('input', () => { out.textContent = fmt(+r.value); this.setStyle(key, +r.value, true); });
+      r.addEventListener('input', () => { if (isPct) out.value = Math.round(+r.value * 100); else out.textContent = fmt(+r.value); this.setStyle(key, +r.value, true); });
       r.addEventListener('change', () => { if (this.selected) this.commitEdit(); else this.setStyle(key, +r.value); });
+      if (isPct) out.addEventListener('change', () => { const x = Math.max(min, Math.min(max, parseFloat(out.value) / 100)); if (!(x >= min)) return; r.value = x; out.value = Math.round(x * 100); this.setStyle(key, x); });
       return h('label', { class: 'st-slider' }, h('span', {}, label), r, out);
     },
     togglePanel() { this.styleOpen = !this.styleOpen; this.renderProps(); },
@@ -167,6 +197,7 @@ export function installStyle(V) {
           else if (k === 'tsize') { it.tsz = val; it.fontSize = val / ref; }
         };
         if (live) this.liveEdit(mut); else this.modifySelected(mut);
+        if (prefs.keep) { prefs[{ color: 'mcolor', width: 'mw', tcolor: 'mtcolor', tsize: 'mtsize' }[k]] = val; savePrefs(); }
         return;
       }
       prefs[{ color: 'mcolor', width: 'mw', tcolor: 'mtcolor', tsize: 'mtsize' }[k]] = val;
@@ -249,6 +280,7 @@ export function installStyle(V) {
         }
         if (kind !== 'meas') row.push(h('button', { class: 'btn sm' + (this.styleOpen ? ' primary' : ''), onclick: () => this.togglePanel() }, icon('sliders', 16), tr('עיצוב')));
       }
+      if (kind || t === 'measure' || t === 'area' || (sel && (sel.type === 'measure' || sel.type === 'area'))) row.push(this.keepBtn());
       if (t === 'polyline' && !sel) {
         const cb = h('input', { type: 'checkbox', checked: !!prefs.ortho, onchange: () => { prefs.ortho = cb.checked; savePrefs(); } });
         row.push(h('label', { class: 'chip-check' }, cb, tr('זוויות ישרות')));

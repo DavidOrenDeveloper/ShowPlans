@@ -1,5 +1,9 @@
 // English translations. Key = the Hebrew source string (as written in the code), value = English.
 export const EN = {
+ "שמור עיצוב": "Keep style",
+ "שמור עיצוב: ההגדרות הנוכחיות (צבע, שקיפות, עובי, גודל…) יישארו לכל הסימונים הבאים עד שתשנו אותן שוב": "Keep style: the current settings (color, opacity, width, size…) stay for all following markups until you change them again",
+ "העיצוב הנוכחי נשמר לסימונים הבאים": "Current style kept for the next markups",
+ "שמירת העיצוב כובתה": "Keep style turned off",
  "לא נבחרו קבצי PDF": "No PDF files selected",
  "מייבא תוכניות…": "Importing plans…",
  "{0} מתוך {1} – {2}": "{0} of {1} – {2}",
