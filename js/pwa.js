@@ -39,7 +39,8 @@ export async function installedElsewhere() {
 
 // איפוס מטמוני האפליקציה (לא נוגע בתוכניות, בסימונים או בחשבון) וטעינה מחדש מהשרת
 export async function forceRefresh() {
-  try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map((r) => r.unregister())); } catch { /* ignore */ }
+  // מבטלים רק את ה-Service Worker של האפליקציה הזו (לפי ה-scope שלה), לא של אפליקציות אחרות באותו דומיין
+  try { const mine = new URL('./', location.href).href; const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.filter((r) => r.scope === mine).map((r) => r.unregister())); } catch { /* ignore */ }
   try { const keys = await caches.keys(); await Promise.all(keys.filter((k) => k.startsWith('plans-app-')).map((k) => caches.delete(k))); } catch { /* ignore */ }
   location.reload();
 }

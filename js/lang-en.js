@@ -1264,4 +1264,6 @@ export const EN = {
  "אורך כל קטע": "Length of each segment",
  "היקף {0} · שטח {1}": "Circumference {0} · Area {1}",
  "היקף עיגול": "Circle circumference",
+ "נפתח חלון הדפסה. אם הוא לא הופיע – לחצו \"שמור / שתף PDF\" והדפיסו מהקובץ": "The print dialog opened. If it didn't appear – tap \"Save / Share PDF\" and print from the file",
+ "ההדפסה הישירה לא זמינה. ה-PDF ירד לתיקיית ההורדות – פתחו אותו והדפיסו": "Direct printing isn't available. The PDF was saved to your downloads – open it and print",
 };
