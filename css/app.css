@@ -695,3 +695,9 @@ body.sync-bar-on .fab { bottom: calc(16px + var(--safe-b)); }
 .txt-canvas > div[data-l=n]::before { content: counter(txtn) '. '; white-space: pre; }
 .txt-canvas > div[data-l=n] { counter-increment: txtn; }
 .txt-canvas > div:not([data-l=n]) { counter-reset: txtn; }
+
+/* חץ קטן בקצה המסך שפותח תפריט הגדרות ואפליקציה בלי לצאת מהתוכנית (עובד במחשב, בטאבלט ובטלפון) */
+.v-sidetab { position: absolute; left: 0; top: 50%; transform: translateY(-50%); z-index: 6; width: 22px; height: 64px; border: 0; border-radius: 0 12px 12px 0; background: rgba(31,41,51,.72); color: #fff; display: flex; align-items: center; justify-content: center; padding: 0; opacity: .85; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+.v-sidetab:hover, .v-sidetab:focus-visible { opacity: 1; width: 28px; }
+@media (pointer: coarse) { .v-sidetab { width: 28px; height: 76px; } }
+.viewer.fs .v-sidetab, .viewer.immersive .v-sidetab, .viewer.pane .v-sidetab { display: none; }

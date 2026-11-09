@@ -20,7 +20,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleShe
 
 // items: [{ title, type, page, plan, value (במטרים / מ"ר), owner }] → Blob
 export async function buildMeasurementsXlsx(items) {
-  const kind = (t) => (t === 'area' ? tr('שטח') : t === 'polyline' ? tr('תוואי') : tr('אורך'));
+  const kind = (t) => (t === 'area' ? tr('שטח') : t === 'polyline' ? tr('תוואי') : t === 'path' ? tr('מסלול') : t === 'circle' ? tr('היקף עיגול') : tr('אורך'));
   const detail = [[tr('כותרת'), tr('תוכנית'), tr('עמוד'), tr('סוג'), tr('כמות (מ׳ / מ״ר)'), tr('מודד')]];
   const groups = new Map();
   const sorted = [...items].sort((a, b) => String(a.title || '~').localeCompare(String(b.title || '~'), 'he') || String(a.plan).localeCompare(String(b.plan), 'he') || a.page - b.page);

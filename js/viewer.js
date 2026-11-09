@@ -13,11 +13,15 @@ import { Layer, mkCtx } from './layer.js';
 import { h, icon, uid, clamp, clone, fmtDate, natural } from './util.js';
 import {
   svg, LAYER_OF, RECT_TYPES, dist, drawItem, hitItem, handlesOf, boundsOf, corners, textBox,
-  paperName, mpuFromRatio, fmtLen, kindOf, polyArea, pathLength,
+  paperName, mpuFromRatio, fmtLen, kindOf, isMeas, MEAS_TOOLS, measureValue,
 } from './markup.js';
+import { APP_VERSION } from './version.js';
 import { recognize, snapAngle } from './shape-recog.js';
 const LINE_TOOLS = new Set(['line', 'arrow', 'measure', 'calibrate']);
-const AIM_TOOLS = new Set(['measure', 'calibrate', 'area', 'polyline']); // כלים שדורשים דיוק: במגע – נקודה מעל האצבע + זכוכית מגדלת
+const AIM_TOOLS = new Set(['measure', 'calibrate', 'area', 'polyline', 'path', 'arc', 'circle']);
+const TWO_PT_TOOLS = new Set(['measure', 'calibrate', 'circle']); // כלים שמסמנים שתי נקודות
+const POLY_TYPES = new Set(['area', 'polyline', 'path']); // סוגי טיוטה מרובי נקודות
+const POLY_TOOLS = new Set(['area', 'polyline', 'path', 'arc']); // כלים שדורשים דיוק: במגע – נקודה מעל האצבע + זכוכית מגדלת
 const snap45 = (a, p) => { const dx = p.x - a.x, dy = p.y - a.y, len = Math.hypot(dx, dy), r = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4); return { x: a.x + Math.cos(r) * len, y: a.y + Math.sin(r) * len }; };
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
 import { installStyle } from './viewer-style.js';
@@ -49,6 +53,9 @@ const TOOLS = [
   { sep: true },
   { id: 'measure', icon: 'ruler', label: tr('מרחק') },
   { id: 'area', icon: 'polygon', label: tr('שטח') },
+  { id: 'path', icon: 'route', label: tr('מסלול') },
+  { id: 'arc', icon: 'arc', label: tr('קשת') },
+  { id: 'circle', icon: 'circleMeas', label: tr('מעגל') },
   { sep: true },
   { id: 'link', icon: 'link', label: tr('קישור') },
   { sep: true },
@@ -190,7 +197,8 @@ class Viewer {
       btn('list', tr('רשימת תוצאות'), () => this.openPanel('search')),
       btn('x', tr('סיום חיפוש'), () => this.clearSearch()));
     this.regionBar = h('div', { class: 'v-region v-float hidden' });
-    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.regionBar, this.panel);
+    this.sideBtn = this.host ? null : h('button', { class: 'v-sidetab', 'aria-label': tr('תפריט האפליקציה והגדרות'), title: tr('תפריט האפליקציה והגדרות'), onclick: (e) => this.openAppMenu(e.currentTarget) }, icon('chevR', 18));
+    this.mid = h('div', { class: 'v-mid' }, this.stage, this.zoomBar, this.pageBar, this.sbar, this.regionBar, this.panel, this.sideBtn);
     this.exitFs = h('button', { class: 'v-exit-fs', 'aria-label': tr('כיווץ מסך מלא'), onclick: () => this.exitFullscreenMode() }, icon('x', 18), h('span', {}, tr('כיווץ מסך מלא')));
     // במסך מלא: חץ קטן שפותח/סוגר את כלי העריכה והאפשרויות מעל התוכנית
     this.fsToolsBtn = h('button', { class: 'v-fs-tools', 'aria-label': tr('כלי עריכה ואפשרויות'), onclick: () => { this.el.classList.toggle('fs-tools'); this._quietUntil = performance.now() + 250; } }, icon('chevU', 20));
@@ -220,8 +228,8 @@ class Viewer {
     s.addEventListener('pointercancel', (e) => this.onUp(e, true));
     s.addEventListener('lostpointercapture', (e) => { if (this.ptrs.has(e.pointerId)) this.onUp(e, true); });
     s.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
-    s.addEventListener('contextmenu', (e) => e.preventDefault());
-    s.addEventListener('dblclick', (e) => { if (this.tool === 'area' || this.tool === 'polyline') { e.preventDefault(); this.finishArea(); } else if (this.selected && this.selected.type === 'text') this.startInline(); });
+    s.addEventListener('contextmenu', (e) => { e.preventDefault(); this.rightClickMenu(e); });
+    s.addEventListener('dblclick', (e) => { if (POLY_TOOLS.has(this.tool)) { e.preventDefault(); this.finishArea(true); } else if (this.selected && this.selected.type === 'text') this.startInline(); });
     this.keyFn = (e) => this.onKey(e);
     this.keyUpFn = (e) => { if (e.code === 'Space') this.spaceDown = false; if (e.key === 'Shift') this.shiftDown = false; };
     document.addEventListener('keydown', this.keyFn);
@@ -655,6 +663,7 @@ class Viewer {
   onDown(e) {
     if (!this.page) return;
     if (e.pointerType === 'mouse' && e.button > 2) return;
+    this._ptrType = e.pointerType;
     try { this.stage.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const pt = this.local(e);
     if (e.isPrimary && this.ptrs.size) { this.ptrs.clear(); this.pinch = null; this.assist = null; if (this.gesture) this.abortGesture(); } // אצבע ראשונה חדשה = אין נגיעות אחרות; מנקה נגיעה "תקועה" שגרמה לקפיצות
@@ -793,13 +802,13 @@ class Viewer {
     if (this.pinch && this.ptrs.size >= 2) { this.doPinch(); return; }
     const g = this.gesture;
     if (!g) {
-      if (this.draft && (this.draft.wait || this.draft.type === 'area' || this.draft.type === 'polyline')) { this.draft.hover = this.orthoPt(this.toPage(pt)); this.renderDraft(); }
+      if (this.draft && (this.draft.wait || POLY_TYPES.has(this.draft.type))) { this.draft.hover = this.orthoPt(this.toPage(pt)); this.renderDraft(); }
       return;
     }
     if (g.id !== e.pointerId) return;
     const p = this.toPage(pt);
     const dx = pt.x - g.x, dy = pt.y - g.y;
-    const ps = (a) => (this.shiftDown && a ? snap45(a, p) : p); // Shift: קו ישר בקפיצות של 45°
+    const ps = (a) => (this.shiftDown && a && this.tool !== 'circle' ? snap45(a, p) : p); // Shift: קו ישר בקפיצות של 45°
     switch (g.type) {
       case 'pan':
         if (Math.hypot(pt.x - g.sx, pt.y - g.sy) > 6) g.moved = true;
@@ -840,7 +849,7 @@ class Viewer {
         if (!g.moved && Math.hypot(pt.x - g.sx, pt.y - g.sy) > 5) g.moved = true;
         if (!g.moved || g.ro) break;
         const ddx = p.x - g.p0.x, ddy = p.y - g.p0.y;
-        this.selected.pts = g.before.pts.map((q) => ({ x: q.x + ddx, y: q.y + ddy }));
+        this.selected.pts = g.before.pts.map((q) => ({ ...q, x: q.x + ddx, y: q.y + ddy }));
         this.renderItems();
         break;
       }
@@ -850,7 +859,8 @@ class Viewer {
           const a0 = g.before.pts[0], bb = textBox(g.before);
           const d0 = Math.hypot(bb.x1 - a0.x, bb.y1 - a0.y) || 1, d1 = Math.hypot(p.x - a0.x, p.y - a0.y);
           it.fontSize = Math.max(2, g.before.fontSize * (d1 / d0));
-        } else if (RECT_TYPES.has(it.type)) { const c = corners(g.before.pts); it.pts = [c[(g.idx + 2) % 4], p]; } else it.pts = g.before.pts.map((q, i) => (i === g.idx ? p : q));
+        } else if (RECT_TYPES.has(it.type)) { const c = corners(g.before.pts); it.pts = [c[(g.idx + 2) % 4], p]; } else if (it.type === 'circle' && g.idx === 0) { const q0 = g.before.pts[0], q1 = g.before.pts[1]; it.pts = [p, { x: p.x + q1.x - q0.x, y: p.y + q1.y - q0.y }]; } // מעגל: הידית במרכז מזיזה את כולו
+        else it.pts = g.before.pts.map((q, i) => (i === g.idx ? (q.m ? { ...p, m: true } : p) : q));
         g.moved = true;
         this.renderItems();
         break;
@@ -882,6 +892,7 @@ class Viewer {
     let p = this.toPage(pt);
     switch (g.type) {
       case 'pan':
+        if (g.moved && g.mouse) this._rcMoved = performance.now();
         if (!g.moved && performance.now() - g.t0 < 600) this.onTap(pt);
         else if (g.moved && !g.mouse) this.maybeSwipe(g, pt);
         break;
@@ -903,13 +914,13 @@ class Viewer {
       }
       case 'erase': this.commitErase(); break;
       case 'seg':
-        if (g.moved) { const d = this.draft; this.draft = null; if (d && this.shiftDown) d.pts[1] = snap45(d.pts[0], p); if (d && dist(d.pts[0], d.pts[1]) * this.scale >= 8) this.commitNew(d); else this.renderDraft(); }
+        if (g.moved) { const d = this.draft; this.draft = null; if (d && this.shiftDown && d.type !== 'circle') d.pts[1] = snap45(d.pts[0], p); if (d && dist(d.pts[0], d.pts[1]) * this.scale >= 8) this.commitNew(d); else this.renderDraft(); }
         else { this.draft = { type: this.tool, pts: [g.p0, g.p0], wait: true, hover: g.p0 }; this.renderDraft(); this.renderProps(); }
         break;
       case 'seg2':
         if (!g.moved) {
           const d = this.draft;
-          if (this.shiftDown) p = snap45(d.pts[0], p);
+          if (this.shiftDown && d.type !== 'circle') p = snap45(d.pts[0], p);
           if (dist(d.pts[0], p) * this.scale < 4) return;
           this.draft = null; d.pts = [d.pts[0], p]; delete d.wait; delete d.hover; this.commitNew(d);
         }
@@ -965,8 +976,10 @@ class Viewer {
       else this.goBack();
       return;
     }
+    if (k === 'Backspace' && this.draft && POLY_TYPES.has(this.draft.type)) { e.preventDefault(); this.undoPoint(); return; }
     if (k === 'Delete' || k === 'Backspace') { if (this.selected) this.deleteSelected(); return; }
-    if (k === 'Enter' && this.draft && (this.draft.type === 'area' || this.draft.type === 'polyline')) { this.finishArea(); return; }
+    if (k === 'Enter' && this.draft && POLY_TYPES.has(this.draft.type)) { this.finishArea(); return; }
+    if (e.code === 'KeyA' && this.tool === 'path' && !e.ctrlKey && !e.metaKey) { this.toggleArc(); return; }
     if (k === '+' || k === '=') this.zoomBy(1.4);
     else if (k === '-') this.zoomBy(1 / 1.4);
     else if (k === '0') this.setZoom100();
@@ -984,13 +997,14 @@ class Viewer {
   // ---------- כלים ----------
   setTool(t) {
     if (t !== 'pan' && t !== 'select' && t !== 'region' && !CS.canMarkPlan(this.planId)) { UI.toast(tr('בתוכנית הזו יש לך הרשאת צפייה בלבד. סימון דורש הרשאת סימון מהמנהל'), { type: 'error' }); return; }
-    if (this.cmp && this.cmpNoteMode && ['text', 'eraser', 'measure', 'area', 'calibrate', 'link'].includes(t)) { UI.toast(tr('בהשוואה אפשר לצייר חץ / מלבן / עיגול / הדגשה / עט / קו. כדי להשתמש בכלי הזה כבו את "צייר על ההשוואה בלבד"'), { ms: 5000 }); return; }
+    if (this.cmp && this.cmpNoteMode && ['text', 'eraser', 'measure', 'area', 'path', 'arc', 'circle', 'calibrate', 'link'].includes(t)) { UI.toast(tr('בהשוואה אפשר לצייר חץ / מלבן / עיגול / הדגשה / עט / קו. כדי להשתמש בכלי הזה כבו את "צייר על ההשוואה בלבד"'), { ms: 5000 }); return; }
     if (t === 'link' && !CS.canEditPlanItems(this.planId)) { UI.toast(tr('קישורים בין תוכניות דורשים הרשאת עריכה מלאה'), { type: 'error' }); return; }
-    if ((t === 'measure' || t === 'area') && !this.calibs.get(this.pageNum)) { this.needCalibration(t); return; }
+    if (MEAS_TOOLS.has(t) && !this.calibs.get(this.pageNum)) { this.needCalibration(t); return; }
     if (this.draft) { this.draft = null; this.renderDraft(); }
     if (this.tool === 'region' && t !== 'region') this.clearRegion();
     if (this.tool === 'cmpedit' && t !== 'cmpedit') { this.cmpEditMode = null; this.syncCmpEditUI?.(); }
     this.tool = t;
+    this.arcMode = t === 'arc'; // בכלי "קשת" כל הקטע הוא קשת; בכלי "מסלול" מעבר בין קו ישר לקשת נעשה בכפתור
     if (t === 'region' && !this.region) UI.toast(tr('גררו על התוכנית כדי לסמן אזור. אחר כך אפשר להזיז, לשנות גודל, להתקרב – ולשמור כתמונה או להדפיס'), { ms: 4500 });
     if (t !== 'select') this.select(null, true);
     this.updateToolUI(); this.renderProps();
@@ -1041,10 +1055,10 @@ class Viewer {
       case 'region': this.regionDown(pt, e, base); return;
       case 'cmpedit': this.gesture = { ...base, type: 'cmpedit', p0: p }; return;
       case 'text': this.gesture = { ...base, type: 'text', x: pt.x, y: pt.y }; return;
-      case 'measure': case 'calibrate':
+      case 'measure': case 'calibrate': case 'circle':
         if (this.draft && this.draft.wait) { this.gesture = { ...base, type: 'seg2', x: pt.x, y: pt.y }; return; }
         this.gesture = { ...base, type: 'seg', p0: p }; return;
-      case 'area': case 'polyline': this.gesture = { ...base, type: 'poly', x: pt.x, y: pt.y }; return;
+      case 'area': case 'polyline': case 'path': case 'arc': this.gesture = { ...base, type: 'poly', x: pt.x, y: pt.y }; return;
       case 'eraser': this.eraseSet = new Set(); this.gesture = { ...base, type: 'erase', last: p }; this.eraseAt(p, p); return;
       case 'pen':
         this.draft = { type: 'pen', pts: [p] };
@@ -1103,7 +1117,7 @@ class Viewer {
   calId(pg) { const me = S.hooks.owner(); return me ? `${this.version.id}:${pg}:${me}` : `${this.version.id}:${pg}`; }
   // גודל כיתוב מדידה לא תלוי ברמת הזום: בין 12 ל-30 פיקסלים על המסך
   fixedMeasure(it) {
-    if (it.type !== 'measure' && it.type !== 'area' && !(it.type === 'polyline' && it.showLen)) return it;
+    if (!isMeas(it.type) && !(it.type === 'polyline' && it.showLen)) return it;
     const sc = this.scale || 1;
     // עובי הקו (ואיתו סימוני הקצה והנקודות) נשאר סביר על המסך בכל זום. בלי זה, בהגדלה גדולה הקו הפך לעבה בעשרות/מאות פיקסלים והדפדפן קרס
     const wMax = Math.max(6, (prefs.mw || 2.5) * 2);
@@ -1120,7 +1134,7 @@ class Viewer {
       if (!this.itemShown(it)) continue;
       const cal = this.calFor(it);
       let value = null;
-      if (cal && cal.mpu) value = it.type === 'area' ? polyArea(it.pts) * cal.mpu * cal.mpu : it.type === 'polyline' ? pathLength(it.pts, it.closed) * cal.mpu : Math.hypot(it.pts[1].x - it.pts[0].x, it.pts[1].y - it.pts[0].y) * cal.mpu;
+      if (cal && cal.mpu) value = measureValue(it, cal.mpu);
       rows.push({ title: it.title || '', type: it.type, page: it.page, plan: this.plan?.name || '', value, owner: it.ownerId && it.ownerId !== mine ? owners.get(it.ownerId) || '' : '' });
     }
     if (!rows.length) { UI.toast(tr('אין מדידות לייצוא בתוכנית הזו')); return; }
@@ -1157,7 +1171,7 @@ class Viewer {
     }
     const it = this.newItem(d, true);
     let pts = d.pts;
-    const isPoly = d.type === 'area' || d.type === 'polyline';
+    const isPoly = POLY_TYPES.has(d.type);
     if (isPoly && d.hover) pts = [...d.pts, d.hover];
     else if (d.wait && d.hover) pts = [d.pts[0], d.hover];
     this.gDraft.append(drawItem(this.fixedMeasure({ ...it, pts }), this.ctx()));
@@ -1169,7 +1183,7 @@ class Viewer {
     const a = this.aimPoint(pt), p = this.toPage(a);
     this.aim = p; this.aimScreen = a;
     const d = this.draft;
-    if (d && (d.wait || d.type === 'area' || d.type === 'polyline')) d.hover = p;
+    if (d && (d.wait || POLY_TYPES.has(d.type))) d.hover = p;
     this.renderDraft();
     this.showLoupe(a, pt);
   }
@@ -1177,7 +1191,7 @@ class Viewer {
     const p = this.aim; this.aimEnd();
     if (!p) return;
     const t = this.tool;
-    if (t === 'measure' || t === 'calibrate') {
+    if (TWO_PT_TOOLS.has(t)) {
       const d = this.draft;
       if (!d || !d.wait) { this.draft = { type: t, pts: [p, p], wait: true, hover: p }; this.renderDraft(); this.renderProps(); return; }
       if (dist(d.pts[0], p) * this.scale < 4) { this.renderDraft(); return; }
@@ -1229,7 +1243,7 @@ class Viewer {
     const type = d.type;
     const it = {
       id: preview ? 'draft' : uid(), versionId: this.version.id, planId: this.planId, page: this.pageNum, type, layer: LAYER_OF[type],
-      pts: d.pts.map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) })), created: Date.now(), ownerId: S.hooks.owner() || undefined,
+      pts: d.pts.map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2), ...(p.m ? { m: true } : {}) })), created: Date.now(), ownerId: S.hooks.owner() || undefined,
     };
     const kind = kindOf(type);
     if (kind === 'text') {
@@ -1242,11 +1256,12 @@ class Viewer {
       if (!d.fromPen && (type === 'rect' || type === 'ellipse')) { it.fill = prefs.fill; it.fillOp = prefs.fillOp; }
       if (type === 'polyline') { it.fontSize = 14 / (380 / Math.min(this.pw, this.ph)); if (d.closed) it.closed = true; }
     }
-    if (type === 'measure' || type === 'area') {
+    if (isMeas(type)) {
       const ref = this.refScale();
       it.color = prefs.mcolor || '#d81b60'; it.width = (prefs.mw || 2.5) / ref; it.fontSize = 15 / ref; it.tcolor = prefs.mtcolor || '#111111';
       if (prefs.mtsize) { it.tsz = prefs.mtsize; it.fontSize = prefs.mtsize / ref; }
       if (this.measTitle) it.title = this.measTitle;
+      if (type === 'path' && prefs.mseg) it.seg = 1;
     }
     if (type === 'link') { it.color = '#1d4e89'; it.width = 2 / sc; it.fontSize = 14 / sc; }
     return it;
@@ -1389,16 +1404,32 @@ class Viewer {
   // אם נבחר פריט – משנים אותו. אחרת – מעדכנים את ברירת המחדל.
   orthoPt(p) {
     const d = this.draft;
-    if (!d || (d.type !== 'polyline' && d.type !== 'area') || !(prefs.ortho && d.type === 'polyline') && !this.shiftDown || !d.pts.length) return p;
+    if (!d || !POLY_TYPES.has(d.type) || (!(prefs.ortho && d.type === 'polyline') && !this.shiftDown) || !d.pts.length) return p;
     const last = d.pts[d.pts.length - 1];
+    if (d.type === 'path' && (last.m || this.arcMode)) return p; // בקשת אין הצמדה לזוויות
     const ang = Math.atan2(p.y - last.y, p.x - last.x), step = Math.PI / 4, a2 = Math.round(ang / step) * step, len = Math.hypot(p.x - last.x, p.y - last.y);
     return { x: last.x + Math.cos(a2) * len, y: last.y + Math.sin(a2) * len };
   }
   addAreaPoint(p) {
-    const type = this.tool === 'polyline' ? 'polyline' : 'area';
+    const type = this.tool === 'polyline' ? 'polyline' : (this.tool === 'path' || this.tool === 'arc') ? 'path' : 'area';
     if (!this.draft) this.draft = { type, pts: [] };
     const d = this.draft;
     const last = d.pts[d.pts.length - 1];
+    if (type === 'path') { // מסלול: קטעים ישרים וקשתות. קשת = נקודה על הקשת (m) ואחריה נקודת הסיום שלה
+      const pend = !!(last && last.m); // נקודה על קשת שמחכה לנקודת הסיום
+      if (!pend && last && d.pts.length >= 2 && dist(last, p) * this.scale < 18) { this.finishArea(); return; } // לחיצה על הנקודה האחרונה = סיום
+      if (!pend && d.pts.length >= 3 && dist(d.pts[0], p) * this.scale < 18) { d.pts.push({ x: d.pts[0].x, y: d.pts[0].y }); this.finishArea(); return; } // לחיצה על הראשונה = סגירת מסלול (היקף)
+      p = this.orthoPt(p);
+      if (last && dist(last, p) * this.scale < 4) return;
+      if (pend) {
+        d.pts.push({ x: p.x, y: p.y });
+        if (this.tool === 'arc') { this.finishArea(); return; }
+        this.arcMode = false; // אחרי קשת חוזרים לקו ישר
+      } else if (this.arcMode && d.pts.length >= 1) d.pts.push({ x: p.x, y: p.y, m: true });
+      else d.pts.push({ x: p.x, y: p.y });
+      this.renderDraft(); this.renderProps();
+      return;
+    }
     if (type === 'polyline') {
       if (last && d.pts.length >= 2 && dist(last, p) * this.scale < 18) { this.finishArea(); return; } // לחיצה על הנקודה האחרונה = סיום
       if (d.pts.length >= 3 && dist(d.pts[0], p) * this.scale < 18) { d.closed = true; this.finishArea(); return; } // לחיצה על הראשונה = סגירת צורה
@@ -1419,16 +1450,68 @@ class Viewer {
     if (!d.pts.length) this.draft = null;
     this.renderDraft(); this.renderProps();
   }
-  async finishArea() {
+  async finishArea(silent = false) {
     const d = this.draft;
-    const need = d && d.type === 'polyline' ? 2 : 3;
-    if (!d || d.pts.length < need) { UI.toast(need === 2 ? tr('קו דורש לפחות 2 נקודות') : tr('שטח דורש לפחות 3 נקודות')); return; }
+    const need = d && (d.type === 'polyline' || d.type === 'path') ? 2 : 3;
+    const pts = d ? (d.type === 'path' && d.pts.length && d.pts[d.pts.length - 1].m ? d.pts.slice(0, -1) : d.pts) : [];
+    if (!d || pts.length < need) { if (!silent) UI.toast(need === 2 ? tr('קו דורש לפחות 2 נקודות') : tr('שטח דורש לפחות 3 נקודות')); return; }
+    d.pts = pts;
     this.draft = null;
+    if (this.tool === 'path') this.arcMode = false;
     delete d.hover;
     await this.commitNew(d);
     this.renderDraft(); this.renderProps();
   }
   cancelDraft() { this.draft = null; this.renderDraft(); this.renderProps(); }
+  // מעבר בין קו ישר לקשת בכלי "מסלול"
+  toggleArc() {
+    if (this.tool !== 'path') return;
+    const last = this.draft && this.draft.pts[this.draft.pts.length - 1];
+    if (last && last.m) { UI.toast(tr('קודם סמנו את נקודת הסיום של הקשת')); return; }
+    this.arcMode = !this.arcMode;
+    this.renderDraft(); this.renderProps();
+    UI.toast(this.arcMode ? tr('מצב קשת: סמנו נקודה על הקשת ואחריה את נקודת הסיום שלה') : tr('חזרה לקו ישר'), { ms: 2400 });
+  }
+  // סיום מדידה של שתי נקודות (מרחק / מעגל) בנקודה שבה נמצא הסמן
+  finishTwoPoint() {
+    const d = this.draft;
+    if (!d || !d.wait) return;
+    const end = d.hover;
+    if (!end || dist(d.pts[0], end) * this.scale < 4) { UI.toast(tr('הזיזו את העכבר לנקודה השנייה ואז סיימו')); return; }
+    this.draft = null; d.pts = [d.pts[0], end]; delete d.wait; delete d.hover;
+    this.commitNew(d);
+  }
+  // קליק ימני בזמן מדידה: סיום או ביטול (בעכבר/עט; במגע יש כפתורים בשורת המאפיינים)
+  rightClickMenu(e) {
+    if (this._ptrType !== 'mouse' && this._ptrType !== 'pen') return;
+    if (performance.now() - (this._rcMoved || 0) < 500) return; // גרירה בכפתור ימני = הזזת התוכנית, לא תפריט
+    const d = this.draft;
+    if (!d || !(d.wait || POLY_TYPES.has(d.type))) return;
+    const meas = MEAS_TOOLS.has(this.tool) || this.tool === 'calibrate', poly = POLY_TYPES.has(d.type), items = [];
+    if (poly) items.push({ label: meas ? tr('סיים מדידה') : tr('סיים'), icon: 'check', onClick: () => this.finishArea() });
+    else if (d.wait && this.tool !== 'calibrate') items.push({ label: tr('סיים מדידה'), icon: 'check', onClick: () => this.finishTwoPoint() });
+    if (poly && d.pts.length) items.push({ label: tr('בטל נקודה אחרונה'), icon: 'undo', onClick: () => this.undoPoint() });
+    if (this.tool === 'path') items.push({ label: this.arcMode ? tr('המשך בקו ישר') : tr('המשך בקשת'), icon: 'arc', onClick: () => this.toggleArc() });
+    items.push({ divider: true }, { label: this.tool === 'calibrate' ? tr('בטל כיול') : meas ? tr('בטל מדידה') : tr('בטל'), icon: 'x', danger: true, onClick: () => this.cancelDraft() });
+    UI.menu({ x: e.clientX, y: e.clientY }, items);
+  }
+  // תפריט הצד: הגדרות ושאר מסכי האפליקציה, בלי לצאת מהתוכנית
+  openAppMenu(anchor) {
+    UI.menu(anchor, [
+      { label: tr('הגדרות ועדכון (גרסה {0})', APP_VERSION), icon: 'settings', onClick: () => this.openSettings() },
+      { label: langButtonLabel(), icon: 'globe', onClick: toggleLang },
+      { label: tr('ניהול אחסון'), icon: 'drive', onClick: () => { location.hash = '#/storage'; } },
+      { label: tr('גיבוי ושחזור…'), icon: 'archive', onClick: async () => { try { (await import('./backup.js')).backupDialog(); } catch (err) { console.error(err); } } },
+      { divider: true },
+      { label: tr('חזרה לרשימת התוכניות'), icon: 'back', onClick: () => this.goBack() },
+    ]);
+  }
+  async openSettings() {
+    try {
+      const [{ settingsDialog }, { installApp }] = await Promise.all([import('./settings.js'), import('./browser.js')]);
+      settingsDialog({ installApp });
+    } catch (err) { console.error(err); UI.toast(tr('לא ניתן לפתוח את ההגדרות'), { type: 'error' }); }
+  }
 
   // ---------- עט: לחיצה ארוכה מיישרת לקו/צורה ----------
   armHold(g) {
@@ -1935,6 +2018,7 @@ class Viewer {
       ...(this.host ? [{ label: tr('אפשרויות תצוגה מפוצלת…'), icon: 'split', onClick: () => this.host.menu(this, this.topbar.lastElementChild) }] : [{ label: tr('תצוגה מפוצלת (2–3 תוכניות במקביל)'), icon: 'split', onClick: () => this.splitEnter() }]),
       { label: tr('מצב תצוגה נקי (הסתר סרגלים)'), icon: 'eye', onClick: () => this.el.classList.add('immersive') },
       { label: tr('פרטי תוכנית'), icon: 'info', onClick: () => A.planInfoDialog(this.planId) },
+      { label: tr('הגדרות ועדכון (גרסה {0})', APP_VERSION), icon: 'settings', onClick: () => this.openSettings() },
       { label: langButtonLabel(), icon: 'globe', onClick: toggleLang },
       { divider: true },
       { label: tr('מחק את כל הסימונים בעמוד'), icon: 'trash', danger: true, onClick: () => this.clearPage() },

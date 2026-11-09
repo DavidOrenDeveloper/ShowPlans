@@ -4,7 +4,7 @@ import { t as tr } from './i18n.js';
 import { h, icon, clone } from './util.js';
 import * as UI from './ui.js';
 import { prefs, savePrefs, COLORS, WIDTHS } from './prefs.js';
-import { kindOf, canFill, hasFill, isNoStroke, boundsOf, FM, setFm, setAllFm, allFm, remask, pfList, pfStore, lineCount, isRTL } from './markup.js';
+import { kindOf, isMeas, MEAS_TOOLS, canFill, hasFill, isNoStroke, boundsOf, FM, setFm, setAllFm, allFm, remask, pfList, pfStore, lineCount, isRTL } from './markup.js';
 import * as SH from './item-share-ui.js';
 import { itemAccess } from './cloud-sync.js';
 
@@ -104,7 +104,7 @@ export function installStyle(V) {
       if (!sel || !m || !this.canEditItem(sel)) return;
       for (const k of Object.keys(m)) { if ((k === 'fill' || k === 'fillOp') && kind === 'shape' && !canFill(sel)) continue; const v = this.getStyle(k); if (v !== undefined && !(k === 'color' && v === 'none')) prefs[m[k]] = v; }
       if (kind === 'text') prefs.tsize = Math.max(8, Math.round(sel.fontSize * this.scale));
-      if (sel.type === 'measure' || sel.type === 'area') for (const k of ['color', 'width', 'tcolor', 'tsize']) prefs[{ color: 'mcolor', width: 'mw', tcolor: 'mtcolor', tsize: 'mtsize' }[k]] = this.measGet(k);
+      if (isMeas(sel.type)) for (const k of ['color', 'width', 'tcolor', 'tsize']) prefs[{ color: 'mcolor', width: 'mw', tcolor: 'mtcolor', tsize: 'mtsize' }[k]] = this.measGet(k);
       savePrefs();
     },
     keepBtn() {
@@ -432,12 +432,12 @@ export function installStyle(V) {
 
     // ---------- עיצוב מדידה: קו וכיתוב בנפרד ----------
     measGet(k) {
-      const sel = this.selected && (this.selected.type === 'measure' || this.selected.type === 'area') ? this.selected : null, ref = this.refScale();
+      const sel = this.selected && (isMeas(this.selected.type)) ? this.selected : null, ref = this.refScale();
       if (sel) return { color: sel.color, width: sel.width * ref, tcolor: sel.tcolor || '#111111', tsize: sel.tsz || Math.round(Math.max(12, Math.min(30, (sel.fontSize || 15 / ref) * this.scale))) }[k];
       return { color: prefs.mcolor || '#d81b60', width: prefs.mw || 2.5, tcolor: prefs.mtcolor || '#111111', tsize: prefs.mtsize || 15 }[k];
     },
     measSet(k, val, live = false) {
-      const sel = this.selected && (this.selected.type === 'measure' || this.selected.type === 'area') ? this.selected : null, ref = this.refScale();
+      const sel = this.selected && (isMeas(this.selected.type)) ? this.selected : null, ref = this.refScale();
       if (sel && !this.canEditItem(sel)) return;
       if (sel) {
         const mut = (it) => {
@@ -460,7 +460,7 @@ export function installStyle(V) {
     renderMeasPanel() {
       const keepTop = this.measPanel ? this.measPanel.scrollTop : 0;
       if (this.measPanel) { this.measPanel.remove(); this.measPanel = null; }
-      const isM = this.tool === 'measure' || this.tool === 'area' || (this.selected && (this.selected.type === 'measure' || this.selected.type === 'area'));
+      const isM = MEAS_TOOLS.has(this.tool) || (this.selected && (isMeas(this.selected.type)));
       if (!this.measOpen || !isM) return;
       const colorRow = (k) => {
         const cur = this.measGet(k), row = h('div', { class: 'st-row' });
@@ -531,7 +531,7 @@ export function installStyle(V) {
         }
         if (kind !== 'meas') row.push(h('button', { class: 'btn sm' + (this.styleOpen ? ' primary' : ''), onclick: () => this.togglePanel() }, icon('sliders', 16), tr('עיצוב')));
       }
-      if (kind || t === 'measure' || t === 'area' || (sel && (sel.type === 'measure' || sel.type === 'area'))) row.push(this.keepBtn());
+      if (kind || MEAS_TOOLS.has(t) || (sel && (isMeas(sel.type)))) row.push(this.keepBtn());
       if (t === 'polyline' && !sel) {
         const cb = h('input', { type: 'checkbox', checked: !!prefs.ortho, onchange: () => { prefs.ortho = cb.checked; savePrefs(); } });
         row.push(h('label', { class: 'chip-check' }, cb, tr('זוויות ישרות')));
@@ -540,28 +540,38 @@ export function installStyle(V) {
       if (t === 'pen' && !sel) row.push(h('small', { class: 'hint-inline' }, tr('החזקה בסוף הקו מיישרת לקו ישר או לצורה')));
       if (t === 'text' && !sel) row.push(h('small', { class: 'hint-inline' }, tr('הקישו על התוכנית להוספת טקסט')));
       if (t === 'eraser') row.push(h('small', { class: 'hint-inline' }, tr('גררו על סימונים כדי למחוק אותם (אפשר לבטל)')));
-      if (t === 'measure' || t === 'area' || (sel && (sel.type === 'measure' || sel.type === 'area'))) row.push(this.measStyleBtn());
-      if (t === 'measure' || t === 'area' || t === 'calibrate' || (sel && (sel.type === 'measure' || sel.type === 'area'))) {
+      if (MEAS_TOOLS.has(t) || (sel && (isMeas(sel.type)))) row.push(this.measStyleBtn());
+      if (MEAS_TOOLS.has(t) || t === 'calibrate' || (sel && (isMeas(sel.type)))) {
         const cal = this.calibs.get(this.pageNum);
         const u = h('select', { 'aria-label': tr('יחידות'), onchange: () => { prefs.unit = u.value; savePrefs(); this.renderItems(); } },
           h('option', { value: 'm' }, tr('מטר')), h('option', { value: 'cm' }, tr('ס״מ')), h('option', { value: 'mm' }, tr('מ״מ')));
         u.value = prefs.unit;
         row.push(u, h('button', { class: 'btn sm', onclick: () => this.calibrateDialog() }, cal ? (cal.source === 'ratio' ? tr('סקאלה 1:{0}', cal.ratio) : tr('כויל ידנית')) : tr('נדרש כיול')));
-        const tIn = h('input', { type: 'text', class: 'meas-title', placeholder: tr('כותרת (צינור, תעלה…)'), 'aria-label': tr('כותרת מדידה'), value: sel && (sel.type === 'measure' || sel.type === 'area') ? sel.title || '' : this.measTitle || '', list: 'meas-titles' });
+        const tIn = h('input', { type: 'text', class: 'meas-title', placeholder: tr('כותרת (צינור, תעלה…)'), 'aria-label': tr('כותרת מדידה'), value: sel && (isMeas(sel.type)) ? sel.title || '' : this.measTitle || '', list: 'meas-titles' });
         const known = [...new Set((this.items.measurements || []).map((x) => x.title).filter(Boolean))];
         const dl = h('datalist', { id: 'meas-titles' }, known.map((x) => h('option', { value: x })));
-        tIn.addEventListener('change', () => { const v = tIn.value.trim(); if (sel && (sel.type === 'measure' || sel.type === 'area')) this.modifySelected((it) => { if (v) it.title = v; else delete it.title; }); else this.measTitle = v; });
+        tIn.addEventListener('change', () => { const v = tIn.value.trim(); if (sel && (isMeas(sel.type))) this.modifySelected((it) => { if (v) it.title = v; else delete it.title; }); else this.measTitle = v; });
         row.push(tIn, dl);
         if (t === 'measure') row.push(h('small', { class: 'hint-inline' }, this.draft?.wait ? tr('לחצו על הנקודה השנייה') : tr('לחצו נקודה ראשונה, או גררו')));
         if (t === 'calibrate') row.push(h('small', { class: 'hint-inline' }, tr('כיול: סמנו שתי נקודות')));
         if (t === 'area') row.push(h('small', { class: 'hint-inline' }, tr('הקישו נקודות; סיום: לחצו על הנקודה הראשונה')));
+        if (t === 'path') row.push(h('small', { class: 'hint-inline' }, this.draft ? tr('הקישו נקודות. קשת: כפתור "קשת" ואז נקודה על הקשת ונקודת סיום. סיום: קליק ימני / כפתור סיום') : tr('הקישו נקודות לאורך המסלול (קו ישר או קשת)')));
+        if (t === 'arc') row.push(h('small', { class: 'hint-inline' }, !this.draft ? tr('קשת: סמנו נקודת התחלה') : this.draft.pts.length === 1 ? tr('סמנו נקודה כלשהי על הקשת') : tr('סמנו את נקודת הסיום')));
+        if (t === 'circle') row.push(h('small', { class: 'hint-inline' }, this.draft?.wait ? tr('לחצו על נקודה בשפת המעגל') : tr('לחצו על המרכז, ואז על נקודה בשפת המעגל')));
+        if (t === 'path' || (sel && sel.type === 'path')) {
+          const on = sel ? !!sel.seg : !!prefs.mseg;
+          const cb = h('input', { type: 'checkbox', checked: on, onchange: () => { if (sel) this.modifySelected((it) => { if (cb.checked) it.seg = 1; else delete it.seg; }); else { prefs.mseg = cb.checked; savePrefs(); } } });
+          row.push(h('label', { class: 'chip-check' }, cb, tr('אורך כל קטע')));
+        }
       }
-      if (this.draft && (t === 'area' || t === 'polyline' || this.draft.wait)) {
+      if (t === 'path' && !this.draft) row.unshift(h('button', { class: 'btn sm' + (this.arcMode ? ' primary' : ''), onclick: () => this.toggleArc() }, icon('arc', 16), tr('קשת')));
+      if (this.draft && (t === 'area' || t === 'polyline' || t === 'path' || t === 'arc' || this.draft.wait)) {
         // כפתורי הפעולה בראש השורה (מימין ב-RTL) כדי שלא ייגללו מחוץ למסך
         const acts = [];
-        if (t === 'area' || t === 'polyline') {
+        if (t === 'area' || t === 'polyline' || t === 'path' || t === 'arc') {
           acts.push(h('button', { class: 'btn sm primary', onclick: () => this.finishArea() }, tr('סיום')));
           acts.push(h('button', { class: 'btn sm', onclick: () => this.undoPoint() }, tr('בטל נקודה')));
+          if (t === 'path') acts.push(h('button', { class: 'btn sm' + (this.arcMode ? ' primary' : ''), onclick: () => this.toggleArc() }, icon('arc', 16), tr('קשת')));
         }
         acts.push(h('button', { class: 'btn sm', onclick: () => this.cancelDraft() }, tr('בטל')));
         row.unshift(...acts);

@@ -12,7 +12,7 @@ export function svg(tag, attrs = {}, ...kids) {
 
 export const LAYER_OF = {
   pen: 'markups', polyline: 'markups', arrow: 'markups', line: 'markups', rect: 'markups', ellipse: 'markups', text: 'markups', highlight: 'markups',
-  measure: 'measurements', area: 'measurements', link: 'links',
+  measure: 'measurements', area: 'measurements', path: 'measurements', circle: 'measurements', link: 'links',
 };
 export const RECT_TYPES = new Set(['rect', 'ellipse', 'highlight', 'link']);
 
@@ -22,6 +22,67 @@ export function pathLength(pts, closed = false) {
   for (let i = 1; i < pts.length; i++) l += dist(pts[i - 1], pts[i]);
   if (closed && pts.length > 2) l += dist(pts[pts.length - 1], pts[0]);
   return l;
+}
+
+// ---------- מדידות: סוגים וכלים ----------
+export const MEAS_TYPES = new Set(['measure', 'area', 'path', 'circle']); // סוגי פריטים שהם מדידה
+export const isMeas = (t) => MEAS_TYPES.has(t);
+export const MEAS_TOOLS = new Set(['measure', 'area', 'path', 'arc', 'circle']); // כלים (הכלי "קשת" יוצר פריט מסוג path)
+
+// ---------- מסלול מעורב: קטעים ישרים + קשתות ----------
+// pts = רשימת נקודות. נקודה עם m:true היא נקודה על קשת: הקשת עוברת מהנקודה שלפניה, דרך הנקודה הזו, עד הנקודה שאחריה.
+export function arcFrom3(a, m, b) {
+  const d = 2 * (a.x * (m.y - b.y) + m.x * (b.y - a.y) + b.x * (a.y - m.y));
+  if (Math.abs(d) < 1e-9) return null; // שלוש נקודות על קו אחד
+  const a2 = a.x * a.x + a.y * a.y, m2 = m.x * m.x + m.y * m.y, b2 = b.x * b.x + b.y * b.y;
+  const cx = (a2 * (m.y - b.y) + m2 * (b.y - a.y) + b2 * (a.y - m.y)) / d;
+  const cy = (a2 * (b.x - m.x) + m2 * (a.x - b.x) + b2 * (m.x - a.x)) / d;
+  const r = Math.hypot(a.x - cx, a.y - cy);
+  const sweep = (m.x - a.x) * (b.y - m.y) - (m.y - a.y) * (b.x - m.x) > 0 ? 1 : 0;
+  const ta = Math.atan2(a.y - cy, a.x - cx), tb = Math.atan2(b.y - cy, b.x - cx), TAU = Math.PI * 2;
+  const span = ((((sweep ? tb - ta : ta - tb) % TAU) + TAU) % TAU) || TAU;
+  return { cx, cy, r, ta, span, sweep, large: span > Math.PI ? 1 : 0, len: r * span };
+}
+export function pathSegs(pts) {
+  const out = [];
+  let i = 1;
+  while (i < pts.length) {
+    const a = pts[i - 1], q = pts[i];
+    if (q.m && i + 1 < pts.length) {
+      const b = pts[i + 1], arc = arcFrom3(a, q, b);
+      if (arc && isFinite(arc.r) && arc.r < 1e7) out.push({ k: 'A', a, b, arc });
+      else { out.push({ k: 'L', a, b: q }); out.push({ k: 'L', a: q, b }); }
+      i += 2;
+    } else { out.push({ k: 'L', a, b: q }); i += 1; }
+  }
+  return out;
+}
+export const segLen = (s) => (s.k === 'A' ? s.arc.len : Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y));
+export const pathLen = (pts) => pathSegs(pts).reduce((n, s) => n + segLen(s), 0);
+export const arcPoint = (A, t) => { const th = A.ta + (A.sweep ? 1 : -1) * A.span * t; return { x: A.cx + A.r * Math.cos(th), y: A.cy + A.r * Math.sin(th) }; };
+// קירוב המסלול בקו שבור (לבדיקת פגיעה ולתיבת הבחירה)
+export function pathSample(pts) {
+  const out = [pts[0]];
+  for (const s of pathSegs(pts)) {
+    if (s.k === 'A') { const n = Math.max(8, Math.ceil(24 * s.arc.span / Math.PI)); for (let j = 1; j < n; j++) out.push(arcPoint(s.arc, j / n)); }
+    out.push(s.b);
+  }
+  return out;
+}
+export function pathD(pts) {
+  let d = `M${pts[0].x} ${pts[0].y}`;
+  for (const s of pathSegs(pts)) d += s.k === 'A' ? ` A${+s.arc.r.toFixed(4)} ${+s.arc.r.toFixed(4)} 0 ${s.arc.large} ${s.arc.sweep} ${s.b.x} ${s.b.y}` : ` L${s.b.x} ${s.b.y}`;
+  return d;
+}
+// הערך של מדידה במטרים (אורך / היקף) או במ"ר (שטח). mpu = מטרים ליחידת עמוד
+export function measureValue(it, mpu) {
+  switch (it.type) {
+    case 'area': return polyArea(it.pts) * mpu * mpu;
+    case 'polyline': return pathLength(it.pts, it.closed) * mpu;
+    case 'path': return pathLen(it.pts) * mpu;
+    case 'circle': return 2 * Math.PI * dist(it.pts[0], it.pts[1]) * mpu;
+    default: return dist(it.pts[0], it.pts[1]) * mpu;
+  }
 }
 
 export function distSeg(p, a, b) {
@@ -78,7 +139,15 @@ export function measureText(it, cal, unit) {
   if (!cal || !cal.mpu) return tr('נדרש כיול');
   if (it.type === 'area') return fmtArea(polyArea(it.pts) * cal.mpu * cal.mpu, unit);
   if (it.type === 'polyline') return fmtLen(pathLength(it.pts, it.closed) * cal.mpu, unit);
+  if (it.type === 'path') return fmtLen(pathLen(it.pts) * cal.mpu, unit);
+  if (it.type === 'circle') return '\u2300 ' + fmtLen(2 * dist(it.pts[0], it.pts[1]) * cal.mpu, unit); // ⌀ קוטר
   return fmtLen(dist(it.pts[0], it.pts[1]) * cal.mpu, unit);
+}
+// מעגל: שורה שנייה עם ההיקף והשטח
+export function circleSub(it, cal, unit) {
+  if (!cal || !cal.mpu) return '';
+  const r = dist(it.pts[0], it.pts[1]) * cal.mpu;
+  return tr('היקף {0} · שטח {1}', fmtLen(2 * Math.PI * r, unit), fmtArea(Math.PI * r * r, unit));
 }
 
 export function measureLabel(it, cal, unit) { const v = measureText(it, cal, unit); return it.title ? it.title + ': ' + v : v; }
@@ -248,6 +317,34 @@ export function drawItem(it, cx) {
       g.append(label(txt, (a.x + b.x) / 2 + nx * off, (a.y + b.y) / 2 + ny * off + it.fontSize * 0.35, it.fontSize, { fill: cx.cal ? (it.tcolor || '#111') : '#b71c1c' }));
       break;
     }
+    case 'path': {
+      g.append(svg('path', { d: pathD(p), ...stroke }));
+      p.forEach((q) => g.append(q.m
+        ? svg('circle', { cx: q.x, cy: q.y, r: w * 0.9, fill: '#fff', stroke: col, 'stroke-width': w * 0.5 })
+        : svg('circle', { cx: q.x, cy: q.y, r: w * 1.2, fill: col })));
+      const tc = cx.cal ? (it.tcolor || '#111') : '#b71c1c';
+      if (it.seg && cx.cal && cx.cal.mpu) { // אורך כל קטע בנפרד
+        const sfs = it.fontSize * 0.78, segs = pathSegs(p);
+        if (segs.length > 1 || segs.some((s) => s.k === 'A')) for (const s of segs) {
+          const mid = s.k === 'A' ? arcPoint(s.arc, 0.5) : { x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 };
+          g.append(label(fmtLen(segLen(s) * cx.cal.mpu, cx.unit), mid.x, mid.y - sfs * 0.45, sfs, { fill: tc }));
+        }
+      }
+      const e = p[p.length - 1];
+      g.append(label(measureLabel(it, cx.cal, cx.unit), e.x, e.y - it.fontSize * 0.85 - w * 1.2, it.fontSize, { fill: tc }));
+      break;
+    }
+    case 'circle': {
+      const r = dist(a, b), tc = cx.cal ? (it.tcolor || '#111') : '#b71c1c';
+      g.append(svg('circle', { cx: a.x, cy: a.y, r, ...stroke, fill: col, 'fill-opacity': 0.08 }));
+      g.append(svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...stroke, 'stroke-dasharray': `${w * 3} ${w * 2}` }));
+      g.append(svg('circle', { cx: a.x, cy: a.y, r: w * 1.2, fill: col }));
+      g.append(svg('circle', { cx: b.x, cy: b.y, r: w * 1.2, fill: col }));
+      const sub = circleSub(it, cx.cal, cx.unit), top = a.y - r;
+      g.append(label(measureLabel(it, cx.cal, cx.unit), a.x, top - (sub ? it.fontSize * 1.5 : it.fontSize * 0.5), it.fontSize, { fill: tc }));
+      if (sub) g.append(label(sub, a.x, top - it.fontSize * 0.4, it.fontSize * 0.78, { fill: tc, rtl: isRTL(sub) }));
+      break;
+    }
     case 'area': {
       if (p.length >= 3) g.append(svg('polygon', { points: p.map((q) => `${q.x},${q.y}`).join(' '), fill: col, 'fill-opacity': 0.18, ...stroke }));
       else g.append(svg('polyline', { points: p.map((q) => `${q.x},${q.y}`).join(' '), ...stroke }));
@@ -269,6 +366,8 @@ export function drawItem(it, cx) {
 
 export function boundsOf(it) {
   if (it.type === 'text') return textBox(it);
+  if (it.type === 'circle') { const r = dist(it.pts[0], it.pts[1]); return { x0: it.pts[0].x - r, y0: it.pts[0].y - r, x1: it.pts[0].x + r, y1: it.pts[0].y + r }; }
+  if (it.type === 'path') return bbox(pathSample(it.pts));
   return bbox(it.pts);
 }
 
@@ -317,6 +416,15 @@ export function hitItem(it, p, tol) {
       const r = textBox(it);
       return p.x >= r.x0 - tol && p.x <= r.x1 + tol && p.y >= r.y0 - tol && p.y <= r.y1 + tol;
     }
+    case 'path': {
+      const s = pathSample(q);
+      for (let i = 1; i < s.length; i++) if (distSeg(p, s[i - 1], s[i]) <= tol + w) return true;
+      return false;
+    }
+    case 'circle': {
+      const r = dist(q[0], q[1]), dd = Math.hypot(p.x - q[0].x, p.y - q[0].y);
+      return Math.abs(dd - r) <= tol + w || dd <= tol + w * 2;
+    }
     case 'area': {
       if (q.length >= 3 && inPoly(p, q)) return true;
       for (let i = 0; i < q.length; i++) if (distSeg(p, q[i], q[(i + 1) % q.length]) <= tol + w) return true;
@@ -329,5 +437,5 @@ export function hitItem(it, p, tol) {
 // סוג עיצוב לכל סוג פריט: text / hl (הדגשה) / shape (קווים וצורות) / meas (מדידות)
 export const kindOf = (t) => (t === 'text' ? 'text' : t === 'highlight' ? 'hl'
   : ['pen', 'line', 'arrow', 'polyline', 'rect', 'ellipse'].includes(t) ? 'shape'
-    : (t === 'measure' || t === 'area') ? 'meas' : null);
+    : (isMeas(t) || t === 'arc') ? 'meas' : null);
 export const canFill = (it) => it.type === 'rect' || it.type === 'ellipse' || (it.type === 'polyline' && !!it.closed);
