@@ -9,6 +9,7 @@ import { buildVectorPdf } from './pdf-vector.js';
 import { svg, drawItem } from './markup.js';
 import { prefs } from './prefs.js';
 import { renderChangesCanvas } from './diffview.js';
+import { isInstalled } from './pwa.js';
 
 const TOUCH = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 export const MAX_PX = TOUCH ? 12e6 : 24e6, MAX_SIDE = TOUCH ? 8192 : 14000;
@@ -355,7 +356,7 @@ export function installPrint(V) {
         buttons: [
           { text: bi('ביטול', 'Cancel'), value: null },
           { text: bi('שמור / שתף PDF', 'Save / Share PDF'), icon: TOUCH ? 'share' : 'download', value: 'pdf' },
-          { text: bi('הדפס', 'Print'), kind: 'primary', icon: 'print', value: 'print', onClick: () => { if (!TOUCH && quality.value === 'vector') { try { pre = window.open('about:blank', '_blank'); } catch { pre = null; } } } },
+          { text: bi('הדפס', 'Print'), kind: 'primary', icon: 'print', value: 'print', onClick: () => { if (!TOUCH && quality.value === 'vector' && !isInstalled()) { try { pre = window.open('about:blank', '_blank'); } catch { pre = null; } } } },
         ],
       });
       const r = await m.promise;
@@ -452,8 +453,32 @@ export function installPrint(V) {
       const url = URL.createObjectURL(blob);
       setTimeout(() => URL.revokeObjectURL(url), 15 * 60 * 1000);
       if (win && !win.closed) { win.location.href = url; UI.toast(tr('ה-PDF נפתח בלשונית חדשה – לחצו שם על הדפס (Ctrl+P)'), { ms: 6000 }); return; }
+      if (isInstalled() && this.printPdfInFrame(url, blob, name)) return; // באפליקציה המותקנת לא פותחים לשונית (נפתחת ריקה בכרום); מדפיסים מתוך האפליקציה
       downloadBlob(blob, name);
       UI.toast(tr('הדפדפן חסם את פתיחת הלשונית. ה-PDF ירד לתיקיית ההורדות – פתחו אותו והדפיסו'), { ms: 7000 });
+    },
+
+    // אפליקציה מותקנת (חלון עצמאי): ה-PDF נטען ב-iframe נסתר ומודפס ממנו, בלי לפתוח לשונית. אם נכשל – מחזיר false וקוראים להורדה.
+    printPdfInFrame(url, blob, name) {
+      try {
+        const fr = document.createElement('iframe');
+        fr.setAttribute('aria-hidden', 'true');
+        fr.style.cssText = 'position:fixed;right:0;bottom:0;width:2px;height:2px;border:0;opacity:0;pointer-events:none;';
+        let fired = false;
+        const go = () => {
+          if (fired) return; fired = true;
+          setTimeout(() => {
+            try { fr.contentWindow.focus(); fr.contentWindow.print(); UI.toast(tr('נפתח חלון הדפסה. אם הוא לא הופיע – לחצו "שמור / שתף PDF" והדפיסו מהקובץ'), { ms: 7000 }); }
+            catch (e) { console.warn('print frame', e); downloadBlob(blob, name); UI.toast(tr('ההדפסה הישירה לא זמינה. ה-PDF ירד לתיקיית ההורדות – פתחו אותו והדפיסו'), { ms: 7000 }); }
+          }, 400);
+        };
+        fr.onload = go;
+        fr.src = url;
+        document.body.append(fr);
+        setTimeout(() => { try { fr.remove(); } catch { /* ignore */ } }, 15 * 60 * 1000);
+        setTimeout(() => { if (!fired) { fired = true; try { fr.remove(); } catch { /* ignore */ } downloadBlob(blob, name); UI.toast(tr('ההדפסה הישירה לא זמינה. ה-PDF ירד לתיקיית ההורדות – פתחו אותו והדפיסו'), { ms: 7000 }); } }, 20000);
+        return true;
+      } catch (e) { console.warn('print frame', e); return false; }
     },
 
     // הדפסה כתמונה: כל גיליון הוא דף מלא בגודל הנייר, בלי שוליים של הדפדפן ובלי כותרות/כתובות (@page margin 0 + כותרת ריקה)
