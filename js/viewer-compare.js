@@ -8,13 +8,13 @@ import { openPdf, destroyDoc } from './pdfio.js';
 import { h, icon, clamp, fmtDate, natural } from './util.js';
 import { svg, drawItem } from './markup.js';
 import { prefs, savePrefs } from './prefs.js';
-import { renderChangesCanvas, inkMap, diffMasks } from './diffview.js';
+import { renderChangesCanvas, inkMap, diffMasks, overlapRect } from './diffview.js';
 import { autoAlign } from './autoalign.js';
 
 const CHANGE_MODES = new Set(['changes', 'sidechanges', 'blink']);
 const NOTE_TOOLS = new Set(['pen', 'line', 'polyline', 'arrow', 'rect', 'ellipse', 'highlight']);
 const MM = 72 / 25.4; // נקודות עמוד למ״מ
-const cmpDefaults = () => ({ emph: 0.6, shift: prefs.cmpShift ?? 0.4, thick: prefs.cmpThick ?? 0.3, gap: prefs.cmpGap ?? 0, minSz: prefs.cmpMinSz ?? 0.6, localMm: prefs.cmpLocalMm ?? 4, blinkMs: prefs.cmpBlinkMs ?? 700, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff', colS: prefs.cmpS || '#000000' });
+const cmpDefaults = () => ({ emph: 0.6, shift: prefs.cmpShift ?? 0.4, thick: prefs.cmpThick ?? 0.3, gap: prefs.cmpGap ?? 0, minSz: prefs.cmpMinSz ?? 0.6, localMm: prefs.cmpLocalMm ?? 4, clip: prefs.cmpClip ?? true, edgeMm: prefs.cmpEdgeMm ?? 0, blinkMs: prefs.cmpBlinkMs ?? 700, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff', colS: prefs.cmpS || '#000000' });
 
 export function installCompare(V) {
   Object.assign(V.prototype, {
@@ -60,6 +60,7 @@ export function installCompare(V) {
         slider('thick', tr('הבדל עובי קו'), 3, 0.1, tr(' מ״מ'), tr('קו שרק עבה/דק יותר באחת התוכניות לא יסומן כשינוי')),
         slider('gap', tr('מקווקו = רציף'), 12, 0.5, tr(' מ״מ'), tr('פערים עד הגודל הזה בקו מקווקו ייחשבו כקו רציף (0 = כבוי)')),
         slider('localMm', tr('יישור מקומי'), 10, 0.5, tr(' מ״מ'), tr('מפצה על הבדלי גודל או סיבוב קלים בין התוכניות (למשל סריקה או ייצוא בגודל מעט שונה), בכל אזור בנפרד. 0 = כבוי')),
+        slider('edgeMm', tr('התעלמות משולי הדף'), 40, 1, tr(' מ״מ'), tr('לא מסמנים שינויים בפס הצר סביב קצה הדף (מסגרת, סרגל קואורדינטות, כותרת). 0 = כבוי')),
         slider('minSz', tr('התעלמות משינויים קטנים'), 5, 0.1, tr(' מ״מ'), tr('שינוי קצר מהאורך הזה (כתמים, קטעים זעירים) לא יסומן (0 = כבוי)')));
       const blinkVal = h('b', { class: 'cmp-val' }), blinkIn = h('input', { type: 'range', min: 200, max: 2000, step: 100, value: this.cmpSet.blinkMs, 'aria-label': tr('זמן בין החלפות') });
       const blinkShow = () => { blinkVal.textContent = (blinkIn.value / 1000).toFixed(1) + tr(' שנ׳'); };
@@ -67,6 +68,9 @@ export function installCompare(V) {
       blinkIn.onchange = () => savePrefs();
       blinkShow();
       const blinkBox = h('label', { class: 'cmp-tol' }, h('span', {}, tr('זמן בין החלפות')), blinkIn, blinkVal);
+      const clipCb = h('input', { type: 'checkbox', checked: this.cmpSet.clip !== false });
+      clipCb.onchange = () => { this.cmpSet.clip = clipCb.checked; prefs.cmpClip = clipCb.checked; savePrefs(); if (this.cmp && CHANGE_MODES.has(this.cmp.mode)) later(); };
+      const clipLbl = h('label', { class: 'check', title: tr('כשאחת התוכניות גדולה/רחבה יותר, האזור הנוסף שלה לא יסומן כשינוי') }, clipCb, tr('השווה רק את האזור המשותף לשני הדפים'));
       const busy = h('small', { class: 'cmp-busy' });
       const colorIn = (key, label) => {
         const pk = { colA: 'cmpA', colB: 'cmpB', colS: 'cmpS' }[key];
@@ -256,7 +260,7 @@ export function installCompare(V) {
       // ארגון הכלים בלשוניות: תצוגה / סבילות / יישור / שינויים / סימונים והדפסה
       const tabDefs = [
         ['view', tr('תצוגה'), [h('div', { class: 'cmp-row' }, opLabel, op, blinkBox, busy), h('div', { class: 'cmp-row' }, colBox)]],
-        ['tol', tr('סבילות'), [h('div', { class: 'cmp-row' }, tolBox), h('small', { class: 'hint-inline' }, tr('כמה "מעבר" מותר לפני שהפרש נחשב שינוי. מגדילים כשיש הרבה רעש, מקטינים כדי לא לפספס שינויים קטנים.'))]],
+        ['tol', tr('סבילות'), [h('div', { class: 'cmp-row' }, tolBox, clipLbl), h('small', { class: 'hint-inline' }, tr('כמה "מעבר" מותר לפני שהפרש נחשב שינוי. מגדילים כשיש הרבה רעש, מקטינים כדי לא לפספס שינויים קטנים.'))]],
         ['align', tr('יישור'), [
           h('div', { class: 'cmp-row' }, h('b', {}, tr('מזיזים ומשנים גודל של:')), whoA, whoB, h('span', {}, tr('התאמה:')), fitBtn('h', tr('לגובה')), fitBtn('w', tr('לרוחב')), fitBtn('both', tr('מילוי'))),
           h('div', { class: 'cmp-row' }, autoBtn, alignBtn,
@@ -387,6 +391,8 @@ export function installCompare(V) {
         gap: s.gap > 0 ? Math.min(60, Math.max(1, Math.round(s.gap * MM * k / 2))) : 0,
         gapFull: s.gap > 0 ? Math.min(120, Math.max(1, Math.round(s.gap * MM * k))) : 0, // לאלגוריתם החדש: אורך הפער המלא
         mn: s.minSz > 0 ? Math.round(s.minSz * MM * k) : 0, // שינוי קצר מזה (באורך קו) לא יסומן
+        edge: s.edgeMm > 0 ? Math.round(s.edgeMm * MM * k) : 0,
+        clip: s.clip !== false, // לא מסמנים שינוי באזור שקיים רק באחת התוכניות (מחוץ לגבולות הדף של השנייה)
         local: s.localMm > 0 ? Math.min(40, Math.round(s.localMm * MM * k)) : 0, // יישור מקומי: טווח ההזזה המקסימלי (פיקסלים)
       };
     },
@@ -531,7 +537,7 @@ export function installCompare(V) {
         if (cancelled) return;
         pb.set(tr('משווה ומקבץ אזורי שינוי…'), 0.6);
         const px = this.cmpPx(sc0);
-        const res = await diffMasks({ W: w, H: hh, dA: ia, dB: ib, tol: px.tol, gap: px.gapFull, mn: px.mn, local: px.local, regs: true });
+        const res = await diffMasks({ W: w, H: hh, dA: ia, dB: ib, tol: px.tol, gap: px.gapFull, mn: px.mn, local: px.local, clip: px.clip || px.edge ? overlapRect(mk(this.layerA), mk(this.layerB), px.edge) : null, regs: true });
         if (cancelled) return;
         if (!res || !res.regs) { UI.toast(tr('לא ניתן לחשב את רשימת השינויים במכשיר הזה'), { type: 'error' }); return; }
         // אזורים → קואורדינטות העמוד המקורי (כמו כל הסימונים), ושמירת סטטוס של אזורים שכבר נבדקו בסריקה קודמת

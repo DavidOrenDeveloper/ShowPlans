@@ -38,6 +38,12 @@ async function inkOf(L, w, h, signalCancel) {
   return ink;
 }
 
+// חפיפה בין גבולות הדף של שתי התוכניות (בפיקסלים של הקנבס). מחוץ לחפיפה אחת התוכניות ריקה, ולכן אין טעם לסמן שם "שינוי"
+export function overlapRect(A, B, edge = 0) {
+  const r = (L) => { const rotation = ((((L.page.rotate || 0) + (L.rot || 0)) % 360) + 360) % 360; const vp = L.page.getViewport({ scale: L.k, rotation }); return [L.ox, L.oy, L.ox + vp.width, L.oy + vp.height]; };
+  const a = r(A), b = r(B);
+  return [Math.max(a[0], b[0]) + edge, Math.max(a[1], b[1]) + edge, Math.min(a[2], b[2]) - edge, Math.min(a[3], b[3]) - edge]; // edge = שוליים להתעלמות (מסגרת, סרגל קואורדינטות)
+}
 // ---------- מנוע ההשוואה המשופר (מ-MatchPlan): רץ ב-Worker. אם ה-Worker לא זמין – חוזרים לחישוב הישן בתוך הדף ----------
 let worker = null, workerBad = false, wq = 0;
 const pending = new Map();
@@ -52,13 +58,17 @@ function getWorker() {
   return worker;
 }
 // dA, dB: מפות דיו (Uint8Array 0..255, גודל W*H). מחזיר { R, D, regs } או null אם אי אפשר להשתמש ב-Worker. dA/dB לא נפגעות (נשלחות כעותק).
-export function diffMasks({ W, H, dA, dB, tol = 0, gap = 0, mn = 0, local = 0, regs = false }) {
+export function diffMasks({ W, H, dA, dB, tol = 0, gap = 0, mn = 0, local = 0, clip = null, regs = false }) {
   const w = getWorker();
   if (!w) return Promise.resolve(null);
   const q = ++wq;
   return new Promise((res, rej) => {
     pending.set(q, { res, rej });
     const a = dA.slice(), b = dB.slice();
+    if (clip) { // מאפסים כל מה שמחוץ לחפיפה בין הדפים
+      const x0 = Math.max(0, Math.ceil(clip[0])), y0 = Math.max(0, Math.ceil(clip[1])), x1 = Math.min(W, Math.floor(clip[2])), y1 = Math.min(H, Math.floor(clip[3]));
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (x < x0 || x >= x1 || y < y0 || y >= y1) { a[y * W + x] = 0; b[y * W + x] = 0; }
+    }
     try { w.postMessage({ q, W, H, dA: a, dB: b, tol, gap, mn, local, regs }, [a.buffer, b.buffer]); } catch (e) { pending.delete(q); rej(e); }
   }).catch((e) => { console.warn('diff worker', e); return null; });
 }
@@ -74,14 +84,14 @@ export async function inkMap(L, w, h, onCancel) {
 //   ignore = "זה לא שינוי": באזור הזה לא מסמנים הבדלים. add = "פספוס": באזור הזה מסמנים כל הבדל בין הקווים (בלי סובלנות להזזות).
 // side: true = מחזיר { left, right }: כל תוכנית בנפרד (A מצד אחד, B מהצד השני), ובכל אחת רק הסימון ששייך לה בצבע שלה.
 const rgb = (hex, def) => { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return def; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
-export async function renderChangesCanvas({ A, B, w, h, emphasis = 0.6, tol = 1.5, gap = 0, gapFull = 0, mn = 0, local = 0, colA, colB, colS, edits = [], side = false, onCancel }) {
+export async function renderChangesCanvas({ A, B, w, h, emphasis = 0.6, tol = 1.5, gap = 0, gapFull = 0, mn = 0, local = 0, clip = false, edge = 0, colA, colB, colS, edits = [], side = false, onCancel }) {
   let cancels = [], cancelled = false;
   if (onCancel) onCancel(() => { cancelled = true; cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }); });
   const reg = (f) => cancels.push(f);
   let ia, ib;
   try { ia = await inkOf(A, w, h, reg); ib = await inkOf(B, w, h, reg); } catch (e) { if (e && e.name === 'RenderingCancelledException') return null; throw e; }
   // המנוע החדש (Worker): מסנן כתמים קטנים, מאחד פערים בקו מקווקו ומטפל בצורות שונות החופפות זו לזו. אם לא זמין – החישוב הישן
-  const masks = await diffMasks({ W: w, H: h, dA: ia, dB: ib, tol: Math.round(tol), gap: Math.round(gapFull || gap * 2), mn, local: Math.round(local) });
+  const masks = await diffMasks({ W: w, H: h, dA: ia, dB: ib, tol: Math.round(tol), gap: Math.round(gapFull || gap * 2), mn, local: Math.round(local), clip: clip || edge ? overlapRect(A, B, edge) : null });
   if (cancelled) return null;
   let da = null, db = null;
   if (masks && masks.Bw) ib = masks.Bw; // B אחרי היישור המקומי, כדי שהצביעה תיפול בדיוק על הקווים
