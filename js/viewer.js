@@ -9,6 +9,7 @@ import * as UI from './ui.js';
 import * as diag from './diag.js';
 import * as A from './actions.js';
 import { openPdf, pageText, destroyDoc } from './pdfio.js';
+import * as SS from './smartsearch.js';
 import { Layer, mkCtx } from './layer.js';
 import { h, icon, uid, clamp, clone, fmtDate, natural } from './util.js';
 import {
@@ -1873,27 +1874,40 @@ class Viewer {
     if (!q || !this.doc) return;
     if (this.panelMode !== 'search') this.openPanel('search');
     if (this.searchInput && this.searchInput.value.trim() !== q) this.searchInput.value = q;
+    const Q = SS.parseQuery(q);
+    if (!Q) return;
     const token = ++this.searchToken;
     const s = { q, matches: [], idx: -1 };
     this.search = s;
     this.searchList?.replaceChildren();
-    const ql = q.toLowerCase();
-    for (let i = 1; i <= this.numPages; i++) {
-      if (token !== this.searchToken || this.dead) return;
-      if (this.searchInfo) this.searchInfo.textContent = tr('מחפש… עמוד {0} מתוך {1}', i, this.numPages);
-      let d;
-      try { d = await this.pageTextData(i); } catch { continue; }
-      const tl = d.text.toLowerCase();
-      let from = 0, idx;
-      while ((idx = tl.indexOf(ql, from)) >= 0 && s.matches.length < 500) {
-        const a = Math.max(0, idx - 30), b = Math.min(d.text.length, idx + ql.length + 40);
-        s.matches.push({ page: i, start: idx, end: idx + ql.length, snippet: d.text.slice(a, b), d });
-        from = idx + ql.length;
+    // חיפוש חכם: כמה מילים בכל סדר ולא בהכרח צמודות (נקבצות לפי קרבה), בלי רגישות ל-ו/י, אותיות סופיות, ניקוד ורישיות.
+    // בסיבוב הראשון כל המילים חייבות להופיע באותו עמוד; אם אין כזה – סיבוב שני עם מקומות שיש בהם חלק מהמילים
+    let partial = false;
+    for (const any of Q.tokens.length > 1 ? [false, true] : [false]) {
+      s.matches = [];
+      for (let i = 1; i <= this.numPages; i++) {
+        if (token !== this.searchToken || this.dead) return;
+        if (this.searchInfo) this.searchInfo.textContent = tr('מחפש… עמוד {0} מתוך {1}', i, this.numPages);
+        let d;
+        try { d = await this.pageTextData(i); } catch { continue; }
+        const nm = d.nm || (d.nm = SS.normMap(d.text));
+        const occ = SS.findTokens(Q, nm, { any });
+        if (!occ) continue;
+        for (const g of SS.groups(Q, nm, occ)) {
+          if (s.matches.length >= 500) break;
+          const spans = g.spans.map((x) => SS.toOrig(nm, x.ts, x.te));
+          const lo = Math.min(...spans.map((x) => x.start)), hi = Math.max(...spans.map((x) => x.end));
+          const small = hi - lo <= 140;
+          const from = small ? lo : spans[0].start, to = small ? hi : spans[0].end;
+          const a = Math.max(0, from - 30), b = Math.min(d.text.length, to + 40);
+          s.matches.push({ page: i, start: spans[0].start, end: spans[0].end, spans, snippet: d.text.slice(a, b), d });
+        }
+        if (i % 5 === 0) this.renderSearchList();
       }
-      if (i % 5 === 0) this.renderSearchList();
+      if (s.matches.length) { partial = any; break; }
     }
     this.renderSearchList();
-    if (this.searchInfo) this.searchInfo.textContent = s.matches.length ? tr('{0} תוצאות', s.matches.length) : tr('לא נמצא טקסט תואם. אם הקובץ סרוק כתמונה – אפשר להפעיל זיהוי טקסט (OCR) מהתפריט ⋮.');
+    if (this.searchInfo) this.searchInfo.textContent = s.matches.length ? (partial ? tr('{0} תוצאות (אף עמוד לא מכיל את כל המילים, מוצגים מקומות עם חלק מהן)', s.matches.length) : tr('{0} תוצאות', s.matches.length)) : tr('לא נמצא טקסט תואם. אם הקובץ סרוק כתמונה – אפשר להפעיל זיהוי טקסט (OCR) מהתפריט ⋮.');
     if (jump && s.matches.length) {
       const first = s.matches.findIndex((m) => m.page >= this.pageNum);
       this.gotoMatch(first >= 0 ? first : 0);
@@ -1925,7 +1939,7 @@ class Viewer {
     if (!s) return;
     s.matches.forEach((m, i) => {
       if (m.page !== this.pageNum) return;
-      for (const r of m.d.rects(m.start, m.end)) this.gSearch.append(svg('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: i === s.idx ? '#ff9800' : '#ffeb3b', 'fill-opacity': 0.5, rx: r.h * 0.1 }));
+      for (const sp of (m.spans || [m])) for (const r of m.d.rects(sp.start, sp.end)) this.gSearch.append(svg('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: i === s.idx ? '#ff9800' : '#ffeb3b', 'fill-opacity': 0.5, rx: r.h * 0.1 }));
     });
   }
 

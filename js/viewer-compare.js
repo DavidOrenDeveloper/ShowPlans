@@ -8,13 +8,13 @@ import { openPdf, destroyDoc } from './pdfio.js';
 import { h, icon, clamp, fmtDate, natural } from './util.js';
 import { svg, drawItem } from './markup.js';
 import { prefs, savePrefs } from './prefs.js';
-import { renderChangesCanvas } from './diffview.js';
+import { renderChangesCanvas, inkMap, diffMasks } from './diffview.js';
 import { autoAlign } from './autoalign.js';
 
-const CHANGE_MODES = new Set(['changes', 'sidechanges']);
+const CHANGE_MODES = new Set(['changes', 'sidechanges', 'blink']);
 const NOTE_TOOLS = new Set(['pen', 'line', 'polyline', 'arrow', 'rect', 'ellipse', 'highlight']);
 const MM = 72 / 25.4; // נקודות עמוד למ״מ
-const cmpDefaults = () => ({ emph: 0.6, shift: prefs.cmpShift ?? 0.4, thick: prefs.cmpThick ?? 0.3, gap: prefs.cmpGap ?? 0, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff', colS: prefs.cmpS || '#000000' });
+const cmpDefaults = () => ({ emph: 0.6, shift: prefs.cmpShift ?? 0.4, thick: prefs.cmpThick ?? 0.3, gap: prefs.cmpGap ?? 0, minSz: prefs.cmpMinSz ?? 0.6, localMm: prefs.cmpLocalMm ?? 4, blinkMs: prefs.cmpBlinkMs ?? 700, colA: prefs.cmpA || '#e53935', colB: prefs.cmpB || '#1e63ff', colS: prefs.cmpS || '#000000' });
 
 export function installCompare(V) {
   Object.assign(V.prototype, {
@@ -43,6 +43,7 @@ export function installCompare(V) {
         h('option', { value: 'sidechanges' }, tr('זו לצד זו + הדגשת שינויים')),
         h('option', { value: 'diff' }, tr('הבדלים (צבעים)')),
         h('option', { value: 'overlay' }, tr('שקיפות')),
+        h('option', { value: 'blink' }, tr('הבהוב: ישנה ↔ חדשה (עם הזהה באפור)')),
         h('option', { value: 'split' }, tr('זו לצד זו (רגיל)')));
       const op = h('input', { type: 'range', min: 0, max: 100, value: Math.round(this.cmpSet.emph * 100) });
       const opLabel = h('span', {}, tr('עוצמת ההדגשה'));
@@ -57,7 +58,15 @@ export function installCompare(V) {
       const tolBox = h('span', { class: 'cmp-tolbox' },
         slider('shift', tr('הזזה מותרת'), 5, 0.1, tr(' מ״מ'), tr('קווים שזזו עד המרחק הזה לא יסומנו כשינוי')),
         slider('thick', tr('הבדל עובי קו'), 3, 0.1, tr(' מ״מ'), tr('קו שרק עבה/דק יותר באחת התוכניות לא יסומן כשינוי')),
-        slider('gap', tr('מקווקו = רציף'), 12, 0.5, tr(' מ״מ'), tr('פערים עד הגודל הזה בקו מקווקו ייחשבו כקו רציף (0 = כבוי)')));
+        slider('gap', tr('מקווקו = רציף'), 12, 0.5, tr(' מ״מ'), tr('פערים עד הגודל הזה בקו מקווקו ייחשבו כקו רציף (0 = כבוי)')),
+        slider('localMm', tr('יישור מקומי'), 10, 0.5, tr(' מ״מ'), tr('מפצה על הבדלי גודל או סיבוב קלים בין התוכניות (למשל סריקה או ייצוא בגודל מעט שונה), בכל אזור בנפרד. 0 = כבוי')),
+        slider('minSz', tr('התעלמות משינויים קטנים'), 5, 0.1, tr(' מ״מ'), tr('שינוי קצר מהאורך הזה (כתמים, קטעים זעירים) לא יסומן (0 = כבוי)')));
+      const blinkVal = h('b', { class: 'cmp-val' }), blinkIn = h('input', { type: 'range', min: 200, max: 2000, step: 100, value: this.cmpSet.blinkMs, 'aria-label': tr('זמן בין החלפות') });
+      const blinkShow = () => { blinkVal.textContent = (blinkIn.value / 1000).toFixed(1) + tr(' שנ׳'); };
+      blinkIn.oninput = () => { this.cmpSet.blinkMs = +blinkIn.value; prefs.cmpBlinkMs = +blinkIn.value; blinkShow(); };
+      blinkIn.onchange = () => savePrefs();
+      blinkShow();
+      const blinkBox = h('label', { class: 'cmp-tol' }, h('span', {}, tr('זמן בין החלפות')), blinkIn, blinkVal);
       const busy = h('small', { class: 'cmp-busy' });
       const colorIn = (key, label) => {
         const pk = { colA: 'cmpA', colB: 'cmpB', colS: 'cmpS' }[key];
@@ -93,10 +102,12 @@ export function installCompare(V) {
       noteRow.append(h('b', {}, tr('סימונים על ההשוואה:')), h('label', { class: 'check' }, noteCb, tr('צייר על ההשוואה בלבד (לא על התוכנית)')), nUndo, nRedo, nClear,
         h('small', { class: 'hint-inline' }, tr('בחרו כלי (חץ / מלבן / עיגול / הדגשה / עט) בסרגל הכלים. Ctrl+Z / Ctrl+Y = בטל / חזור')));
       this.cmpUndoUI = () => { const c = this.cmp; nUndo.disabled = !c || !c.hist.length; nRedo.disabled = !c || !c.redo.length; };
+      let tabs = null, selTab = () => {};
       const syncControls = () => {
         const m = modeSel.value, ch = CHANGE_MODES.has(m);
         opLabel.textContent = ch ? tr('עוצמת ההדגשה') : m === 'diff' ? tr('עוצמת התוכנית להשוואה') : tr('שקיפות');
-        tolBox.style.display = ch ? '' : 'none';
+        blinkBox.style.display = m === 'blink' ? '' : 'none';
+        if (tabs) { tabs.tol.btn.style.display = ch ? '' : 'none'; if (!ch && this.cmpTab === 'tol') selTab('view'); }
         colBox.style.display = ch || m === 'diff' ? '' : 'none';
         editRow.style.display = ch ? '' : 'none';
       colBox.title = tr('צבעים: מה שקיים רק בפתוחה / רק בהשוואה / זהה בשתיהן');
@@ -112,9 +123,10 @@ export function installCompare(V) {
         try { await this.startCompare(vid, parseInt(pageIn.value, 10) || 1, modeSel.value, op.value / 100); } catch (e) { console.error(e); UI.toast(tr('לא ניתן לטעון את התוכנית להשוואה'), { type: 'error' }); legend.textContent = ''; return; }
         this.updateCmpLegend(legend);
         refresh();
+        paintRegs();
       };
       const changeMode = (m, val) => {
-        modeSel.value = m; op.value = val != null ? val : m === 'changes' || m === 'sidechanges' ? Math.round(this.cmpSet.emph * 100) : m === 'overlay' ? 50 : 100;
+        modeSel.value = m; op.value = val != null ? val : CHANGE_MODES.has(m) ? Math.round(this.cmpSet.emph * 100) : m === 'overlay' ? 50 : 100;
         syncControls();
         if (this.cmp) { this.setCompareMode(m, op.value / 100); this.updateCmpLegend(legend); }
       };
@@ -201,22 +213,76 @@ export function installCompare(V) {
         UI.toast(res.score < 0.3 ? tr('יושר אוטומטית, אבל ההתאמה חלשה ({0}%). כדאי לבדוק ולדייק ידנית.', pct) : tr('יושר אוטומטית (התאמה {0}%). אפשר לדייק ידנית.', pct), { ms: 5000 });
       };
 
+      // ---------- רשימת שינויים (סריקת כל העמוד) ----------
+      const regInfo = h('small', { class: 'hint-inline' });
+      const regList = h('div', { class: 'cmp-regs' });
+      const regFilter = h('select', { 'aria-label': tr('סינון אזורים') },
+        h('option', { value: 'all' }, tr('הכל')), h('option', { value: 'todo' }, tr('לבדיקה')), h('option', { value: 'ok' }, tr('אושרו')), h('option', { value: 'ignore' }, tr('התעלמות')));
+      const STN = { todo: tr('לבדיקה'), ok: tr('אושר'), ignore: tr('התעלם') };
+      const NEXT = { todo: 'ok', ok: 'ignore', ignore: 'todo' };
+      const typeOf = (r) => (r.o && r.n ? tr('שינוי') : r.o ? tr('קיים רק בפתוחה') : tr('קיים רק בהשוואה'));
+      const paintRegs = () => {
+        const c = this.cmp, regs = (c && c.regs) || [];
+        const cnt = { todo: 0, ok: 0, ignore: 0 }; regs.forEach((r) => { cnt[r.st]++; });
+        regInfo.textContent = regs.length ? tr('{0} אזורים · {1} לבדיקה · {2} אושרו · {3} התעלמות', regs.length, cnt.todo, cnt.ok, cnt.ignore) : '';
+        regList.replaceChildren();
+        const f = regFilter.value; let shown = 0;
+        regs.forEach((r, i) => {
+          if (f !== 'all' && r.st !== f) return;
+          if (shown++ >= 300) return;
+          regList.append(h('div', { class: 'cmp-reg ' + r.st + (c.regSel === i ? ' cur' : '') },
+            h('button', { class: 'reg-go', onclick: () => this.gotoReg(i) }, h('b', {}, '#' + (i + 1)), ' ', typeOf(r)),
+            h('button', { class: 'btn sm reg-st', title: tr('לחצו כדי לשנות סטטוס'), onclick: () => { r.st = NEXT[r.st]; paintRegs(); } }, STN[r.st])));
+        });
+        if (shown > 300) regList.append(h('small', { class: 'hint-inline' }, tr('מוצגים 300 הראשונים. סננו כדי לראות אחרים.')));
+        this.renderCmpEdits();
+      };
+      regFilter.onchange = paintRegs;
+      this.cmpRegUI = paintRegs;
+      const nextTodo = (dir) => { const c = this.cmp; if (!c || !c.regs || !c.regs.length) return; const n = c.regs.length; for (let k = 1; k <= n; k++) { const i = (c.regSel + dir * k + n * 2) % n; if (c.regs[i].st === 'todo') { this.gotoReg(i); return; } } UI.toast(tr('אין עוד אזורים לבדיקה')); };
+      const regCb = h('input', { type: 'checkbox', checked: true });
+      regCb.onchange = () => { if (this.cmp) { this.cmp.showRegs = regCb.checked; this.renderCmpEdits(); } };
+      const regRow = h('div', { class: 'cmp-row' },
+        h('b', {}, tr('רשימת שינויים:')),
+        h('button', { class: 'btn sm primary', onclick: () => this.scanChanges() }, icon('search', 16), tr('סרוק את כל העמוד')),
+        h('button', { class: 'btn sm', onclick: () => nextTodo(-1) }, icon('chevU', 16), tr('הקודם לבדיקה')),
+        h('button', { class: 'btn sm', onclick: () => nextTodo(1) }, icon('chevD', 16), tr('הבא לבדיקה')),
+        regFilter, h('label', { class: 'check' }, regCb, tr('הצג ריבועים')), regInfo,
+        h('small', { class: 'hint-inline' }, tr('אחרי שינוי יישור או סבילות – סרקו שוב (הסטטוסים של אזורים שכבר נבדקו נשמרים).')));
+
       const more = h('div', { class: 'cmp-more' });
       const setMore = (on) => { this.cmpMoreOpen = on; more.classList.toggle('hidden', !on); moreBtn.replaceChildren(icon(on ? 'chevU' : 'chevD', 16), tr('הגדרות וכלים')); };
       const moreBtn = h('button', { class: 'btn sm', onclick: () => setMore(more.classList.contains('hidden')) });
-      more.append(
-        h('div', { class: 'cmp-row' }, opLabel, op, tolBox, colBox, busy),
-        h('div', { class: 'cmp-row' }, h('b', {}, tr('מזיזים ומשנים גודל של:')), whoA, whoB, h('span', {}, tr('התאמה:')), fitBtn('h', tr('לגובה')), fitBtn('w', tr('לרוחב')), fitBtn('both', tr('מילוי'))),
-        h('div', { class: 'cmp-row' }, h('b', {}, tr('יישור:')), autoBtn, alignBtn,
-          nb('chevU', () => nudge(0, -1), tr('למעלה')), nb('chevD', () => nudge(0, 1), tr('למטה')), nb('chevR', () => nudge(1, 0), tr('ימינה')), nb('chevL', () => nudge(-1, 0), tr('שמאלה')),
-          h('span', {}, tr('גודל:')), nb('minus', () => sc(1 / 1.01), tr('הקטן ב-1%')), sizeIn, h('span', {}, '%'), nb('plus', () => sc(1.01), tr('הגדל ב-1%')),
-          nb('rotate', () => this.rotateMoving(), tr('סובב ב-90° את התוכנית שנבחרה להזזה')),
-          h('button', { class: 'btn sm', onclick: () => { if (!this.cmp) return; this.relSet(this.cmp.baseS, 0, 0); this.scheduleDetail(50); refresh(); } }, tr('אפס יישור'))),
-        editRow, noteRow,
-        h('div', { class: 'cmp-row' },
-          h('button', { class: 'btn sm', onclick: () => this.printDialog({ compare: true }) }, icon('print', 16), tr('הדפס / שמור את ההשוואה')),
-          h('button', { class: 'btn sm', onclick: () => this.setTool('region') }, icon('crop', 16), tr('בחירת אזור'))),
-        legend);
+      // ארגון הכלים בלשוניות: תצוגה / סבילות / יישור / שינויים / סימונים והדפסה
+      const tabDefs = [
+        ['view', tr('תצוגה'), [h('div', { class: 'cmp-row' }, opLabel, op, blinkBox, busy), h('div', { class: 'cmp-row' }, colBox)]],
+        ['tol', tr('סבילות'), [h('div', { class: 'cmp-row' }, tolBox), h('small', { class: 'hint-inline' }, tr('כמה "מעבר" מותר לפני שהפרש נחשב שינוי. מגדילים כשיש הרבה רעש, מקטינים כדי לא לפספס שינויים קטנים.'))]],
+        ['align', tr('יישור'), [
+          h('div', { class: 'cmp-row' }, h('b', {}, tr('מזיזים ומשנים גודל של:')), whoA, whoB, h('span', {}, tr('התאמה:')), fitBtn('h', tr('לגובה')), fitBtn('w', tr('לרוחב')), fitBtn('both', tr('מילוי'))),
+          h('div', { class: 'cmp-row' }, autoBtn, alignBtn,
+            nb('chevU', () => nudge(0, -1), tr('למעלה')), nb('chevD', () => nudge(0, 1), tr('למטה')), nb('chevR', () => nudge(1, 0), tr('ימינה')), nb('chevL', () => nudge(-1, 0), tr('שמאלה')),
+            h('span', {}, tr('גודל:')), nb('minus', () => sc(1 / 1.01), tr('הקטן ב-1%')), sizeIn, h('span', {}, '%'), nb('plus', () => sc(1.01), tr('הגדל ב-1%')),
+            nb('rotate', () => this.rotateMoving(), tr('סובב ב-90° את התוכנית שנבחרה להזזה')),
+            h('button', { class: 'btn sm', onclick: () => { if (!this.cmp) return; this.relSet(this.cmp.baseS, 0, 0); this.scheduleDetail(50); refresh(); } }, tr('אפס יישור')))]],
+        ['changes', tr('רשימת שינויים'), [regRow, regList]],
+        ['tools', tr('סימונים והדפסה'), [editRow, noteRow,
+          h('div', { class: 'cmp-row' },
+            h('button', { class: 'btn sm', onclick: () => this.printDialog({ compare: true }) }, icon('print', 16), tr('הדפס / שמור את ההשוואה')),
+            h('button', { class: 'btn sm', onclick: () => this.setTool('region') }, icon('crop', 16), tr('בחירת אזור')))]],
+      ];
+      tabs = {};
+      const tabBar = h('div', { class: 'cmp-tabs', role: 'tablist' });
+      selTab = (id) => {
+        this.cmpTab = id;
+        for (const k of Object.keys(tabs)) { tabs[k].body.classList.toggle('hidden', k !== id); tabs[k].btn.classList.toggle('on', k === id); tabs[k].btn.setAttribute('aria-selected', k === id ? 'true' : 'false'); }
+      };
+      for (const [id, label, rows] of tabDefs) {
+        const btn = h('button', { class: 'cmp-tab', role: 'tab', onclick: () => selTab(id) }, label);
+        tabs[id] = { btn, body: h('div', { class: 'cmp-tabbody hidden' }, ...rows) };
+        tabBar.append(btn);
+      }
+      more.append(tabBar, ...Object.values(tabs).map((t) => t.body), legend);
+      selTab(tabs[this.cmpTab] ? this.cmpTab : 'view');
       this.cmpBar.replaceChildren(
         h('div', { class: 'cmp-row' }, h('b', {}, tr('השוואה עם:')), planSel, verSel, h('span', {}, tr('עמוד')), pageIn, modeSel,
           h('button', { class: 'btn sm primary', onclick: apply }, tr('השווה')), moreBtn, h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור השוואה'), onclick: () => this.closeCompare() }, icon('x', 18))),
@@ -235,7 +301,8 @@ export function installCompare(V) {
         mode === 'changes' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · אפור = זהה (מוחלש ככל שמגדילים את עוצמת ההדגשה). "התעלמות מהזזות קטנות" מסנן הבדלים שנובעים מאי-יישור. ')
           : mode === 'sidechanges' ? tr('שתי התוכניות זו לצד זו (זום והזזה משותפים). בכל אחת מסומן בצבע רק מה שקיים בה ולא בשנייה. ')
             : mode === 'diff' ? tr('אדום = קיים רק בתוכנית הפתוחה · כחול = קיים רק בתוכנית להשוואה · שחור = זהה. ')
-              : mode === 'overlay' ? tr('התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ') : tr('שתי התוכניות זו לצד זו עם זום והזזה משותפים. '),
+              : mode === 'overlay' ? tr('התוכנית להשוואה מונחת מעל הפתוחה בשקיפות שנבחרה. ')
+                : mode === 'blink' ? tr('התצוגה מתחלפת בין שני מצבים: התוכנית הפתוחה (הישנה) לבין תוכנית ההשוואה (החדשה). בשניהם מה שזהה בדיוק מופיע באפור, וכל מה שמבהב בצבע הוא מה שהשתנה. ') : tr('שתי התוכניות זו לצד זו עם זום והזזה משותפים. '),
         tr('זו השוואה חזותית בלבד – לא זיהוי אוטומטי של שינויים, והיא אמינה רק כשהתוכניות מיושרות. אפשר לתקן סימונים ידנית.'),
         this.cmp?.sizeNote ? ' ' + this.cmp.sizeNote : ''));
     },
@@ -249,7 +316,7 @@ export function installCompare(V) {
       const prev = this.cmp, pg = clamp(pageNo, 1, doc.numPages);
       const keep = prev && prev.vid === vid && prev.page === pg;
       const vr = S.P.versions.get(vid), pl = vr && S.P.plans.get(vr.planId);
-      this.cmp = { vid, label: pl ? `${pl.name} V${vr.number}` : '', page: pg, mode, opacity, baseS: 1, rotB: keep ? prev.rotB : 0, edits: keep ? prev.edits : [], notes: keep ? prev.notes : [], hist: keep ? prev.hist : [], redo: keep ? prev.redo : [], who: this.cmpWho || 'B' };
+      this.cmp = { vid, label: pl ? `${pl.name} V${vr.number}` : '', page: pg, mode, opacity, baseS: 1, rotB: keep ? prev.rotB : 0, edits: keep ? prev.edits : [], notes: keep ? prev.notes : [], hist: keep ? prev.hist : [], redo: keep ? prev.redo : [], regs: keep ? prev.regs || [] : [], regSel: -1, who: this.cmpWho || 'B' };
       await this.loadCompareLayer();
       this.setCompareMode(mode, opacity);
       this.renderCmpEdits(); this.updateUndo(); this.cmpUndoUI?.();
@@ -315,7 +382,13 @@ export function installCompare(V) {
     // רדיוסים בפיקסלים להשוואה: k = פיקסלים לנקודת עמוד
     cmpPx(k) {
       const s = this.cmpSet, sum = (s.shift || 0) + (s.thick || 0);
-      return { tol: sum > 0 ? Math.min(80, Math.max(1, Math.round(sum * MM * k))) : 0, gap: s.gap > 0 ? Math.min(60, Math.max(1, Math.round(s.gap * MM * k / 2))) : 0 };
+      return {
+        tol: sum > 0 ? Math.min(80, Math.max(1, Math.round(sum * MM * k))) : 0,
+        gap: s.gap > 0 ? Math.min(60, Math.max(1, Math.round(s.gap * MM * k / 2))) : 0,
+        gapFull: s.gap > 0 ? Math.min(120, Math.max(1, Math.round(s.gap * MM * k))) : 0, // לאלגוריתם החדש: אורך הפער המלא
+        mn: s.minSz > 0 ? Math.round(s.minSz * MM * k) : 0, // שינוי קצר מזה (באורך קו) לא יסומן
+        local: s.localMm > 0 ? Math.min(40, Math.round(s.localMm * MM * k)) : 0, // יישור מקומי: טווח ההזזה המקסימלי (פיקסלים)
+      };
     },
 
     // סיבוב תוכנית ההשוואה ב-90° (סביב מרכז התצוגה הנוכחי), למשל כשאחת התוכניות שמורה הפוך
@@ -343,7 +416,8 @@ export function installCompare(V) {
       this.layerA.tint = diff ? this.cmpSet.colA : null;
       this.layerB.tint = diff ? this.cmpSet.colB : null;
       const B = this.layerB.el;
-      B.style.display = mode === 'changes' ? 'none' : '';
+      this.stopBlink();
+      B.style.display = mode === 'changes' || mode === 'blink' ? 'none' : '';
       B.style.isolation = 'isolate';
       B.style.mixBlendMode = diff ? 'multiply' : 'normal';
       B.style.opacity = mode === 'overlay' || diff ? opacity : 1;
@@ -354,7 +428,31 @@ export function installCompare(V) {
       this.scheduleDetail(50);
     },
 
+    // הבהוב: מתחלף בין "הישנה + הזהה באפור" לבין "החדשה + הזהה באפור" (שני הקנבסים של מצב "זו לצד זו" מוצבים זה על זה)
+    startBlink() {
+      if (this._blink) return;
+      let flip = false;
+      const apply = () => {
+        const e = this.chEls || [];
+        if (e.length === 2) { e[0].style.display = flip ? 'none' : ''; e[1].style.display = flip ? '' : 'none'; }
+        if (this.chBusy) this.chBusy.textContent = flip ? tr('מוצגת: החדשה (תוכנית ההשוואה)') : tr('מוצגת: הישנה (התוכנית הפתוחה)');
+      };
+      const tick = () => {
+        if (!this.cmp || this.cmp.mode !== 'blink') { this.stopBlink(); return; }
+        flip = !flip; apply();
+        this._blink = setTimeout(tick, Math.max(150, (this.cmpSet && this.cmpSet.blinkMs) || 700));
+      };
+      this._blinkApply = apply;
+      this._blink = setTimeout(tick, Math.max(150, (this.cmpSet && this.cmpSet.blinkMs) || 700));
+    },
+    stopBlink() {
+      if (this._blink) { clearTimeout(this._blink); this._blink = null; }
+      this._blinkApply = null;
+      if (this.chBusy && /^(מוצגת|Showing)/.test(this.chBusy.textContent || '')) this.chBusy.textContent = '';
+    },
+
     closeCompare() {
+      this.stopBlink();
       this.setCmpEdit(null);
       this.cmpEndAlign?.();
       this.cmp = null; this.split = false; this.alignDrag = false; this.cmpUI = null; this.cmpUndoUI = null;
@@ -383,11 +481,11 @@ export function installCompare(V) {
     async renderChanges() {
       const c = this.cmp;
       if (!c || !CHANGE_MODES.has(c.mode) || !this.layerA.page || !this.layerB.page) return;
-      const side = c.mode === 'sidechanges';
+      const side = c.mode === 'sidechanges' || c.mode === 'blink', sbs = c.mode === 'sidechanges';
       const gen = ++this.chGen || (this.chGen = 1);
       this._chCancel?.();
       const { scale, tx, ty, W, H, dpr } = this;
-      const Wc = side ? this.vw : W;
+      const Wc = sbs ? this.vw : W;
       let d = Math.min(dpr || 1, 2); while (Wc * H * d * d > 4.5e6) d *= 0.9;
       const mk = (L) => ({ page: L.page, rot: L.rot, k: scale * L.s * d, ox: (tx + L.dx * scale) * d, oy: (ty + L.dy * scale) * d });
       if (this.chBusy) this.chBusy.textContent = tr('מחשב הבדלים…');
@@ -396,16 +494,94 @@ export function installCompare(V) {
       if (this.chBusy) this.chBusy.textContent = '';
       if (!res || gen !== this.chGen || !this.cmp || !CHANGE_MODES.has(this.cmp.mode)) return;
       if (this.scale !== scale || this.tx !== tx || this.ty !== ty) return; // התוכנית זזה בינתיים: חישוב חדש כבר בדרך
-      const list = side ? [[res.left, 0], [res.right, this.vw]] : [[res, 0]];
+      const list = sbs ? [[res.left, 0], [res.right, this.vw]] : side ? [[res.left, 0], [res.right, 0]] : [[res, 0]];
       const els = list.map(([cv, left]) => { cv.className = 'cmp-changes'; cv.style.width = Wc + 'px'; cv.style.height = H + 'px'; cv.style.left = left + 'px'; return cv; });
       (this.chEls || []).forEach((e) => e.remove());
       els.forEach((e) => this.stage.insertBefore(e, this.svg));
       this.chEls = els;
+      if (c.mode === 'blink') { this.startBlink(); this._blinkApply?.(); } else this.stopBlink();
     },
     hideChanges() {
+      this.stopBlink();
       this.chGen = (this.chGen || 0) + 1; this._chCancel?.();
       (this.chEls || []).forEach((e) => e.remove());
       this.chEls = [];
+    },
+
+    // ---------- רשימת שינויים לכל העמוד (מבוסס על אלגוריתם האזורים של MatchPlan) ----------
+    // רינדור קבוע של כל העמוד בשתי התוכניות (לפי היישור הנוכחי), זיהוי הבדלים וקיבוצם לאזורים ממוספרים.
+    async scanChanges() {
+      const c = this.cmp;
+      if (!c || !this.layerA.page || !this.layerB.page) { UI.toast(tr('בחרו תוכנית להשוואה ולחצו "השווה" קודם')); return; }
+      if (this._scanBusy) return;
+      this._scanBusy = true;
+      let cancelled = false; const cancels = [];
+      const pb = UI.bgProgress(tr('סורק את כל העמוד'), { onCancel: () => { cancelled = true; cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }); } });
+      try {
+        const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+        const budget = coarse ? 4.5e6 : 9e6;
+        const sc0 = Math.sqrt(budget / (this.pw * this.ph));
+        const w = Math.max(50, Math.ceil(this.pw * sc0)), hh = Math.max(50, Math.ceil(this.ph * sc0));
+        const mk = (L) => ({ page: L.page, rot: L.rot, k: sc0 * L.s, ox: L.dx * sc0, oy: L.dy * sc0 });
+        pb.set(tr('קורא את התוכנית הפתוחה…'), 0.1);
+        const ia = await inkMap(mk(this.layerA), w, hh, (f) => cancels.push(f));
+        if (cancelled) return;
+        pb.set(tr('קורא את תוכנית ההשוואה…'), 0.35);
+        const ib = await inkMap(mk(this.layerB), w, hh, (f) => cancels.push(f));
+        if (cancelled) return;
+        pb.set(tr('משווה ומקבץ אזורי שינוי…'), 0.6);
+        const px = this.cmpPx(sc0);
+        const res = await diffMasks({ W: w, H: hh, dA: ia, dB: ib, tol: px.tol, gap: px.gapFull, mn: px.mn, local: px.local, regs: true });
+        if (cancelled) return;
+        if (!res || !res.regs) { UI.toast(tr('לא ניתן לחשב את רשימת השינויים במכשיר הזה'), { type: 'error' }); return; }
+        // אזורים → קואורדינטות העמוד המקורי (כמו כל הסימונים), ושמירת סטטוס של אזורים שכבר נבדקו בסריקה קודמת
+        const iou = (p, q) => { const ww = Math.min(p[0] + p[2], q[0] + q[2]) - Math.max(p[0], q[0]), h2 = Math.min(p[1] + p[3], q[1] + q[3]) - Math.max(p[1], q[1]); if (ww <= 0 || h2 <= 0) return 0; const i = ww * h2; return i / (p[2] * p[3] + q[2] * q[3] - i); };
+        const old = c.regs || [];
+        const ignoreEdits = (c.edits || []).filter((e) => e.mode === 'ignore');
+        const out = [];
+        for (const r of res.regs) {
+          const a = this.d2o(r.box[0] / sc0, r.box[1] / sc0), b = this.d2o((r.box[0] + r.box[2]) / sc0, (r.box[1] + r.box[3]) / sc0);
+          const box = [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y)];
+          const cxm = box[0] + box[2] / 2, cym = box[1] + box[3] / 2;
+          if (ignoreEdits.some((e) => cxm >= Math.min(e.x0, e.x1) && cxm <= Math.max(e.x0, e.x1) && cym >= Math.min(e.y0, e.y1) && cym <= Math.max(e.y0, e.y1))) continue; // המשתמש סימן "זה לא שינוי"
+          const prev = old.find((o) => iou(o.box, box) > 0.5);
+          out.push({ box, o: r.o, n: r.n, st: prev ? prev.st : 'todo', note: prev ? prev.note : '' });
+        }
+        c.regs = out; c.regSel = -1;
+        UI.toast(out.length ? tr('נמצאו {0} אזורי שינוי', out.length) : tr('לא נמצאו הבדלים בהתאם להגדרות הסבילות'), { ms: 3500 });
+        this.cmpRegUI?.();
+      } catch (e) {
+        if (!cancelled) { console.error(e); UI.toast(tr('סריקת העמוד נכשלה: ') + (e.message || e), { type: 'error', ms: 5000 }); }
+      } finally { pb.close(); this._scanBusy = false; }
+    },
+    // קופץ לאזור שינוי מספר i (ומקרב אליו)
+    gotoReg(i) {
+      const c = this.cmp;
+      if (!c || !c.regs || !c.regs.length) return;
+      i = (i + c.regs.length) % c.regs.length;
+      c.regSel = i;
+      const [x, y, w, hh] = c.regs[i].box;
+      const a = this.o2d(x, y), b = this.o2d(x + w, y + hh);
+      const dw = Math.abs(b.x - a.x), dh = Math.abs(b.y - a.y);
+      const sc = clamp(Math.min(this.vw / (Math.max(dw, 1) * 4), this.H / (Math.max(dh, 1) * 4)), this.minScale(), this.maxScale());
+      this.applyView({ cx: x + w / 2, cy: y + hh / 2, scale: Math.max(sc, this.scale * 0.2) });
+      this.renderCmpEdits(); this.cmpRegUI?.();
+    },
+    // ריבועים ממוספרים סביב אזורי השינוי (כתום = לבדיקה, ירוק = אושר; "התעלם" לא מצוין)
+    drawCmpRegs() {
+      const c = this.cmp;
+      if (!c || !c.regs || !c.regs.length || c.showRegs === false) return;
+      const fs = Math.max(this.pw, this.ph) / 80;
+      c.regs.forEach((r, i) => {
+        if (r.st === 'ignore') return;
+        const col = r.st === 'ok' ? '#2e7d32' : '#ff6d00', sel = i === c.regSel;
+        const [x, y, w, hh] = r.box;
+        this.gCmp.append(svg('rect', { x, y, width: w, height: hh, fill: sel ? 'rgba(255,109,0,.10)' : 'none', stroke: col, 'stroke-width': sel ? 3 : 1.6, 'vector-effect': 'non-scaling-stroke', rx: fs * 0.1 }));
+        this.gCmp.append(svg('rect', { x, y: y - fs * 1.25, width: fs * (0.7 + 0.62 * String(i + 1).length), height: fs * 1.25, fill: col }));
+        const t = svg('text', { x: x + fs * 0.3, y: y - fs * 0.25, fill: '#fff', 'font-size': fs, 'font-weight': 'bold', 'font-family': 'sans-serif' });
+        t.textContent = String(i + 1);
+        this.gCmp.append(t);
+      });
     },
 
     // ---------- עריכת סימוני השוואה ----------
@@ -426,6 +602,7 @@ export function installCompare(V) {
       if (!c) return;
       const sc = this.scale, cx = this.ctx();
       for (const it of c.notes || []) this.gCmp.append(drawItem(it, cx));
+      this.drawCmpRegs();
       if (!this.cmpEditMode || !c.edits) return;
       for (const e of c.edits) this.gCmp.append(svg('rect', { x: e.x0, y: e.y0, width: e.x1 - e.x0, height: e.y1 - e.y0, fill: e.mode === 'add' ? 'rgba(46,125,50,.12)' : 'rgba(117,117,117,.12)', stroke: e.mode === 'add' ? '#2e7d32' : '#616161', 'stroke-width': 1.5 / sc, 'stroke-dasharray': `${6 / sc} ${4 / sc}` }));
     },

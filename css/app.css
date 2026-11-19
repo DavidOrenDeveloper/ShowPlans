@@ -701,3 +701,19 @@ body.sync-bar-on .fab { bottom: calc(16px + var(--safe-b)); }
 .v-sidetab:hover, .v-sidetab:focus-visible { opacity: 1; width: 28px; }
 @media (pointer: coarse) { .v-sidetab { width: 28px; height: 76px; } }
 .viewer.fs .v-sidetab, .viewer.immersive .v-sidetab, .viewer.pane .v-sidetab { display: none; }
+
+/* רשימת שינויים בהשוואה (סריקת כל העמוד) */
+.cmp-regs { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow: auto; width: 100%; }
+.cmp-reg { display: flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 1px 4px 1px 8px; background: var(--card); border-inline-start: 5px solid #ff6d00; }
+.cmp-reg.ok { border-inline-start-color: var(--green); opacity: .8; }
+.cmp-reg.ignore { border-inline-start-color: #9aa5b1; opacity: .5; }
+.cmp-reg.cur { outline: 2px solid #ff6d00; }
+.cmp-reg .reg-go { flex: 1; text-align: start; background: none; border: 0; padding: 7px 4px; font: inherit; color: inherit; cursor: pointer; }
+.cmp-reg .reg-st { min-width: 64px; }
+
+/* לשוניות בכלי ההשוואה */
+.cmp-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.cmp-tab { background: none; border: 0; border-bottom: 3px solid transparent; padding: 7px 12px; font: inherit; color: inherit; cursor: pointer; opacity: .75; }
+.cmp-tab.on { border-bottom-color: var(--blue); opacity: 1; font-weight: 700; }
+.cmp-tabbody { display: flex; flex-direction: column; gap: 6px; }
+.cmp-tabbody.hidden { display: none; }

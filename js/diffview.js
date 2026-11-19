@@ -38,20 +38,58 @@ async function inkOf(L, w, h, signalCancel) {
   return ink;
 }
 
+// ---------- מנוע ההשוואה המשופר (מ-MatchPlan): רץ ב-Worker. אם ה-Worker לא זמין – חוזרים לחישוב הישן בתוך הדף ----------
+let worker = null, workerBad = false, wq = 0;
+const pending = new Map();
+function getWorker() {
+  if (workerBad) return null;
+  if (worker) return worker;
+  try {
+    worker = new Worker(new URL('./diff-worker.js', import.meta.url));
+    worker.onmessage = (e) => { const p = pending.get(e.data.q); if (!p) return; pending.delete(e.data.q); if (e.data.err) p.rej(new Error(e.data.err)); else p.res(e.data); };
+    worker.onerror = () => { workerBad = true; pending.forEach((p) => p.rej(new Error('worker'))); pending.clear(); try { worker.terminate(); } catch { /* ignore */ } worker = null; };
+  } catch { workerBad = true; worker = null; }
+  return worker;
+}
+// dA, dB: מפות דיו (Uint8Array 0..255, גודל W*H). מחזיר { R, D, regs } או null אם אי אפשר להשתמש ב-Worker. dA/dB לא נפגעות (נשלחות כעותק).
+export function diffMasks({ W, H, dA, dB, tol = 0, gap = 0, mn = 0, local = 0, regs = false }) {
+  const w = getWorker();
+  if (!w) return Promise.resolve(null);
+  const q = ++wq;
+  return new Promise((res, rej) => {
+    pending.set(q, { res, rej });
+    const a = dA.slice(), b = dB.slice();
+    try { w.postMessage({ q, W, H, dA: a, dB: b, tol, gap, mn, local, regs }, [a.buffer, b.buffer]); } catch (e) { pending.delete(q); rej(e); }
+  }).catch((e) => { console.warn('diff worker', e); return null; });
+}
+// מפת דיו של שכבה אחת בגודל w×h (ללא קשר לקנבס התצוגה)
+export async function inkMap(L, w, h, onCancel) {
+  let cancels = [];
+  if (onCancel) onCancel(() => cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }));
+  return inkOf(L, w, h, (f) => cancels.push(f));
+}
+
 // A,B: { page, k, ox, oy, rot } (בפיקסלי מכשיר). מחזיר canvas בגודל w×h, או null אם בוטל.
 // edits: עריכות ידניות של המשתמש, בפיקסלים של הקנבס: [{ mode: 'ignore'|'add', x0, y0, x1, y1 }] (האחרונה גוברת).
 //   ignore = "זה לא שינוי": באזור הזה לא מסמנים הבדלים. add = "פספוס": באזור הזה מסמנים כל הבדל בין הקווים (בלי סובלנות להזזות).
 // side: true = מחזיר { left, right }: כל תוכנית בנפרד (A מצד אחד, B מהצד השני), ובכל אחת רק הסימון ששייך לה בצבע שלה.
 const rgb = (hex, def) => { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return def; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
-export async function renderChangesCanvas({ A, B, w, h, emphasis = 0.6, tol = 1.5, gap = 0, colA, colB, colS, edits = [], side = false, onCancel }) {
-  let cancels = [];
-  if (onCancel) onCancel(() => cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }));
+export async function renderChangesCanvas({ A, B, w, h, emphasis = 0.6, tol = 1.5, gap = 0, gapFull = 0, mn = 0, local = 0, colA, colB, colS, edits = [], side = false, onCancel }) {
+  let cancels = [], cancelled = false;
+  if (onCancel) onCancel(() => { cancelled = true; cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }); });
   const reg = (f) => cancels.push(f);
   let ia, ib;
   try { ia = await inkOf(A, w, h, reg); ib = await inkOf(B, w, h, reg); } catch (e) { if (e && e.name === 'RenderingCancelledException') return null; throw e; }
-  const r = Math.round(tol);
-  const g = Math.min(60, Math.round(gap));
-  const da = maxFilter(closeGaps(ia, w, h, g), w, h, r), db = maxFilter(closeGaps(ib, w, h, g), w, h, r);
+  // המנוע החדש (Worker): מסנן כתמים קטנים, מאחד פערים בקו מקווקו ומטפל בצורות שונות החופפות זו לזו. אם לא זמין – החישוב הישן
+  const masks = await diffMasks({ W: w, H: h, dA: ia, dB: ib, tol: Math.round(tol), gap: Math.round(gapFull || gap * 2), mn, local: Math.round(local) });
+  if (cancelled) return null;
+  let da = null, db = null;
+  if (masks && masks.Bw) ib = masks.Bw; // B אחרי היישור המקומי, כדי שהצביעה תיפול בדיוק על הקווים
+  if (!masks) {
+    const r = Math.round(tol);
+    const g = Math.min(60, Math.round(gap));
+    da = maxFilter(closeGaps(ia, w, h, g), w, h, r); db = maxFilter(closeGaps(ib, w, h, g), w, h, r);
+  }
   let mask = null;
   if (edits && edits.length) {
     mask = new Uint8Array(w * h);
@@ -69,7 +107,8 @@ export async function renderChangesCanvas({ A, B, w, h, emphasis = 0.6, tol = 1.
   const out2 = side ? new ImageData(w, h) : null, o2 = out2 ? out2.data : null;
   for (let i = 0, p = 0; i < ia.length; i++, p += 4) {
     const a = ia[i], b = ib[i];
-    let onlyA = a > db[i] ? a - db[i] : 0, onlyB = b > da[i] ? b - da[i] : 0;
+    let onlyA, onlyB;
+    if (masks) { onlyA = masks.R[i] ? a : 0; onlyB = masks.D[i] ? b : 0; } else { onlyA = a > db[i] ? a - db[i] : 0; onlyB = b > da[i] ? b - da[i] : 0; }
     const m = mask ? mask[i] : 0;
     if (m === 1) { onlyA = 0; onlyB = 0; } else if (m === 2) { onlyA = a > b ? a - b : 0; onlyB = b > a ? b - a : 0; }
     if (side) {

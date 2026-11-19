@@ -269,15 +269,17 @@ export function planPicker({ title = tr('בחר תוכנית'), excludeIds = new
     const keepTop = list.scrollTop;
     list.textContent = '';
     queueMicrotask(() => { list.scrollTop = keepTop; });
-    const n = norm(q.value), scope = S.scopeSet(scopeSel.value), filtering = !!n || !!scope;
-    const match = (p) => !excludeIds.has(p.id) && (!scope || scope.has(p.folderId))
-      && (!n || nameVariants(p.name).some((v) => norm(v).includes(n)) || norm(S.planPathText(p)).includes(n));
+    // חיפוש חכם: כמה מילים בכל סדר, גם מול שמות התיקיות שמעל התוכנית ("קומה A חשמל"), ובלי רגישות להבדלים קלים בכתיב
+    const matcher = S.makeNameMatcher(q.value), scope = S.scopeSet(scopeSel.value), filtering = !!matcher || !!scope;
+    let miss = 0;
+    const match = (p) => !excludeIds.has(p.id) && (!scope || scope.has(p.folderId)) && (!matcher || matcher(p.name, p.folderId, miss) > 0);
     const build = (pid) => {
       const folders = S.childFolders(pid).map((f) => ({ f, ...build(f.id) })).filter((k) => k.count > 0);
       const plans = S.plansIn(pid).filter(match);
       return { folders, plans, count: plans.length + folders.reduce((a, k) => a + k.count, 0) };
     };
-    const root = build(null);
+    let root = build(null);
+    if (!root.count && matcher && q.value.trim().split(/\s+/).length >= 3) { miss = 1; root = build(null); } // אין התאמה מלאה: מאפשרים מילה אחת חסרה
     if (!root.count) { list.append(h('p', { class: 'empty-sm' }, tr('לא נמצאו תוכניות'))); return; }
     let shown = 0;
     const isOpen = (id) => (filtering ? !closedInSearch.has(id) : open.has(id));

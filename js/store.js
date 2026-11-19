@@ -2,11 +2,12 @@
 import { t as tr } from './i18n.js';
 import { dn, nameVariants } from './names.js';
 import * as db from './db.js';
-import { uid, natural, norm, sha256 } from './util.js';
+import { uid, natural, sha256 } from './util.js';
 import { openPdf, renderThumb, pageText, destroyDoc } from './pdfio.js';
 import { applyOverlay, unwrap } from './overlay.js';
 import * as OVR from './overrides.js';
 import { getSort, getManual } from './order.js';
+import * as SS from './smartsearch.js';
 
 export { unwrap };
 
@@ -489,18 +490,52 @@ export function scopeSet(folderId) {
   return new Set([folderId, ...descend(folderId).folders]);
 }
 export function searchNames(q, scope = null) {
-  const n = norm(q);
-  if (!n) return { folders: [], plans: [] };
-  return {
-    folders: [...P.folders.values()].filter((f) => (!scope || scope.has(f.id)) && nameVariants(f.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
-    plans: [...P.plans.values()].filter((p) => (!scope || scope.has(p.folderId)) && nameVariants(p.name).some((v) => norm(v).includes(n))).sort((a, b) => natural(a.name, b.name)),
+  const Q = SS.parseQuery(q);
+  if (!Q) return { folders: [], plans: [], approx: false };
+  // שמות התיקיות מהשורש ועד התיקייה (כולל), לכל אחת גם התרגום: מאפשר "קומה A חשמל" למצוא את "קומה A" שבתיקיית חשמל
+  const pathCache = new Map();
+  const pathOf = (folderId) => {
+    if (!pathCache.has(folderId)) pathCache.set(folderId, folderPath(folderId).map((f) => nameVariants(f.name)));
+    return pathCache.get(folderId);
   };
+  const fItems = [...P.folders.values()].filter((f) => !scope || scope.has(f.id));
+  const pItems = [...P.plans.values()].filter((p) => !scope || scope.has(p.folderId));
+  const run = (miss) => ({ f: SS.rank(Q, fItems, (f) => nameVariants(f.name), (f) => pathOf(f.parentId), miss), p: SS.rank(Q, pItems, (p) => nameVariants(p.name), (p) => pathOf(p.folderId), miss) });
+  let r = run(0), approx = false;
+  if (!r.f.length && !r.p.length && Q.tokens.length >= 3) { r = run(1); approx = r.f.length + r.p.length > 0; } // אין התאמה מלאה: מאפשרים מילה אחת חסרה (בשני הסוגים יחד)
+  return { folders: r.f.map((x) => x.item), plans: r.p.map((x) => x.item), approx };
+}
+
+// "בעל השם המתאים" לבורר תוכניות / רשימות סינון: מחזיר ציון (>0) או 0. getPathFolderId = התיקייה שהפריט נמצא בה
+export function makeNameMatcher(q) {
+  const Q = SS.parseQuery(q);
+  if (!Q) return null;
+  const pathCache = new Map();
+  const pathOf = (folderId) => {
+    if (!pathCache.has(folderId)) pathCache.set(folderId, folderPath(folderId).map((f) => nameVariants(f.name)));
+    return pathCache.get(folderId);
+  };
+  return (name, folderId, miss = 0) => { const s = SS.scoreItem(Q, nameVariants(name), pathOf(folderId), miss); return s == null ? 0 : Math.max(1, s); };
+}
+
+// זיכרון מטמון לטקסט מנורמל של עמודי האינדקס (מזרז הקלדה בחיפוש: רק בפעם הראשונה מנרמלים)
+const normCache = new Map();
+let normChars = 0;
+function normOf(row) {
+  const key = row.id + ':' + row.text.length;
+  let v = normCache.get(key);
+  if (v === undefined) {
+    v = SS.fastNorm(row.text);
+    normCache.set(key, v); normChars += v.length;
+    if (normChars > 25e6) { normCache.clear(); normChars = 0; }
+  }
+  return v;
 }
 
 export async function searchText(q, limit = 150, isStale = () => false, scope = null) {
-  const n = norm(q);
-  const out = [];
-  if (n.length < 2) return out;
+  const Q = SS.parseQuery(q);
+  if (!Q || Q.phrase.length < 2) return [];
+  const cand = [];
   await db.scan('textindex', (row) => {
     if (isStale()) return false;
     const v = P.versions.get(row.versionId);
@@ -508,14 +543,28 @@ export async function searchText(q, limit = 150, isStale = () => false, scope = 
     const plan = P.plans.get(v.planId);
     if (!plan || plan.currentVersionId !== v.id) return true; // מחפשים רק בגרסה הנוכחית
     if (scope && !scope.has(plan.folderId)) return true;
-    const t = row.text.toLowerCase();
-    const i = t.indexOf(n);
-    if (i < 0) return true;
-    const a = Math.max(0, i - 40), b = Math.min(row.text.length, i + n.length + 60);
-    out.push({ planId: plan.id, versionId: v.id, page: row.page, snippet: (a > 0 ? '…' : '') + row.text.slice(a, b) + (b < row.text.length ? '…' : '') });
-    return out.length < limit;
+    if (!row.text || !SS.hasAll(Q, normOf(row))) return true;
+    cand.push({ row, plan, v });
+    return cand.length < 3000;
   });
-  return out;
+  const out = [];
+  for (const { row, plan, v } of cand) {
+    const nm = SS.normMap(row.text);
+    const occ = SS.findTokens(Q, nm);
+    if (!occ) continue;
+    const gs = SS.groups(Q, nm, occ, { max: 50 });
+    if (!gs.length) continue;
+    const best = gs.reduce((a, b) => (b.span < a.span ? b : a));
+    const exact = Q.tokens.length > 1 && nm.t.includes(Q.phrase);
+    const sp = best.spans.map((x) => SS.toOrig(nm, x.ts, x.te));
+    const lo = Math.min(...sp.map((x) => x.start)), hi = Math.max(...sp.map((x) => x.end));
+    const small = hi - lo <= 160;
+    const from = small ? lo : sp[0].start, to = small ? hi : sp[0].end;
+    const a = Math.max(0, from - 40), b = Math.min(row.text.length, to + 60);
+    out.push({ planId: plan.id, versionId: v.id, page: row.page, score: (exact ? 1000 : 500) - Math.min(best.span, 400), snippet: (a > 0 ? '…' : '') + row.text.slice(a, b) + (b < row.text.length ? '…' : '') });
+  }
+  out.sort((x, y) => y.score - x.score);
+  return out.slice(0, limit);
 }
 
 // ---------- אינדוקס טקסט ברקע (לחיפוש בתוך PDF) ----------

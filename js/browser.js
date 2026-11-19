@@ -113,7 +113,8 @@ export function show({ mode = 'folder', id = null, q = '' }) {
     st.folderId = id && S.P.folders.has(id) ? id : null;
     S.folderPath(st.folderId).forEach((f) => { if (f.parentId) st.expanded.add(f.parentId); });
   }
-  if (mode === 'search') { st.query = q; if (el.q) el.q.value = q; }
+  // חשוב: לא לדרוס את מה שהמשתמש מקליד. q מגיע חתוך מרווחים, ודריסה של השדה מוחקת את הרווח שנכתב בסוף ("חדר " → "חדר") ולכן המילים הידבקו
+  if (mode === 'search') { st.query = q; if (el.q && el.q.value.trim() !== q) el.q.value = q; }
   else if (el.q && mode !== 'search') el.q.value = '';
   toggleSidebar(false); // הבחירה נשמרת במעבר בין תיקיות (אפשר לסמן בכמה תיקיות ואז לתת הרשאה/להעביר ביחד)
   const saved = scrollMem.get(viewKey(mode, st.folderId, st.query));
@@ -781,7 +782,8 @@ function renderSearch() {
   if (st.scope && !S.P.folders.has(st.scope)) st.scope = '';
   const scope = S.scopeSet(st.scope);
   wrap.append(h('div', { class: 'scope-row' }, h('span', {}, tr('חיפוש ב:')), UI.folderScopeSelect(st.scope, (v) => { st.scope = v; renderSearch(); })));
-  const { folders, plans } = S.searchNames(q, scope);
+  const { folders, plans, approx } = S.searchNames(q, scope);
+  if (approx && (folders.length || plans.length)) wrap.append(h('p', { class: 'hint' }, tr('לא נמצאה התאמה לכל המילים. מוצגות תוצאות שחסרה בהן מילה אחת.')));
   if (folders.length) {
     wrap.append(h('h4', { class: 'sec' }, tr('תיקיות ({0})', folders.length)));
     wrap.append(h('div', { class: 'result-list' }, folders.slice(0, 100).map((f) => h('button', { class: 'result', onclick: () => { location.hash = '#/f/' + f.id; } },

@@ -423,10 +423,12 @@ export async function workerAccessDialog(userId = null) {
     });
     return sel;
   }
-  const matches = (name) => !filter || name.toLowerCase().includes(filter);
+  let matcher = null; // חיפוש חכם (כמה מילים בכל סדר, כולל שמות התיקיות שמעל)
+  const matches = (name, folderId) => !matcher || matcher(name, folderId) > 0;
   function hasMatch(fid) { // תיקייה מוצגת בחיפוש אם היא או משהו בתוכה תואם
-    if (matches(S.P.folders.get(fid)?.name || '')) return true;
-    return S.plansIn(fid).some((p) => matches(p.name)) || S.childFolders(fid).some((c) => hasMatch(c.id));
+    const f = S.P.folders.get(fid);
+    if (matches(f?.name || '', f ? f.parentId : null)) return true;
+    return S.plansIn(fid).some((p) => matches(p.name, p.folderId)) || S.childFolders(fid).some((c) => hasMatch(c.id));
   }
   const status = (eff, dir) => (dir?.level === 'none' ? tr('חסום לעובד') : eff ? tr('העובד רואה: {0}', LEVEL_TEXT[levelName(eff)]) : tr('העובד לא רואה'));
   const check = (key) => h('input', { type: 'checkbox', class: 'wa-ck', 'aria-label': tr('בחירה'), checked: selected.has(key), onchange: (e) => { e.target.checked ? selected.add(key) : selected.delete(key); paintSel(); } });
@@ -443,7 +445,7 @@ export async function workerAccessDialog(userId = null) {
       if (open) folderRows(f.id, depth + 1, out);
     }
     for (const p of S.plansIn(parentId)) {
-      if (filter && !matches(p.name)) continue;
+      if (filter && !matches(p.name, p.folderId)) continue;
       const eff = planLevel(p), inh = folderLevel(p.folderId || null), key = keyOf('plan_id', p.id);
       visibleKeys.push(key);
       const openFull = () => { m.close(true); location.hash = '#/p/' + p.id; };
@@ -494,7 +496,7 @@ export async function workerAccessDialog(userId = null) {
     paint();
   }
   who.addEventListener('change', () => { uid = who.value; loadUser(); });
-  search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); paint(); });
+  search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); matcher = S.makeNameMatcher(search.value); paint(); });
   loadUser();
   return m.promise;
 }
