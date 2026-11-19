@@ -1318,4 +1318,5 @@ export const EN = {
  "מוצגת: הישנה (התוכנית הפתוחה)": "Showing: old (open plan)",
  "התצוגה מתחלפת בין שני מצבים: התוכנית הפתוחה (הישנה) לבין תוכנית ההשוואה (החדשה). בשניהם מה שזהה בדיוק מופיע באפור, וכל מה שמבהב בצבע הוא מה שהשתנה. ": "The view alternates between the open plan (old) and the comparison plan (new). In both, what is identical appears in gray, and anything blinking in color has changed. ",
  "כמה \"מעבר\" מותר לפני שהפרש נחשב שינוי. מגדילים כשיש הרבה רעש, מקטינים כדי לא לפספס שינויים קטנים.": "How much movement is allowed before a difference counts as a change. Increase when there is a lot of noise; decrease so as not to miss small changes.",
+ "יישור אוטומטי בכל השוואה חדשה": "Auto-align every new comparison",
 };

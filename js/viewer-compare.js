@@ -128,7 +128,13 @@ export function installCompare(V) {
         this.updateCmpLegend(legend);
         refresh();
         paintRegs();
+        // השוואה חדשה (תוכנית/גרסה/עמוד שונים מהקודמת): יישור אוטומטי פעם אחת, כדי לא להתחיל מתצוגה לא מיושרת
+        const key = vid + ':' + (parseInt(pageIn.value, 10) || 1);
+        if (autoOpenCb.checked && this._autoKey !== key) { this._autoKey = key; await runAuto(); }
       };
+      const autoOpenCb = h('input', { type: 'checkbox', checked: prefs.cmpAutoOpen !== false });
+      autoOpenCb.onchange = () => { prefs.cmpAutoOpen = autoOpenCb.checked; savePrefs(); };
+      const autoOpenLbl = h('label', { class: 'check' }, autoOpenCb, tr('יישור אוטומטי בכל השוואה חדשה'));
       const changeMode = (m, val) => {
         modeSel.value = m; op.value = val != null ? val : CHANGE_MODES.has(m) ? Math.round(this.cmpSet.emph * 100) : m === 'overlay' ? 50 : 100;
         syncControls();
@@ -263,7 +269,7 @@ export function installCompare(V) {
         ['tol', tr('סבילות'), [h('div', { class: 'cmp-row' }, tolBox, clipLbl), h('small', { class: 'hint-inline' }, tr('כמה "מעבר" מותר לפני שהפרש נחשב שינוי. מגדילים כשיש הרבה רעש, מקטינים כדי לא לפספס שינויים קטנים.'))]],
         ['align', tr('יישור'), [
           h('div', { class: 'cmp-row' }, h('b', {}, tr('מזיזים ומשנים גודל של:')), whoA, whoB, h('span', {}, tr('התאמה:')), fitBtn('h', tr('לגובה')), fitBtn('w', tr('לרוחב')), fitBtn('both', tr('מילוי'))),
-          h('div', { class: 'cmp-row' }, autoBtn, alignBtn,
+          h('div', { class: 'cmp-row' }, autoOpenLbl,
             nb('chevU', () => nudge(0, -1), tr('למעלה')), nb('chevD', () => nudge(0, 1), tr('למטה')), nb('chevR', () => nudge(1, 0), tr('ימינה')), nb('chevL', () => nudge(-1, 0), tr('שמאלה')),
             h('span', {}, tr('גודל:')), nb('minus', () => sc(1 / 1.01), tr('הקטן ב-1%')), sizeIn, h('span', {}, '%'), nb('plus', () => sc(1.01), tr('הגדל ב-1%')),
             nb('rotate', () => this.rotateMoving(), tr('סובב ב-90° את התוכנית שנבחרה להזזה')),
@@ -289,7 +295,7 @@ export function installCompare(V) {
       selTab(tabs[this.cmpTab] ? this.cmpTab : 'view');
       this.cmpBar.replaceChildren(
         h('div', { class: 'cmp-row' }, h('b', {}, tr('השוואה עם:')), planSel, verSel, h('span', {}, tr('עמוד')), pageIn, modeSel,
-          h('button', { class: 'btn sm primary', onclick: apply }, tr('השווה')), moreBtn, h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור השוואה'), onclick: () => this.closeCompare() }, icon('x', 18))),
+          h('button', { class: 'btn sm primary', onclick: apply }, tr('השווה')), autoBtn, alignBtn, moreBtn, h('button', { class: 'icon-btn sm', 'aria-label': tr('סגור השוואה'), onclick: () => this.closeCompare() }, icon('x', 18))),
         more);
       setMore(this.cmpMoreOpen != null ? this.cmpMoreOpen : window.innerWidth > 900);
       this.cmpBar.classList.remove('hidden');
