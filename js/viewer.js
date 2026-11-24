@@ -31,6 +31,7 @@ import * as CS from './cloud-sync.js';
 import { isCloud, isAdmin } from './cloud.js';
 import { exportMeasurementsXlsx } from './xlsx-export.js';
 import { installCompare } from './viewer-compare.js';
+import { installZones } from './viewer-zones.js';
 import { installArea } from './viewer-area.js';
 import * as SH from './item-share-ui.js';
 import { SplitHost } from './split.js';
@@ -369,6 +370,7 @@ class Viewer {
     } else {
       this.layerA.el.style.clipPath = ''; this.layerB.el.style.clipPath = ''; this.layerB.sx = 0;
     }
+    if (this.cmp) this.updateZoneClips?.();
   }
   onResize() {
     // בזמן מעבר למסך מלא / יציאה ממנו הדפדפן שולח הרבה אירועי שינוי גודל. מחכים שהמעבר יסתיים ומחשבים פעם אחת.
@@ -420,8 +422,8 @@ class Viewer {
     if (this.cmp) this.layerB.place(scale, tx, ty, dpr);
     if (this.chEls) this.chEls.forEach((c) => { c.style.display = 'none'; }); // בזמן הזזה/זום מציגים את התוכנית הרגילה, ההדגשה מתעדכנת אחרי שהתנועה נעצרת
     if (this.region) this.renderRegion();
-    if (this.cmpEditMode) this.renderCmpEdits();
-    if (this.cmpEditMode) this.renderCmpEdits();
+    if (this.cmp) this.placeZones?.();
+    const cc = this.cmp; if (this.cmpEditMode || (cc && ((cc.regs && cc.regs.length) || (cc.zones && cc.zones.length)))) this.scheduleCmpEdits?.();
     if (this.cont) { this.layerN.place(scale, tx, ty, dpr); this.layerP.place(scale, tx, ty, dpr); }
     if (this.selected || this.draft) { this.renderSel(); this.renderDraft(); }
   }
@@ -435,6 +437,7 @@ class Viewer {
     this.layerA.renderDetail(scale, tx, ty, W, H, dpr);
     if (this.cmp && (this.cmp.mode === 'changes' || this.cmp.mode === 'sidechanges')) this.renderChanges();
     else if (this.cmp) this.layerB.renderDetail(scale, tx, ty, W, H, dpr);
+    if (this.cmp) this.renderZoneDetails?.();
     if (this.cont) {
       const nTop = ty + (this.ph + GAP) * scale, pBot = ty - GAP * scale;
       if (this.layerN.page && nTop < H) this.layerN.renderDetail(scale, tx, ty, W, H, dpr); else this.layerN.removeDetail();
@@ -635,6 +638,7 @@ class Viewer {
     if (B) { // תוכנית ההשוואה מסתובבת יחד עם הפתוחה, וההיסט שלה מתעדכן בהתאם
       const ndx = oldPh - B.dy - B.s * bh, ndy = B.dx;
       B.rot = (B.rot + 90) % 360; B.setPage(B.page); B.dx = ndx; B.dy = ndy;
+      this.zonesRotateView(oldPh, bh);
     }
     if (reg) this.region = { x0: oldPh - reg.y1, y0: reg.x0, x1: oldPh - reg.y0, y1: reg.x1 };
     this.hideChanges();
@@ -654,6 +658,13 @@ class Viewer {
     if (e.shiftKey && !e.ctrlKey) { // Shift + גלגלת: הזזה ימינה ושמאלה (כמו ב-Foxit)
       const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 16 : 1);
       this.setView(this.scale, this.tx - d, this.ty);
+      return;
+    }
+    if (e.altKey && this.cmp && this.layerB.page) { // Alt + גלגלת: שינוי גודל של תוכנית אחת (היעד שנבחר), סביב הסמן
+      const p0 = this.local(e);
+      this.alBegin();
+      this.relZoom(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * 0.0018), this.viewX(p0.x), p0.y);
+      clearTimeout(this._alT); this._alT = setTimeout(() => { this.alEnd(true); this.scheduleDetail(30); this.cmpUI?.refresh?.(); }, 300);
       return;
     }
     const pt = this.local(e);
@@ -681,8 +692,12 @@ class Viewer {
     const forcePan = e.button === 1 || e.button === 2 || this.spaceDown;
     const t0 = performance.now();
     if (forcePan || this.tool === 'pan') {
-      const align = this.cmp && this.alignDrag && !forcePan;
-      this.gesture = { type: align ? 'align' : 'pan', id: e.pointerId, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t0, moved: false, mouse: e.pointerType === 'mouse' };
+      // בהשוואה: כפתור שמאלי בעכבר = הזזת שתי התוכניות יחד (כל התצוגה), כפתור ימני = הזזת תוכנית אחת בלבד (הנבחרת).
+      // במגע/עט: ההזזה היא של שתיהן, או של תוכנית אחת כשנבחר הכפתור "ישנה"/"חדשה" בסרגל ההשוואה.
+      const mouse = e.pointerType === 'mouse';
+      const align = !!(this.cmp && this.layerB.page && (mouse ? (e.button === 2 && !this.spaceDown) : (this.alignDrag && this.tool === 'pan')));
+      this.gesture = { type: align ? 'align' : 'pan', id: e.pointerId, x: pt.x, y: pt.y, sx: pt.x, sy: pt.y, t0, moved: false, mouse };
+      if (align) { this.alBegin(); this.startAlignPreview(); }
       return;
     }
     this.toolDown(pt, e);
@@ -695,6 +710,8 @@ class Viewer {
     if (g && g.type === 'erase') { this.eraseSet = null; this.renderItems(); }
     if (g && g.type === 'region') { if (g.hd === 'new') this.clearRegion(); else { this.region = g.r0; this.renderRegion(); } }
     if (g && g.type === 'cmpedit') this.gDraft.textContent = '';
+    if (g && g.type === 'cmpzone') { this.gDraft.textContent = ''; if (this.zoneDraft) this.renderZoneDraft(); }
+    if (g && g.type === 'align') { this.alEnd(); this.endAlignPreview(); }
     if (g && g.type === 'aim') this.aimEnd();
     if (g && (g.type === 'drag' || g.type === 'pen' || g.type === 'seg')) this.draft = null;
     this.gesture = null;
@@ -702,7 +719,8 @@ class Viewer {
   }
   startPinch() {
     const [a, b] = [...this.ptrs.values()];
-    if (this.cmp && this.alignDrag && this.layerB.page) { // יישור ידני של תוכנית ההשוואה: צביטה = שינוי גודל שלה (סביב מרכז הצביטה), הזזה = הזזה שלה
+    if (this.cmp && this.alignDrag && this.tool === 'pan' && this.layerB.page) { // הזזת תוכנית אחת של תוכנית ההשוואה: צביטה = שינוי גודל שלה (סביב מרכז הצביטה), הזזה = הזזה שלה
+      this.alBegin(); this.startAlignPreview();
       this.pinch = { mode: 'align', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, c0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
       return;
     }
@@ -835,6 +853,7 @@ class Viewer {
       case 'erase': this.eraseAt(g.last, p); g.last = p; break;
       case 'region': this.regionMove(g, pt); break;
       case 'cmpedit': this.cmpEditMove(g, p); break;
+      case 'cmpzone': this.zoneMove(g, p, pt); break;
       case 'aim': this.aimMove(pt); break;
       case 'seg':
         if (g.moved || Math.hypot(pt.x - g.sx, pt.y - g.sy) > 8) { g.moved = true; this.draft = { type: this.tool, pts: [g.p0, ps(g.p0)] }; this.renderDraft(); this.edgeCheck(g, pt); }
@@ -880,8 +899,8 @@ class Viewer {
         const pm = this.pinch;
         this.pinch = null;
         if (pm.mode === 'text') { this.commitMod(pm.before, this.selected).then(() => this.renderProps()); return; }
-        if (pm.mode === 'align') { this.scheduleDetail(30); this.cmpUI?.refresh?.(); }
-        if (this.ptrs.size === 1) { const [id, q] = [...this.ptrs][0]; this.gesture = { type: this.cmp && this.alignDrag ? 'align' : 'pan', id, x: q.x, y: q.y, sx: q.x, sy: q.y, moved: true, t0: 0 }; }
+        if (pm.mode === 'align') { this.alEnd(); this.endAlignPreview(); this.scheduleDetail(30); this.cmpUI?.refresh?.(); }
+        if (this.ptrs.size === 1) { const [id, q] = [...this.ptrs][0]; const al = !!(this.cmp && this.alignDrag && this.tool === 'pan'); this.gesture = { type: al ? 'align' : 'pan', id, x: q.x, y: q.y, sx: q.x, sy: q.y, moved: true, t0: 0 }; if (al) { this.alBegin(); this.startAlignPreview(); } }
       }
       return;
     }
@@ -897,9 +916,10 @@ class Viewer {
         if (!g.moved && performance.now() - g.t0 < 600) this.onTap(pt);
         else if (g.moved && !g.mouse) this.maybeSwipe(g, pt);
         break;
-      case 'align': this.scheduleDetail(30); this.cmpUI?.refresh?.(); break;
+      case 'align': this.alEnd(); this.endAlignPreview(); if (g.moved && g.mouse) this._rcMoved = performance.now(); this.scheduleDetail(30); this.cmpUI?.refresh?.(); break;
       case 'region': this.regionUp(g, pt); break;
       case 'cmpedit': this.cmpEditUp(g, p, pt); break;
+      case 'cmpzone': this.zoneUp(g, p, pt); break;
       case 'aim': this.aimUp(); break;
       case 'drag': {
         const d = this.draft; this.draft = null;
@@ -969,6 +989,7 @@ class Viewer {
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || k.toLowerCase() === 'z')) { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; } // לפי המקש הפיזי: עובד גם במקלדת בעברית
     if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || k.toLowerCase() === 'y')) { e.preventDefault(); this.redo(); return; }
+    if (this.tool === 'cmpzone' && this.zoneKey(e)) { e.preventDefault(); return; }
     if (k === 'Escape') {
       if (this.region) this.clearRegion();
       else if (this.draft) this.cancelDraft();
@@ -1004,6 +1025,7 @@ class Viewer {
     if (this.draft) { this.draft = null; this.renderDraft(); }
     if (this.tool === 'region' && t !== 'region') this.clearRegion();
     if (this.tool === 'cmpedit' && t !== 'cmpedit') { this.cmpEditMode = null; this.syncCmpEditUI?.(); }
+    if (this.tool === 'cmpzone' && t !== 'cmpzone') this.endZoneDraw(true);
     this.tool = t;
     this.arcMode = t === 'arc'; // בכלי "קשת" כל הקטע הוא קשת; בכלי "מסלול" מעבר בין קו ישר לקשת נעשה בכפתור
     if (t === 'region' && !this.region) UI.toast(tr('גררו על התוכנית כדי לסמן אזור. אחר כך אפשר להזיז, לשנות גודל, להתקרב – ולשמור כתמונה או להדפיס'), { ms: 4500 });
@@ -1055,6 +1077,7 @@ class Viewer {
       }
       case 'region': this.regionDown(pt, e, base); return;
       case 'cmpedit': this.gesture = { ...base, type: 'cmpedit', p0: p }; return;
+      case 'cmpzone': this.gesture = { ...base, type: 'cmpzone', p0: p }; return;
       case 'text': this.gesture = { ...base, type: 'text', x: pt.x, y: pt.y }; return;
       case 'measure': case 'calibrate': case 'circle':
         if (this.draft && this.draft.wait) { this.gesture = { ...base, type: 'seg2', x: pt.x, y: pt.y }; return; }
@@ -1305,11 +1328,12 @@ class Viewer {
     const list = c.multi ? (undo ? [...c.multi].reverse() : c.multi) : [c];
     for (const e of list) await (undo ? this.setItemState(e.after, e.before) : this.setItemState(e.before, e.after));
   }
-  async undo() { if (this.cmp && this.cmpNoteMode) { this.cmpUndo(); return; } const c = this.history.pop(); if (!c) return; await this.applyEntry(c, true); this.redoStack.push(c); this.updateUndo(); }
-  async redo() { if (this.cmp && this.cmpNoteMode) { this.cmpRedo(); return; } const c = this.redoStack.pop(); if (!c) return; await this.applyEntry(c, false); this.history.push(c); this.updateUndo(); }
+  cmpHistActive() { const c = this.cmp; return !!(c && (this.cmpNoteMode || c.hist.length || c.redo.length)); }
+  async undo() { if (this.cmpHistActive()) { this.cmpUndo(); return; } const c = this.history.pop(); if (!c) return; await this.applyEntry(c, true); this.redoStack.push(c); this.updateUndo(); }
+  async redo() { if (this.cmpHistActive()) { this.cmpRedo(); return; } const c = this.redoStack.pop(); if (!c) return; await this.applyEntry(c, false); this.history.push(c); this.updateUndo(); }
   updateUndo() {
     if (!this.undoBtn) return;
-    const cm = this.cmp && this.cmpNoteMode ? this.cmp : null;
+    const cm = this.cmpHistActive() ? this.cmp : null;
     this.undoBtn.disabled = cm ? !cm.hist.length : !this.history.length;
     this.redoBtn.disabled = cm ? !cm.redo.length : !this.redoStack.length;
   }
@@ -2106,5 +2130,6 @@ class Viewer {
 
 installStyle(Viewer);
 installCompare(Viewer);
+installZones(Viewer);
 installArea(Viewer);
 installPrint(Viewer, rotOf);

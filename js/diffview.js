@@ -72,6 +72,31 @@ export function diffMasks({ W, H, dA, dB, tol = 0, gap = 0, mn = 0, local = 0, c
     try { w.postMessage({ q, W, H, dA: a, dB: b, tol, gap, mn, local, regs }, [a.buffer, b.buffer]); } catch (e) { pending.delete(q); rej(e); }
   }).catch((e) => { console.warn('diff worker', e); return null; });
 }
+// מפת דיו של תוכנית ההשוואה כשיש אזורי יישור: הרקע לפי היישור הכללי, וכל אזור מורנדר לפי היישור שלו ומודבק בתוך הצורה שלו.
+// zones: [{ B: { page, rot, k, ox, oy }, poly: [[x,y], ...] }] (פיקסלים של הקנבס). אחרי ההדבקה אפשר להשוות כרגיל.
+export async function inkMapZ(Bmain, zones, w, h, onCancel) {
+  let cancels = [];
+  if (onCancel) onCancel(() => cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }));
+  const reg = (f) => cancels.push(f);
+  const ib = await inkOf(Bmain, w, h, reg);
+  for (const z of zones || []) {
+    const xs = z.poly.map((p) => p[0]), ys = z.poly.map((p) => p[1]);
+    const x0 = Math.max(0, Math.floor(Math.min(...xs)) - 1), y0 = Math.max(0, Math.floor(Math.min(...ys)) - 1);
+    const x1 = Math.min(w, Math.ceil(Math.max(...xs)) + 1), y1 = Math.min(h, Math.ceil(Math.max(...ys)) + 1);
+    const bw = x1 - x0, bh = y1 - y0;
+    if (bw < 1 || bh < 1) continue;
+    const iz = await inkOf({ ...z.B, ox: z.B.ox - x0, oy: z.B.oy - y0 }, bw, bh, reg); // רק המלבן שמקיף את האזור
+    const mc = document.createElement('canvas'); mc.width = bw; mc.height = bh;
+    const mx = mc.getContext('2d', { willReadFrequently: true });
+    mx.fillStyle = '#000'; mx.beginPath();
+    z.poly.forEach((p, i) => { if (i) mx.lineTo(p[0] - x0, p[1] - y0); else mx.moveTo(p[0] - x0, p[1] - y0); });
+    mx.closePath(); mx.fill();
+    const m = mx.getImageData(0, 0, bw, bh).data;
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (m[(y * bw + x) * 4 + 3] > 127) ib[(y + y0) * w + x + x0] = iz[y * bw + x];
+    mc.width = mc.height = 0;
+  }
+  return ib;
+}
 // מפת דיו של שכבה אחת בגודל w×h (ללא קשר לקנבס התצוגה)
 export async function inkMap(L, w, h, onCancel) {
   let cancels = [];
@@ -84,12 +109,12 @@ export async function inkMap(L, w, h, onCancel) {
 //   ignore = "זה לא שינוי": באזור הזה לא מסמנים הבדלים. add = "פספוס": באזור הזה מסמנים כל הבדל בין הקווים (בלי סובלנות להזזות).
 // side: true = מחזיר { left, right }: כל תוכנית בנפרד (A מצד אחד, B מהצד השני), ובכל אחת רק הסימון ששייך לה בצבע שלה.
 const rgb = (hex, def) => { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return def; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
-export async function renderChangesCanvas({ A, B, w, h, emphasis = 0.6, tol = 1.5, gap = 0, gapFull = 0, mn = 0, local = 0, clip = false, edge = 0, colA, colB, colS, edits = [], side = false, onCancel }) {
+export async function renderChangesCanvas({ A, B, zones = [], w, h, emphasis = 0.6, tol = 1.5, gap = 0, gapFull = 0, mn = 0, local = 0, clip = false, edge = 0, colA, colB, colS, edits = [], side = false, onCancel }) {
   let cancels = [], cancelled = false;
   if (onCancel) onCancel(() => { cancelled = true; cancels.forEach((f) => { try { f(); } catch { /* ignore */ } }); });
   const reg = (f) => cancels.push(f);
   let ia, ib;
-  try { ia = await inkOf(A, w, h, reg); ib = await inkOf(B, w, h, reg); } catch (e) { if (e && e.name === 'RenderingCancelledException') return null; throw e; }
+  try { ia = await inkOf(A, w, h, reg); ib = zones && zones.length ? await inkMapZ(B, zones, w, h, (f) => reg(f)) : await inkOf(B, w, h, reg); } catch (e) { if (e && e.name === 'RenderingCancelledException') return null; throw e; }
   // המנוע החדש (Worker): מסנן כתמים קטנים, מאחד פערים בקו מקווקו ומטפל בצורות שונות החופפות זו לזו. אם לא זמין – החישוב הישן
   const masks = await diffMasks({ W: w, H: h, dA: ia, dB: ib, tol: Math.round(tol), gap: Math.round(gapFull || gap * 2), mn, local: Math.round(local), clip: clip || edge ? overlapRect(A, B, edge) : null });
   if (cancelled) return null;

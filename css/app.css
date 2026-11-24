@@ -717,3 +717,18 @@ body.sync-bar-on .fab { bottom: calc(16px + var(--safe-b)); }
 .cmp-tab.on { border-bottom-color: var(--blue); opacity: 1; font-weight: 700; }
 .cmp-tabbody { display: flex; flex-direction: column; gap: 6px; }
 .cmp-tabbody.hidden { display: none; }
+
+/* ---- השוואה: סרגל מסודר, לשוניות בולטות, צבעים ---- */
+.cmp-main { padding: 2px 0; }
+.cmp-lbl { font-size: 14px; color: var(--blue, #1565c0); min-width: 74px; }
+.cmp-mode { border: 2px solid var(--blue, #1565c0) !important; font-weight: 700; }
+.cmp-chips { display: inline-flex; gap: 10px; align-items: center; font-size: 13px; }
+.cmp-chip { display: inline-flex; align-items: center; gap: 4px; }
+.cmp-chip i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid rgba(0,0,0,.25); }
+.cmp-tgt { color: #8e24aa; }
+.cmp-tabs { gap: 6px; border-bottom: 2px solid var(--line); padding-bottom: 0; }
+.cmp-tab { font-size: 15px; font-weight: 700; opacity: 1; background: #eef3fb; border: 1px solid #c9d7ee; border-bottom: 0; border-radius: 10px 10px 0 0; padding: 8px 16px; color: #1c3d73; }
+.cmp-tab.on { background: var(--blue, #1565c0); color: #fff; border-color: var(--blue, #1565c0); }
+.cmp-zones { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.cmp-reg .btn.sm { white-space: nowrap; }
+.cmp-reg .btn.reg-st { min-width: 0; }

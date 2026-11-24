@@ -210,6 +210,17 @@ export class Layer {
     this.baseTask = null; this.dTask = null;
   }
 
+  // צבע CSS לשכבה (שחור -> צבע, לבן נשאר לבן) בלי לרנדר מחדש: div עם mix-blend-mode: lighten מעל העמוד
+  setCssTint(color) {
+    if (!color) { if (this.tintEl) { this.tintEl.remove(); this.tintEl = null; } this.el.style.isolation = ''; return; }
+    if (!this.tintEl) { this.tintEl = document.createElement('div'); this.tintEl.className = 'pg-tint'; this.tintEl.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;mix-blend-mode:lighten;'; }
+    this.tintEl.style.background = color;
+    this.el.style.isolation = 'isolate';
+    this._raiseTint();
+    if (this._last) this.place(...this._last);
+  }
+  _raiseTint() { if (this.tintEl) this.el.appendChild(this.tintEl); }
+
   // viewport לפי הסיבוב הנוכחי של השכבה
   vp(scale) { return this.page.getViewport({ scale, rotation: (((this.page.rotate || 0) + (this.rot || 0)) % 360 + 360) % 360 }); }
 
@@ -221,7 +232,8 @@ export class Layer {
     this.el.textContent = '';
     this.detail = null; this.dState = null;
     let k = Math.min(3, 3200 / Math.max(this.pw, this.ph));
-    while (this.pw * k * this.ph * k > MAX_BASE_PIXELS) k *= 0.9;
+    const mb = this.maxBase || MAX_BASE_PIXELS;
+    while (this.pw * k * this.ph * k > mb) k *= 0.9;
     this.baseK = k;
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.ceil(this.pw * k));
@@ -231,6 +243,7 @@ export class Layer {
     c.style.height = this.ph + 'px';
     this.base = c;
     this.el.appendChild(c);
+    this._raiseTint();
     return this.renderBase();
   }
 
@@ -263,12 +276,17 @@ export class Layer {
       // בהגדלות קיצוניות מסתירים את הבסיס (הפירוט מכסה את המסך)
       b.display = (k * dpr > this.baseK * 24 && this.detail && this.dState) ? 'none' : ''; // מסתירים את הבסיס רק כשיש פירוט שמכסה במקומו – אחרת המסך היה אפור עד סיום הרינדור
     }
+    if (this.tintEl) { // צבע בהשוואה: שכבת צבע מעל העמוד (CSS בלבד, בלי רינדור מחדש), בדיוק על שטח העמוד
+      const t = this.tintEl.style;
+      t.width = this.pw + 'px'; t.height = this.ph + 'px';
+      t.transformOrigin = '0 0'; t.transform = `translate(${ex}px,${ey}px) scale(${k})`;
+    }
     if (this.detail && this.dState) {
       const d = this.dState;
       const r = k / d.k;
       const s = this.detail.style;
       s.transformOrigin = '0 0';
-      s.transform = `translate(${ex - d.ex * r}px,${ey - d.ey * r}px) scale(${r})`;
+      s.transform = `translate(${ex - (d.ex - (d.rx || 0)) * r}px,${ey - (d.ey - (d.ry || 0)) * r}px) scale(${r})`;
     }
   }
 
@@ -279,8 +297,10 @@ export class Layer {
   }
 
   // W,H = גודל אזור התצוגה ב-CSS px
-  async renderDetail(scale, tx, ty, W, H, dpr, clipW) {
+  async renderDetail(scale, tx, ty, W, H, dpr, rect) {
     if (!this.page) return;
+    const rx = rect ? rect.x : 0, ry = rect ? rect.y : 0;
+    if (rect) { W = Math.max(1, rect.w); H = Math.max(1, rect.h); }
     const k0 = scale * this.s;
     if (k0 * dpr <= this.baseK * 1.02) { this.removeDetail(); return; }
     const gen = ++this.gen;
@@ -296,7 +316,7 @@ export class Layer {
     const ctx = c.getContext('2d', localStorage.getItem('plans.wrf') === '1' ? { willReadFrequently: true } : undefined);
     const k = k0 * d;
     const ex = tx + this.sx + this.dx * scale, ey = ty + this.dy * scale;
-    const ox = ex * d, oy = ey * d;
+    const ox = (ex - rx) * d, oy = (ey - ry) * d;
     const vp = this.vp(k);
     // בהגדלה גבוהה בטלפון מציירים באריחים קטנים: ב-pdf.js כל קבוצת שקיפות/מסכה מקצה קנבס זמני בגודל הקנבס שאליו מציירים,
     // ובתוכנית עם אלפי קבוצות כאלה (הדפסות CAD) זה מילא את הזיכרון וגרם לקריסה. אריחים קטנים = הקצאות קטנות פי כמה.
@@ -342,10 +362,11 @@ export class Layer {
     c.className = 'pg-detail';
     c.style.width = W + 'px';
     c.style.height = H + 'px';
-    this.dState = { k: k0, ex, ey };
+    this.dState = { k: k0, ex, ey, rx, ry };
     // הקנבס החדש נצבע לפי המיקום בתחילת הרינדור; אם בינתיים גררו – ממקמים אותו מיד לפי המצב הנוכחי (מונע "קפיצה" באמצע גרירה)
     const old = this.detail;
     if (old) old.replaceWith(c); else this.el.appendChild(c);
+    this._raiseTint();
     this.detail = c;
     if (old) freeCanvas(old);
     gcNudge();

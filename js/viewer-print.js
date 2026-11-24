@@ -118,7 +118,8 @@ export function installPrint(V) {
         return { mode: e.mode, x0: (Math.min(a.x, b.x) - rect.x0) * k, x1: (Math.max(a.x, b.x) - rect.x0) * k, y0: (Math.min(a.y, b.y) - rect.y0) * k, y1: (Math.max(a.y, b.y) - rect.y0) * k };
       });
       const side = layout === 'side';
-      const res = await renderChangesCanvas({ A, B: Bm, w: W, h: H, emphasis: this.cmpSet.emph, tol: px.tol, gap: px.gap, colA: this.cmpSet.colA, colB: this.cmpSet.colB, colS: this.cmpSet.colS, edits, side });
+      const zones = this.zonesForDiff((L) => ({ page: L.page, rot: L.rot, k: k * L.s, ox: (L.dx - rect.x0) * k, oy: (L.dy - rect.y0) * k }), (x, y) => [(x - rect.x0) * k, (y - rect.y0) * k]);
+      const res = await renderChangesCanvas({ A, B: Bm, zones, w: W, h: H, emphasis: this.cmpSet.emph, tol: px.tol, gap: px.gap, colA: this.cmpSet.colA, colB: this.cmpSet.colB, colS: this.cmpSet.colS, edits, side });
       if (!res) throw new Error(tr('היצירה בוטלה'));
       if (markups || (c.notes && c.notes.length)) { // סימוני התוכנית (אם נבחר) + הסימונים שלי על ההשוואה
         const ctxs = side ? [res.left.getContext('2d')] : [res.getContext('2d')];
